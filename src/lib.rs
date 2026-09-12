@@ -7,6 +7,7 @@ pub mod lua;
 pub mod reload;
 pub mod resolver;
 pub mod runtime;
+pub mod sandbox;
 pub mod sdk;
 mod service;
 pub mod stream;
