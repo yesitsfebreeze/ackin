@@ -1,0 +1,12 @@
+# Cartridge
+
+> Rust runtime, Lua composition and SDK process cartridges with a terminal UI,
+> authenticated model proxy and MCP tool server.
+
+- [Development commands](README.md)
+- [Agent guidance](CLAUDE.md)
+- [Module catalog](repositories.json)
+- [Runtime development contract](development.json)
+- [Record types](.cartridge/memos/type/type.md)
+- [System memo protocol](.cartridge/memos/type/system.md)
+- [Migration record](MIGRATION.md)

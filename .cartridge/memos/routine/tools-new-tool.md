@@ -1,0 +1,52 @@
+---
+kind: routine
+description: Scaffold a new .jd tool file from a template. Use when the user asks to create, add, or bootstrap a new justdown tool.
+tags: [scaffold, meta, tooling, bootstrap]
+run: new
+provides: [new]
+source: routine/library/meta/tools/new-tool.jd
+uses:
+  - usage: "[[run-usage]]"
+    when: [create a new tool, scaffold a tool, bootstrap a recipe]
+---
+
+# New tool
+
+Writes `tools/<name>.jd` with frontmatter and a stub recipe. Args: `name`
+(required) and `tool` (the default recipe name, default `default`).
+
+```just
+# scaffold a new .jd tool file at tools/<name>.jd
+# (shebang recipe: just runs the whole body as one script, so the heredoc —
+#  which spans multiple lines and blank lines — works; a plain line-by-line
+#  recipe would run each line in its own shell and break the heredoc.)
+new name tool="default":
+  #!/usr/bin/env sh
+  mkdir -p tools
+  cat > tools/{{name}}.jd <<EOF
+  ---
+  name: {{name}}
+  description: TODO — what this tool is and when to use it.
+  kind: tool
+  tags: []
+  run: {{tool}}
+  provides: [{{tool}}]
+  ---
+
+  # {{name}}
+
+  TODO — why and when to reach for this tool.
+
+  \`\`\`just
+  # TODO — the default recipe
+  {{tool}}:
+    @echo "hello from {{name}}"
+  \`\`\`
+  EOF
+  echo "created tools/{{name}}.jd with default recipe '{{tool}}'"
+```
+
+## Notes
+
+- The inner ` ```just ` fence is escaped so the runner of *this* file does not
+  lift it. A generated file's own fence is plain.

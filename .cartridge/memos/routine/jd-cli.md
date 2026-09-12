@@ -1,0 +1,87 @@
+---
+kind: routine
+description: "Drive the justdown CLI itself — search the library by need, get a file as ordered sections, list categories, trace a file's @links, find the shortest link path between two files, lint the graph, and rebuild the index. The self-referential tool: a .jd that operates the .jd library it lives in. Use to find and pull tools before doing a task by hand."
+tags: [jd, justdown, cli, search, retrieval, self-referential, meta]
+danger: none
+requires: [jd]
+run: search
+provides: [search, get, just, ls, links, path, lint, build]
+source: routine/library/meta/jd/cli.jd
+uses:
+  - usage: "[[run-usage]]"
+    when: [search the justdown library, find a tool before doing it by hand, get a jd file's sections, list library categories, trace links of a jd file, path between two tools, lint the jd graph, rebuild graph.db, what tools exist for X]
+---
+
+# jd
+
+justdown describing *itself* — the one tool whose recipes operate the library
+that contains it. The whole point of justdown is the reflex from `install.jd`:
+before doing a task by hand, `search` the library for a .jd that already does it,
+then `get` it and run its recipe. This file makes that reflex a retrievable tool
+like any other. The CLI is the **`jd`** binary; these recipes shell out to it.
+
+| Recipe | CLI verb | Does |
+|--------|----------|------|
+| `search` | `search <q> [kind] [num] [cat]` | rank .jds by need (name/use_when > tags > prose), graph-aware |
+| `get` | `get <ref> [profile]` | a file as ordered sections, or one profile: `--frontmatter` / `--human` / `--agent` / `--justfile` |
+| `just` | `just <ref> [recipe] [args]` | render `<ref>`'s justfile and run it through `just` (the wrap of `get --justfile \| just --justfile -`) |
+| `ls` | `ls` | categories and their member files |
+| `links` | `links <ref>` | inbound + outbound `@links` of a file |
+| `path` | `path <a> <b>` | the shortest `@link` chain connecting two files |
+| `lint` | `lint` | validate every .jd's frontmatter (CI-gateable) |
+| `build` | `build` | rescan `<lib>/**/*.jd` → rewrite the local `graph.db` |
+
+## The argument grammar
+
+A **REF** is any of: a bare `name`, a `path`, a `key` of the form `dir/name`, or
+that same key with an `@` prefix.
+`search` ranks field-weighted — `name` and `use_when` outweigh `tags`, which
+outweigh prose, and a `not_when` match vetoes a hit; ties break by graph
+connectivity. `get`'s output profile is `--frontmatter` | `--human` | `--agent`
+| `--justfile`; the file's `kind` decides which are allowed — a types/events
+.jd refuses `--justfile` (exit 3), so it is never emitted as a script.
+
+Queries **merge** the LOCAL store over the ONLINE one — local entries trump
+online ones by key, so your `jd build` output shadows the published graph
+without a clone. Pass the global `--json` flag for a versioned machine schema
+(`justdown.search/1`); errors come back as `justdown.error/1` on stderr.
+
+**Exit codes:** `0` ok · `2` no matches · `3` bad args · `4` sources unreachable.
+The non-zero codes are how an agent tells "found nothing" from "you called me
+wrong" from "the network is down" — branch on them, don't parse the text.
+
+```just
+# rank library .jds by a natural-language need (the first move on any task)
+search query kind="" num="5":
+  jd search {{quote(query)}} {{quote(kind)}} {{quote(num)}}
+
+# a file as ordered sections, or one profile flag:
+# --frontmatter | --human | --agent | --justfile
+get ref profile="":
+  jd get {{quote(ref)}} {{profile}}
+
+# render a tool|workflow ref's justfile and run it through `just` in one call;
+# recipe + args pass to just verbatim, and its exit code is jd's exit code
+just ref recipe="" *args="":
+  jd just {{quote(ref)}} {{recipe}} {{args}}
+
+# categories and their member files
+ls:
+  jd ls
+
+# inbound + outbound @links of a file
+links ref:
+  jd links {{quote(ref)}}
+
+# the shortest @link chain connecting two files
+path a b:
+  jd path {{quote(a)}} {{quote(b)}}
+
+# validate every .jd's frontmatter (run before any push)
+lint:
+  jd lint
+
+# rescan the library and rewrite the local graph.db index
+build:
+  jd build
+```

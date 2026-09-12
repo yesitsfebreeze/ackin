@@ -1,0 +1,58 @@
+---
+kind: routine
+description: Control a running vim/nvim instance from outside — start a server, send keystrokes, evaluate
+  expressions, open files in it. Use to drive a live editor programmatically.
+uses:
+- usage: '[[run-usage]]'
+  when:
+  - control a running vim
+  - send keys to nvim
+  - nvim remote
+  - drive a live editor
+  - open file in running instance
+  tags:
+  - vim
+  - remote
+  - server
+  - clientserver
+  - control
+---
+
+## Inputs
+
+Requires on PATH: `nvim`. Recipe parameters are named in Do; supply paths and arguments for the current task.
+Risk: side effects process; danger low.
+
+## Do
+
+The clientserver surface: a headless server (`serve`) listens on a socket, then
+`send` pushes keystrokes, `expr` evaluates a `:h expression`, and `open` loads
+files into it. Keys are literal vim input — see [[vim-motions]] and [[vim-modes]] for
+what to send. nvim addresses are a socket path or `host:port`; stock Vim uses
+`--servername NAME` with the same `--remote*` verbs.
+
+```just
+# start a headless server listening on an address (default socket)
+serve addr="/tmp/cartridge-nvim.sock":
+  nvim --headless --listen {{quote(addr)}}
+
+# send keystrokes to a running server (default)
+send addr keys:
+  nvim --server {{quote(addr)}} --remote-send {{quote(keys)}}
+
+# evaluate an expression in a running server and print the result
+expr addr expression:
+  nvim --server {{quote(addr)}} --remote-expr {{quote(expression)}}
+
+# open files in a running server
+open addr +files:
+  nvim --server {{quote(addr)}} --remote {{files}}
+```
+
+## Check
+
+Every recipe exits 0 and produces the output or files its row in Do describes. `send` is the default recipe.
+
+## Failure
+
+Report a missing prerequisite or failed command. Resolve the failure before continuing dependent steps.

@@ -1,0 +1,112 @@
+---
+kind: routine
+description: Send a body to a URL with curl — POST/PUT/PATCH/DELETE with raw data and custom headers,
+  or a json helper that sets the Content-Type. Use to create, replace, update, or delete a remote resource.
+uses:
+- usage: '[[run-usage]]'
+  when:
+  - http post
+  - send a request body
+  - put a resource
+  - patch a resource
+  - delete a resource
+  - post json
+  - send data with curl
+  tags:
+  - http
+  - post
+  - put
+  - patch
+  - delete
+  - curl
+---
+
+## Inputs
+
+Requires on PATH: `curl`. Recipe parameters are named in Do; supply paths and arguments for the current task.
+Risk: side effects network; danger low.
+
+## Do
+
+Write-side curl: a method, a URL, a body, and one header. All run `-fsS` so a
+4xx/5xx is a non-zero exit (see [[http-status]] for which codes mean what). Each
+recipe takes one `header` arg passed whole (`Key: value`) — leave it `""` to
+omit. For bearer auth and multipart form uploads reach for [[http-api]]; for the
+flag surface see [[http-curl]]. JSON responses pipe into [[search-jq]].
+
+| Recipe | Method | Body flag | Header default |
+|--------|--------|-----------|----------------|
+| `post` | POST | `-d` | none unless given |
+| `put` | PUT | `-d` | none unless given |
+| `patch` | PATCH | `-d` | none unless given |
+| `delete` | DELETE | none | none unless given |
+| `json` | POST | `-d` | `Content-Type: application/json` |
+
+`-d` sends the body verbatim and defaults the Content-Type to
+`application/x-www-form-urlencoded`; use `json` (or pass your own `Content-Type`
+header) when the body is JSON. `delete` takes no body.
+
+```just
+# POST a body with an optional header (default)
+post url body header="":
+  #!/usr/bin/env sh
+  set -eu
+  u={{quote(url)}}
+  b={{quote(body)}}
+  h={{quote(header)}}
+  if [ -n "$h" ]; then
+    curl -fsS -X POST -H "$h" -d "$b" "$u"
+  else
+    curl -fsS -X POST -d "$b" "$u"
+  fi
+
+# PUT — replace a resource
+put url body header="":
+  #!/usr/bin/env sh
+  set -eu
+  u={{quote(url)}}
+  b={{quote(body)}}
+  h={{quote(header)}}
+  if [ -n "$h" ]; then
+    curl -fsS -X PUT -H "$h" -d "$b" "$u"
+  else
+    curl -fsS -X PUT -d "$b" "$u"
+  fi
+
+# PATCH — partial update
+patch url body header="":
+  #!/usr/bin/env sh
+  set -eu
+  u={{quote(url)}}
+  b={{quote(body)}}
+  h={{quote(header)}}
+  if [ -n "$h" ]; then
+    curl -fsS -X PATCH -H "$h" -d "$b" "$u"
+  else
+    curl -fsS -X PATCH -d "$b" "$u"
+  fi
+
+# DELETE — remove a resource (no body)
+delete url header="":
+  #!/usr/bin/env sh
+  set -eu
+  u={{quote(url)}}
+  h={{quote(header)}}
+  if [ -n "$h" ]; then
+    curl -fsS -X DELETE -H "$h" "$u"
+  else
+    curl -fsS -X DELETE "$u"
+  fi
+
+# POST a JSON body with the right Content-Type
+json url body:
+  curl -fsS -X POST -H 'Content-Type: application/json' -d {{quote(body)}} {{quote(url)}}
+```
+
+## Check
+
+Every recipe exits 0 and produces the output or files its row in Do describes. `post` is the default recipe.
+
+## Failure
+
+Report a missing prerequisite or failed command. Resolve the failure before continuing dependent steps.

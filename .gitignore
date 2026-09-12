@@ -14,3 +14,8 @@
 /workspace/target/
 __pycache__/
 *.pyc
+
+/scratch/
+!/.cartridge/memos/
+/.cartridge/memos/.lock
+/.cartridge/memos/**/.obsidian/

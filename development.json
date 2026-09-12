@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "name": "runtime",
+  "description": "Hosts Lua and SDK process cartridges, resolves dependencies, watches replacements, and serves the event/RPC wire.",
+  "kind": "runtime",
+  "entry": "src/main.rs",
+  "provides": [],
+  "requires": [],
+  "configuration": "Profile configuration is owned by ../cartridge.ctg/.cartridge; SDK processes receive it on apply. See README.md for the service API.",
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "justfile",
+        "build",
+        "runtime"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "justfile",
+        "check",
+        "runtime"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "justfile",
+        "test",
+        "runtime"
+      ],
+      "cwd": "."
+    },
+    "run": {
+      "argv": [
+        "just",
+        "--justfile",
+        "justfile",
+        "daemon"
+      ],
+      "cwd": ".",
+      "description": "Runs the module through its supported application entry point."
+    }
+  }
+}

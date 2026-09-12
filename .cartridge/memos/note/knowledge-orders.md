@@ -1,0 +1,42 @@
+---
+kind: note
+description: How an order total is computed and applied. Pull when implementing checkout, cart, or pricing.
+uses:
+- usage: '[[read-usage]]'
+  when:
+  - How an order total is computed and applied. Pull when implementing checkout, cart, or pricing.
+  tags:
+  - orders
+  - pricing
+  - checkout
+---
+
+# Order total
+
+Sums each line (`price × quantity`) and writes it back onto the order. An empty
+order is a no-op. Product shape comes from [[knowledge-product]]#Product.
+
+```psaido
+!sc OrderItem
+- product: @knowledge/product#Product
+- quantity: number
+
+!sc Order
+- id: number
+- items: [OrderItem]
+- total: number
+
+!fn calculateOrderTotal > number
+- input: Order
+  total = 0
+  for item in input.items do
+    total = total + item.product.price * item.quantity
+< total
+
+!fn processOrder > Order
+- input: Order
+  if input.items.length == 0 then
+    < input
+  input.total = calculateOrderTotal(input)
+< input
+```

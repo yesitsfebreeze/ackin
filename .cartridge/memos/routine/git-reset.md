@@ -1,0 +1,76 @@
+---
+kind: routine
+description: Move HEAD and undo commits with git reset — keep the changes (soft), keep them but unstage
+  (mixed), or discard them entirely (hard). Use to undo the last commit, squash recent work back into
+  the index, or throw away local commits and changes.
+uses:
+- usage: '[[run-usage]]'
+  when:
+  - undo the last commit
+  - uncommit but keep changes
+  - discard local commits
+  - move HEAD back
+  - squash recent commits into staging
+  - throw away changes
+  - reset to a commit
+  tags:
+  - git
+  - reset
+  - undo
+  - head
+  - soft
+  - hard
+---
+
+## Inputs
+
+Requires on PATH: `git`. Recipe parameters are named in Do; supply paths and arguments for the current task.
+Risk: side effects git-write; danger high.
+
+## Do
+
+Move the current branch to another commit, choosing what happens to your work.
+`soft` keeps changes **staged** (undo a commit, recommit differently); `mixed`
+(the default) keeps them **unstaged**; `hard` **discards** them entirely. The
+three modes are the whole story: soft and mixed are safe (your edits survive),
+`hard` is the one that destroys uncommitted work. Refs follow [[git-refs]]; to
+recover after a bad reset, [[git-recover]] reads the reflog.
+
+| Mode | Commit undone? | Changes kept? | Where |
+|------|----------------|---------------|-------|
+| `soft` | yes | yes | staged (index) |
+| `mixed` | yes | yes | unstaged (working tree) |
+| `hard` | yes | **no** | gone |
+
+`reset --soft HEAD~1` is "undo the last commit but keep everything staged" — the
+clean way to redo a commit message or combine it with more changes. `--mixed`
+(default) also unstages. `--hard HEAD~1` throws the commit *and* its changes away
+— only do this when you are sure, and remember the commit still lives in the
+reflog for ~90 days ([[git-recover]]) if you panic. To move to a specific commit
+rather than relative, pass any commit-ish to `to`.
+
+```just
+# undo commits but keep the changes STAGED (default: last 1)
+soft n="1":
+  git reset --soft HEAD~{{n}}
+
+# undo commits and keep the changes UNSTAGED
+mixed n="1":
+  git reset --mixed HEAD~{{n}}
+
+# undo commits and DISCARD the changes (destructive)
+hard n="1":
+  git reset --hard HEAD~{{n}}
+
+# reset the current branch to a specific commit (mode: --soft|--mixed|--hard)
+to commit mode="--mixed":
+  git reset {{mode}} {{quote(commit)}}
+```
+
+## Check
+
+Every recipe exits 0 and produces the output or files its row in Do describes. `soft` is the default recipe.
+
+## Failure
+
+Report a missing prerequisite or failed command. Resolve the failure before continuing dependent steps.

@@ -1,0 +1,60 @@
+---
+kind: note
+description: Session and login flow sketch — credentials in, session out. Pull when implementing auth,
+  login, or token refresh.
+uses:
+- usage: '[[read-usage]]'
+  when:
+  - Session and login flow sketch — credentials in, session out. Pull when implementing auth, login, or
+    token refresh.
+  tags:
+  - auth
+  - session
+  - login
+  - security
+---
+
+# Auth session
+
+A scaffold for the login flow. Imports the user store via `!im @db/users as udb`
+and references it through the `udb` alias; password verification and tokens come
+from `@auth/crypto`.
+
+```psaido
+!im @db/users as udb
+
+!sc Credentials
+- email: string
+- password: string
+
+!sc Session
+- user: udb.User
+- token: string
+- expiresAt: number
+
+!fn login > Session
+- input: Credentials
+  record = udb.findByEmail(input.email)
+  if record == null then
+    < null
+  // verifyPassword and issueToken live in @auth/crypto; inline link:
+  ok = @auth/crypto#verifyPassword(input.password, record.passwordHash)
+  if ok == false then
+    < null
+  token = @auth/crypto#issueToken(record.id)
+< Session{ user: record, token: token, expiresAt: now() + 3600 }
+
+!fn refresh > Session
+- session: Session
+  if now() > session.expiresAt then
+    < null
+  token = @auth/crypto#issueToken(session.user.id)
+< Session{ user: session.user, token: token, expiresAt: now() + 3600 }
+```
+
+## Notes for the translator
+
+- `now()` is a runtime primitive the host language provides; do not translate it
+  to a stored field.
+- `null` returns are the failure path — translate to the host's idiom
+  (exception, `Option::None`, `nil`, etc.).

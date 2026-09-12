@@ -5,7 +5,8 @@ The source checkout at `~/dev/sys` was left in place. Its 15 cartridges and the
 independent sibling repositories. Each repository starts with an import commit
 recording its source revision, followed by the changes for this layout.
 
-The parent now contains only its 17 submodule directories and Git metadata.
+The parent contains its 17 submodule directories, Git metadata, and the later
+requested forwarding Justfile.
 All build scripts, documentation, profiles, catalogs, output, and validation
 logs live in `cartridge.ctg/`. The shared 13-package cartridge workspace lives in
 `cartridge.ctg/workspace/`; members explicitly point there with Cargo’s
@@ -89,3 +90,7 @@ The submodule URLs name `yesitsfebreeze/<name>.ctg` on GitHub. Repositories and
 commits are prepared locally; publishing them is a separate step. A local clone
 can use Git's `submodule.<name>.url` configuration to point at these existing
 checkouts. After publication, a recursive clone uses the recorded GitHub URLs.
+
+The subsequent development-orchestration and sys information migration are
+recorded in [MIGRATION.md](MIGRATION.md). The forwarding Justfile is an explicit
+exception requested after the round-5 root cleanup.

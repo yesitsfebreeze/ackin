@@ -1,0 +1,70 @@
+---
+kind: routine
+description: Query and transform JSON with jq — apply a filter, list top-level keys, extract a path, pretty-print
+  or emit raw values. Use to slice JSON output or files on the command line.
+uses:
+- usage: '[[run-usage]]'
+  when:
+  - filter json output
+  - query json
+  - extract a field from json
+  - list json keys
+  - pretty-print json
+  - get raw value from json
+  - transform json
+  - slice json
+  tags:
+  - search
+  - jq
+  - json
+  - query
+  - filter
+---
+
+## Inputs
+
+Requires on PATH: `jq`. Recipe parameters are named in Do; supply paths and arguments for the current task.
+Risk: danger none.
+
+## Do
+
+Reads JSON, applies a filter program, writes JSON. `run` is the default and
+takes any filter; the rest are common filters pre-baked. The filter argument is
+its own little language — grammar in [[search-jqlang]]. Feed it a file or pipe JSON
+on stdin; pair with [[search-rg]] to find the JSON, then slice it here.
+
+| Recipe | Filter | Returns |
+|--------|--------|---------|
+| `run` | yours | whatever the filter yields |
+| `keys` | `keys` | sorted top-level keys |
+| `get` | `.<path>` | the value at a dotted path |
+| `pretty` | `.` (`-r` off) | the input re-indented |
+
+`get` takes a path like `.a.b[0]`; lead with `.` is supplied for you, so pass
+`a.b[0]`. `-r` (raw) on `get` drops the surrounding quotes from string results.
+
+```just
+# apply an arbitrary jq filter to a file (default)
+run filter file:
+  jq {{quote(filter)}} {{quote(file)}}
+
+# list the top-level object keys
+keys file:
+  jq keys {{quote(file)}}
+
+# extract the value at a dotted path, raw (unquoted strings)
+get path file:
+  jq -r {{quote("." + path)}} {{quote(file)}}
+
+# re-indent / pretty-print the whole document
+pretty file:
+  jq . {{quote(file)}}
+```
+
+## Check
+
+Every recipe exits 0 and produces the output or files its row in Do describes. `run` is the default recipe.
+
+## Failure
+
+Report a missing prerequisite or failed command. Resolve the failure before continuing dependent steps.

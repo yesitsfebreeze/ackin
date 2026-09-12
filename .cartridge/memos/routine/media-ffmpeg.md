@@ -1,0 +1,75 @@
+---
+kind: routine
+description: Convert and edit audio/video with ffmpeg — change container or codec, trim a clip without
+  re-encoding, extract the audio track, and scale a video. Use to convert a media file, cut a section,
+  pull the audio out, or resize a video.
+uses:
+- usage: '[[run-usage]]'
+  when:
+  - convert a video
+  - change media format
+  - trim or cut a video
+  - extract audio from a video
+  - resize or scale a video
+  - transcode
+  - mp4 to something
+  tags:
+  - media
+  - ffmpeg
+  - video
+  - audio
+  - convert
+  - transcode
+---
+
+## Inputs
+
+Requires on PATH: `ffmpeg`. Recipe parameters are named in Do; supply paths and arguments for the current task.
+Risk: side effects file-write; danger low.
+
+## Do
+
+The universal media transcoder. `convert` changes format by output extension;
+`trim` cuts a time range; `audio` extracts the sound track; `scale` resizes
+video. The input is `-i`, the last argument is the output, and ffmpeg infers
+codecs from the extensions — so most jobs are just "in file, out file".
+
+| Recipe | Does |
+|--------|------|
+| `convert` | re-encode to the output extension's format |
+| `trim` | cut from a start time for a duration (stream-copy, fast) |
+| `audio` | extract the audio track to an audio file |
+| `scale` | resize video to a target width (height auto) |
+
+`trim` uses `-c copy` to cut on keyframes *without re-encoding* — near-instant,
+though the cut may land a keyframe off; drop `-c copy` for a frame-exact (slower)
+cut. Put `-ss` (start) and `-t` (duration) *before* `-i` for a fast seek.
+`-c:a copy` in `convert` keeps the audio as-is while changing video. `scale=W:-2`
+keeps aspect ratio and an even height (required by most codecs). Times are
+`HH:MM:SS` or seconds.
+
+```just
+# re-encode to the output file's format (default; codecs inferred from extension)
+convert input output:
+  ffmpeg -i {{quote(input)}} {{quote(output)}}
+
+# cut from start for duration, without re-encoding (fast)
+trim input start duration output:
+  ffmpeg -ss {{quote(start)}} -t {{quote(duration)}} -i {{quote(input)}} -c copy {{quote(output)}}
+
+# extract the audio track (e.g. output ending in .mp3/.m4a)
+audio input output:
+  ffmpeg -i {{quote(input)}} -vn {{quote(output)}}
+
+# resize video to a target width, keeping aspect ratio
+scale input width output:
+  ffmpeg -i {{quote(input)}} -vf scale={{quote(width)}}:-2 {{quote(output)}}
+```
+
+## Check
+
+Every recipe exits 0 and produces the output or files its row in Do describes. `convert` is the default recipe.
+
+## Failure
+
+Report a missing prerequisite or failed command. Resolve the failure before continuing dependent steps.

@@ -1,0 +1,127 @@
+---
+kind: note
+description: Nushell — the structured-data shell. Pipelines carry typed tables and records, not raw text,
+  so you filter/sort/select with where/get/sort-by instead of awk/grep/cut. Use to query command output
+  as data, parse files into tables, or write nu scripts.
+uses:
+- usage: '[[read-usage]]'
+  when:
+  - how do I filter in nushell
+  - nu where vs grep
+  - parse output into a table
+  - nushell variables
+  - nu records and lists
+  - convert json in nu
+  - nushell script syntax
+  - command not found in nu
+  - nu external command failed
+  - that command does not exist
+  - call a nu def or alias from a script
+  - invoke a nushell function from sh or a just recipe
+  - run a user command that is not on PATH
+  - how do I reach a launcher defined in my nu config
+  - make a justfile use my nu commands
+  - set shell nu in a justfile
+  - just recipe cannot find my nu def
+  - keep one recipe posix while the rest use nu
+  tags:
+  - shell
+  - nushell
+  - nu
+  - structured-data
+  - pipeline
+  - table
+---
+
+# Nushell
+
+The shell where a pipeline is a stream of *values*, not bytes. `ls` yields a
+table; `ps`, `sys`, `open file.json` all yield records or tables you query with
+the same verbs. Where [[shell-bash]] reaches for `grep`/`awk`/`cut`, nu reaches for
+`where`/`get`/`select` — the columns already exist. Cross-shell equivalents are
+in [[shell-rosetta]].
+
+## Data verbs — the core surface
+
+Everything is `input | verb | verb`. Verbs are closures over the rows.
+
+| Verb | Does |
+|------|------|
+| `where cond` | keep rows matching (`where size > 1mb`) |
+| `get col` / `$row.col` | pull one column or cell |
+| `select a b` | project columns |
+| `sort-by col` | sort rows (`-r` reverse) |
+| `first n` / `last n` / `skip n` | slice rows |
+| `each { |r| ... }` | map a closure over rows |
+| `length` | count rows |
+| `group-by col` / `uniq` | aggregate |
+| `to json` / `from json` | convert between formats |
+
+```nu
+ls | where type == dir | sort-by modified | last 5
+ps | where cpu > 10 | select pid name cpu
+open Cargo.toml | get package.version
+```
+
+## Variables, records, lists
+
+`let` binds immutably; `mut` makes a reassignable binding; `$env.X` is the
+environment. Records are `{k: v}`, lists are `[a b c]`, accessed by `.field` or
+`| get field`.
+
+| Form | Means |
+|------|-------|
+| `let x = 5` | immutable binding |
+| `mut x = 5; $x = 6` | mutable binding |
+| `$env.PATH` | the PATH list (real list, not a `:`-string) |
+| `{name: a, n: 1}` | a record |
+| `[1 2 3]` | a list |
+| `$in` | the piped-in value inside a block/closure |
+
+## Strings and externals
+
+External commands still work; wrap output through parsers to get structure
+back. `^cmd` forces the external over a built-in of the same name.
+
+| Form | Means |
+|------|-------|
+| `^git status` | run external `git`, bypass any builtin |
+| `(ls).name` | parenthesize a pipeline, then index |
+| `"a,b" | split row ","` | text → list |
+| `$"hello ($name)"` | string interpolation |
+| `cmd \| complete` | capture `{stdout, stderr, exit_code}` |
+
+## Calling a command that isn't found
+
+If a name errors with *command not found* / *External command failed*, the cause
+is almost always **context, not a missing tool**: nu `def`s and aliases live in
+`config.nu`, which only an interactive nu loads.
+
+- **Inside interactive nu** (config loaded — e.g. a host that spawned
+  `nu --login --interactive`): every `def`, alias, and `$env` from your config is
+  live. Call it directly — `cl my task` resolves and renders in place.
+- **The trap:** `nu -c '<cmd>'`, another shell, or a `just` recipe body (which
+  runs under `sh -cu`, a fresh child) does **not** load `config.nu`. Your defs and
+  aliases are invisible there even when nu is your login shell — owning the
+  terminal doesn't share a function table with a subprocess.
+
+Two reliable ways to reach the command anyway:
+
+| Want | Do | Cost |
+|------|----|------|
+| call a nu `def`/alias from outside interactive nu | `nu --login -c '<cmd>'` — `--login` is **mandatory**; bare `nu -c` skips config | ~80ms (loads config each call) |
+| make a tool reachable from *any* shell/recipe/cron | ship it as a real file on `$PATH` (a thin launcher), not a nu `def` | ~0 — preferred for anything called often |
+| make a whole justfile reach your nu `def`s | `set shell := ['nu', '-l', '-c']` at the top — every recipe then runs under login nu with config loaded; keep a POSIX recipe by giving it a `#!/usr/bin/env sh` shebang (a recipe shebang overrides `set shell`) | per-recipe nu startup |
+
+Probe before you guess: `command -v <name>` (see [[shell-which]]) reports the path,
+def, or alias a name resolves to — or exits non-zero if nothing does. `^name`
+forces the external binary over a nu builtin of the same name.
+
+## Gotchas vs POSIX shells
+
+- No word-splitting: `$x` is one value, never re-split — so quoting bugs vanish.
+- `&&`/`||` are `and`/`or` between commands via `;` and explicit `if`, but `&&`
+  and `||` are now supported as command separators too.
+- `export-env` / `$env` mutations in a script don't leak to the parent unless
+  sourced; use `--env` on `def`.
+- Comparisons are typed: `where size > 1mb` works because `size` is a filesize.
