@@ -3,7 +3,7 @@ atomic: read-the-contract
 subject: pass one's report holds the call-site census this pass edits from, and the answer under `## Answers` closes the only fork left
 date: 2026-09-12
 updated: 2026-09-12
-runs: 2
+runs: 3
 tags:
   - atomic
 ---

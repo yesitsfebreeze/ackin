@@ -3,7 +3,7 @@ atomic: query-the-record-first
 subject: the machine stall this run hits was already on record from pass one, so no time was spent rediscovering it
 date: 2026-09-12
 updated: 2026-09-12
-runs: 2
+runs: 3
 tags:
   - atomic
 ---
@@ -11,9 +11,12 @@ tags:
 ## Do
 
 1. Run `python3 <pearde>/resources/knowledge.py query "<the contract as a
-   question>"` from the board's repo root, where `<pearde>` is the install
-   directory the brief's own `workflows.py` line names, before any research
-   outside the repo.
+   question>"` from the board's repo root, before any research outside the
+   repo. `<pearde>` is a real absolute path and the brief prints it with an
+   `@` alias that does not resolve from a shell — take it from the `pearde`
+   executable itself: `dirname $(dirname $(readlink -f $(which pearde)))`, or
+   failing that `find / -name knowledge.py -path '*resources*' 2>/dev/null`.
+   Never paste the `@` form into a shell; it is a reference, not a path.
 2. Read every strong hit at `.pearde/wiki/<type>/<slug>.md` — `query` prints
    the slug and its folder, not the text; a gap enqueues itself and is a
    report line, not a question to the person.

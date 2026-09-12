@@ -3,13 +3,18 @@ atomic: write-the-specs
 subject: the next worker gets the file, not the head, and every unverified claim has to arrive as a box that can fail
 date: 2026-09-12
 updated: 2026-09-12
-runs: 0
+runs: 1
 tags:
   - atomic
 ---
 
 ## Do
 
+0. If `specs/` is already populated from an earlier pass and the contract has
+   not changed, do not write new units. Close the open boxes instead, and
+   write into each the command that closed it and its output. A second pass
+   that re-splits work already specced renumbers the board's only live view of
+   the run. Say in the report which of the two this was.
 1. Split what the build stands up into implementable units and write each to `specs/specNN.md` from the template.
 2. Give each a `footprint:` of the paths it writes — never a root that clashes with the board — and a `complexity:`.
 3. Under each, say what already stands in the tree and what is left to finish.

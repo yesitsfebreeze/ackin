@@ -3,7 +3,7 @@ atomic: port-the-tests-the-cut-orphaned
 subject: every test of the cut part asserted through it, so deleting the file silently drops coverage of the part that was kept
 date: 2026-09-12
 updated: 2026-09-12
-runs: 1
+runs: 2
 tags:
   - atomic
 ---

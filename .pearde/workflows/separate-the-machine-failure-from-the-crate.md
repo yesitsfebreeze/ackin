@@ -10,6 +10,11 @@ tags:
 
 ## Do
 
+0. This atomic is entered only when the build stalls with no diagnostic. If
+   the build printed its success line, record the step as not applicable,
+   quote that line, and go on — there is no machine failure to separate from
+   the crate. A machine that recovered between passes is the common case on a
+   re-run, and it is not a failure of this atomic.
 1. When the build stalls with no diagnostic, check whether the processes are burning CPU or parked at 0%.
 2. Reduce it to the smallest thing outside the project that shows the same symptom, and keep that reproduction as a script in `probe/`.
 3. Re-test the workarounds a previous pass left untried, and write down the ones that do not work as well as the ones that do, and stop when the remaining candidates all require a privilege you do not have; say so and name the privilege rather than continuing.

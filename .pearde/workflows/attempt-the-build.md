@@ -3,7 +3,7 @@ atomic: attempt-the-build
 subject: a rename applied by string match across eight files is a guess until a compiler reads it
 date: 2026-09-12
 updated: 2026-09-12
-runs: 2
+runs: 3
 tags:
   - atomic
 ---
@@ -29,3 +29,9 @@ tags:
 
 - The build produces no output at all and no process is burning CPU. That is not this atomic's failure and re-running it is waste — it is step 6's whole subject, and the route goes there.
 - A box is ticked on a build that was started and never finished. An unfinished build is not a passed one.
+- A build that finishes in under a second on a tree that was just edited is
+  reported as passed without checking for a compiler cache. Where
+  `rustc-wrapper` is set in `~/.cargo/config.toml`, a full recompile can
+  report 0.5s on a cache hit. Force the unit with `touch` on the crate root
+  and confirm the `Compiling <crate>` line appears, or the success line is
+  about a build that never happened.
