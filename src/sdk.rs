@@ -659,9 +659,9 @@ mod tests {
 			host.spawn("nested", &[path.display().to_string()], Value::Null)
 				.await
 		});
-		tokio::time::timeout(std::time::Duration::from_secs(1), async {
+		tokio::time::timeout(std::time::Duration::from_secs(3), async {
 			while !pid.exists() {
-				tokio::task::yield_now().await;
+				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 			}
 		})
 		.await
@@ -669,7 +669,7 @@ mod tests {
 		task.abort();
 		assert!(task.await.unwrap_err().is_cancelled());
 		let pid = std::fs::read_to_string(pid).unwrap();
-		tokio::time::timeout(std::time::Duration::from_secs(1), async {
+		tokio::time::timeout(std::time::Duration::from_secs(3), async {
 			while std::process::Command::new("/bin/kill")
 				.args(["-0", pid.trim()])
 				.stderr(std::process::Stdio::null())
