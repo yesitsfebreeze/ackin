@@ -27,6 +27,9 @@ pub struct Host {
 	pub(crate) profile: PathBuf,
 	outbox: broadcast::Sender<serde_json::Value>,
 	pub(crate) loaded: Mutex<Vec<crate::loader::Loaded>>,
+	/// The entry set a one-cartridge verify runs, in place of the profile's.
+	/// `None` everywhere else, so the profile stays the manifest of record.
+	pub(crate) solo: Mutex<Option<Vec<crate::loader::Entry>>>,
 	pub(crate) reload_lock: tokio::sync::Mutex<()>,
 	/// The debug tap, present exactly while debug mode is on.
 	debug: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -98,6 +101,7 @@ impl Host {
 			profile: profile.canonicalize().unwrap_or(profile),
 			outbox,
 			loaded: Mutex::new(Vec::new()),
+			solo: Mutex::new(None),
 			reload_lock: tokio::sync::Mutex::new(()),
 			debug: Mutex::new(None),
 			deps: Mutex::new(HashMap::new()),

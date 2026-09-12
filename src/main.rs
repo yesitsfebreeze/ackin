@@ -83,11 +83,6 @@ enum Command {
 	List,
 	/// Every cartridge installed under the cartridge root, and what each need binds to
 	Ledger,
-	/// Resolve a tool's chain off the ledger, to its far end, and start it
-	/// there. The far end's program comes up and re-enters this binary for
-	/// the next link, one re-entry per link, until the named tool is running
-	/// at the top of a tree assembled out of whatever the ledger held at the
-	/// moment of the ask
 	Up {
 		key: String,
 	},
@@ -100,8 +95,13 @@ enum Command {
 		#[arg(long, default_value = "[]")]
 		rest: String,
 	},
-	/// Load the profile and run every contract its cartridges declare
-	Verify,
+	/// Load the profile and run every contract its cartridges declare; name a
+	/// cartridge to verify just that one, in isolation, against its own contract
+	Verify {
+		/// The cartridge: a ledger path from the cartridge root, or the folder
+		/// it sits in
+		cartridge: Option<String>,
+	},
 	/// Run one chain node of a Lua-entry cartridge in-host. The re-entry
 	/// execs into this, so a node's program is the host itself; a person
 	/// never invokes it, and the ledger's env protocol is the only way in
@@ -772,9 +772,13 @@ async fn main() {
 		Command::Status => ask(&profile, json!({ "status": true }), "status").await,
 		Command::Debug { state } => ask(&profile, json!({ "debug": state }), "debug").await,
 		Command::Socket => println!("{}", socket::path(&profile).display()),
-		Command::Verify => {
+		Command::Verify { cartridge } => {
 			let host = Host::new(Runtime::new(), &dir, &profile);
-			match host.verify().await {
+			let run = match &cartridge {
+				Some(one) => host.verify_one(one).await,
+				None => host.verify().await,
+			};
+			match run {
 				Ok((ran, failures)) if failures.is_empty() => println!("{ran} contracts passed"),
 				Ok((_, failures)) => {
 					for failure in failures {

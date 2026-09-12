@@ -62,6 +62,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::ledger::{Bound, Installed, Ledger};
 use crate::runtime::{Component, FiberHandle};
 use mlua::{LuaSerdeExt, Table};
 use notify::{RecursiveMode, Watcher};
@@ -712,6 +713,12 @@ impl Host {
 	/// root) is added, which is how programmatic composition survives.
 	/// `config.lua` maps entry id to config fields laid over the entry's own.
 	fn entries(self: &Arc<Self>) -> Result<Vec<Entry>, mlua::Error> {
+		// A solo run hands over its own entry set and the profile is never
+		// read: verifying one cartridge in isolation is the one ask where the
+		// manifest of record is the caller's choice and not `init.lua`'s.
+		if let Some(solo) = self.solo.lock().clone() {
+			return Ok(solo);
+		}
 		let mut entries = self.derived();
 		let profile = self.profile.join("init.lua");
 		let overrides: Vec<Entry> = if profile.is_file() {
@@ -833,6 +840,114 @@ impl Host {
 	/// is never called.
 	pub async fn verify(self: &Arc<Self>) -> Result<(usize, Vec<String>), String> {
 		let contracts = self.contracts().map_err(|e| e.to_string())?;
+		self.run_contracts(contracts).await
+	}
+
+	/// Verify **one** cartridge in isolation: the ledger resolves its
+	/// dependencies and the document states its contract, and the profile is
+	/// never read. The host is given the target plus only the cartridges its
+	/// needs bind to, so the thing just written is tested against its own
+	/// contract without a system assembled around it. Returns the same pair
+	/// [`Host::verify`] does, over the target's contracts alone.
+	pub async fn verify_one(self: &Arc<Self>, target: &str) -> Result<(usize, Vec<String>), String> {
+		let (entries, contracts) = self.solo(target)?;
+		*self.solo.lock() = Some(entries);
+		let result = self.run_contracts(contracts).await;
+		*self.solo.lock() = None;
+		result
+	}
+
+	/// The entries a one-cartridge verify loads, and the contracts it runs —
+	/// the target's alone. Providers pulled in for the target's needs are
+	/// enabled and nothing else: they are loaded to be reached, not to be
+	/// graded, so their own contracts are not this run's business.
+	fn solo(
+		self: &Arc<Self>,
+		target: &str,
+	) -> Result<(Vec<Entry>, Vec<(String, &'static str, String)>), String> {
+		let ledger = Ledger::scan(&self.dir);
+		let at = match ledger.get(target) {
+			Some(e) => e.path.clone(),
+			None => {
+				// A path that is not a ledger path may still name the folder the
+				// cartridge sits in, so the ask is answered either way the writer
+				// knew it.
+				let asked = normalize(&self.dir.join(target));
+				let found = ledger
+					.entries()
+					.find(|e| normalize(&e.dir) == asked)
+					.ok_or_else(|| format!("`{target}` is not a cartridge under {}", self.dir.display()))?;
+				found.path.clone()
+			}
+		};
+		// The closure of the target's needs, resolved the way the tree resolves
+		// them: the asker's subtree first, then outward. A provider is loaded
+		// with its own needs answered too, so the walk reaches the whole chain
+		// the target would draw on when installed. Nothing outside the closure
+		// is touched, which is what makes the run an isolation and not a
+		// profile under another name.
+		let mut chosen: Vec<Entry> = Vec::new();
+		let mut frontier = vec![at.clone()];
+		while let Some(path) = frontier.pop() {
+			let e = ledger.get(&path).expect("ledger entry");
+			for key in &e.needs {
+				match ledger.resolve(&e.path, key) {
+					Bound::None => {
+						return Err(format!(
+							"{path}: need `{key}` binds to nothing in the tree"
+						))
+					}
+					Bound::Clashed(offered) => {
+						return Err(format!(
+							"{path}: need `{key}` is ambiguous ({})",
+							offered.iter().map(|p| p.path.as_str()).collect::<Vec<_>>().join(", ")
+						))
+					}
+					Bound::One(provider) => {
+						if chosen.iter().all(|entry| entry.id != provider.path) {
+							chosen.push(Self::solo_entry(provider));
+							frontier.push(provider.path.clone());
+						}
+					}
+				}
+			}
+			if !chosen.iter().any(|entry| entry.id == path) {
+				chosen.insert(0, Self::solo_entry(e));
+			}
+		}
+		// The document states the contract, read where the entry must already
+		// be in place: a document that cannot be read, or an entry missing, is
+		// what verification exists to catch, so neither is a silent pass.
+		let (cartridge, _) = Cartridge::read(&self.dir.join(&at).join(MANIFEST))
+			.map_err(|e| format!("{at}: {e}"))?;
+		let contracts = [
+			("selftest", cartridge.selftest),
+			("integration", cartridge.integration),
+		]
+		.into_iter()
+		.filter_map(|(obligation, key)| key.map(|key| (at.clone(), obligation, key)))
+		.collect();
+		Ok((chosen, contracts))
+	}
+
+	/// One ledger entry as a profile entry, by its path from the root and
+	/// enabled: a solo run grades its cartridges by loading them, which is the
+	/// one thing the ledger's *available, not started* default never does.
+	fn solo_entry(installed: &Installed) -> Entry {
+		Entry {
+			id: installed.path.clone(),
+			path: installed.path.clone(),
+			config: serde_json::Value::Null,
+			disabled: false,
+			isolate: Vec::new(),
+			inject: Vec::new(),
+		}
+	}
+
+	async fn run_contracts(
+		self: &Arc<Self>,
+		contracts: Vec<(String, &'static str, String)>,
+	) -> Result<(usize, Vec<String>), String> {
 		let mut failures = Vec::new();
 		let mut lifecycle = self.rt.lifecycle();
 		self.reconcile().await.map_err(|e| e.to_string())?;
