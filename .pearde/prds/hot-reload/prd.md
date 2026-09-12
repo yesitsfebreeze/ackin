@@ -1,13 +1,15 @@
 ---
-state: open
+state: done
 origin: requested
 priority: 65
-complexity: 0
-blast-radius:
+complexity: 13
+blast-radius: mid
 needs:
   - the-resolver
   - the-wire
+actual: 0.01h
 ---
+
 
 # Hot reload
 
@@ -32,3 +34,35 @@ the old process must fail preparation rather than bind it twice.
 
 At the end, a cartridge is rebuilt and swapped under a running tree, its
 dependents follow it, and nothing else notices.
+
+## History
+
+**failed, retried 2026-09-12 20:35**
+
+spec01: exit 2
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 0.07s
+
+bash: line 3: test: too many arguments
+
+## Report
+
+spec01: exit 0
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 0.07s
+
+spec02: exit 0
+
+running 14 tests
+..............
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 98 filtered out; finished in 4.31s
+
+{"msg":"runtime error: [string \"/private/var/folders/_p/tzmzw3m10kg7sg9hc7_mk...\"]:3: migration rejected\nstack traceback:\n\t[C]: in function 'error'\n\t[string \"/private/var/folders/_p/tzmzw3m10kg7sg9hc7_mk...\"]:3: in function <[string \"/private/var/folders/_p/tzmzw3m10kg7sg9hc7_mk...\"]:1>","src":"p","t":1789238133356,"turn":null}
+{"msg":"runtime error: /private/var/folders/_p/tzmzw3m10kg7sg9hc7_mkm7w0000gn/T/.tmpPy1sfx/p/cartridge.json: expected value at line 1 column 1","src":"instance","t":1789238133357,"turn":null}
+{"msg":"no running node carries uid 2","src":"2","t":1789238133402,"turn":null}
+{"msg":"rejected fixture migration","src":"peer","t":1789238133853,"turn":null}
+{"msg":"child refused reload","src":"parent","t":1789238134341,"turn":null}
