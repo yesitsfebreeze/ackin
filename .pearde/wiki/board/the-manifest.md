@@ -1,19 +1,20 @@
 ---
 title: the-manifest
 type: prd
-state: open
+state: done
 origin: requested
 priority: 85
-complexity: 0
-blast: low
-tags: [prd, state/open, origin/requested, blast/low]
+complexity: 33
+blast: mid
+tags: [prd, state/done, origin/requested, blast/mid]
 needs:
   - "[[wiki/board/the-host-binary]]"
+workflow: "[[probe-then-spec]]"
 ---
 
 # The manifest
 
-`state: open · origin: requested · priority 85 · complexity 0 · blast —`
+`state: done · origin: requested · priority 85 · complexity 33 · blast mid`
 
 ## Fed by (needs this one)
 
@@ -23,3 +24,12 @@ needs:
 ## Needs (gates this one behind)
 
 - [[wiki/board/the-host-binary]]
+
+Runs on: [[probe-then-spec]]
+
+## Specs
+
+- [[.pearde/prds/the-manifest/specs/spec01]]
+- [[.pearde/prds/the-manifest/specs/spec02]]
+- [[.pearde/prds/the-manifest/specs/spec03]]
+- [[.pearde/prds/the-manifest/specs/spec04]]

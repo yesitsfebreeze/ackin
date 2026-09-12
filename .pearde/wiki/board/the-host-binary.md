@@ -1,12 +1,12 @@
 ---
 title: the-host-binary
 type: prd
-state: claimed
+state: done
 origin: requested
 priority: 90
 complexity: 32
 blast: high
-tags: [prd, state/claimed, origin/requested, blast/high]
+tags: [prd, state/done, origin/requested, blast/high]
 needs:
   - "[[wiki/board/the-build-signal]]"
 workflow: "[[probe-then-spec]]"
@@ -14,7 +14,7 @@ workflow: "[[probe-then-spec]]"
 
 # The host binary
 
-`state: claimed · origin: requested · priority 90 · complexity 32 · blast high`
+`state: done · origin: requested · priority 90 · complexity 32 · blast high`
 
 ## Fed by (needs this one)
 
