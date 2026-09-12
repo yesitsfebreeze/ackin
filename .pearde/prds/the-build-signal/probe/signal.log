@@ -1,0 +1,5 @@
+dyld                   OK
+cargo-build            OK
+zirkle-help            OK
+cargo-test             OK (53 passed)
+signal=live

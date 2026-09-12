@@ -1,0 +1,9 @@
+Sat Sep 12 16:17:16 CEST 2026
+--- syspolicyd / amfid now ---
+  PID  PPID  %CPU STARTED                           TIME COMM
+  336     1   0.0 Fri Sep 11 13:00:08 2026       0:02.65 /usr/libexec/amfid
+90220  4652   0.0 Sat Sep 12 16:09:40 2026       0:00.00 /bin/zsh
+90702  4652   0.0 Sat Sep 12 16:10:25 2026       0:00.00 /bin/zsh
+93109     1   0.2 Sat Sep 12 16:11:51 2026       0:30.12 /usr/libexec/syspolicyd
+--- pid 498 (the pegged one) ---
+  PID TTY           TIME CMD
