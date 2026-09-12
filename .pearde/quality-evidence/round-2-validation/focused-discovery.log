@@ -1,0 +1,11 @@
+   Compiling cartridge v0.1.0 (/Users/feb/dev/cartridge/.pearde/.lanes/quality-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.99s
+     Running unittests src/lib.rs (target/debug/deps/cartridge-67c8ccd36f19895e)
+
+running 3 tests
+test process::tests::excessive_discovery_output_is_killed_and_reaped ... ok
+test process::tests::excessive_discovery_stderr_is_also_bounded ... ok
+test process::tests::hung_discovery_is_killed_and_reaped ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 142 filtered out; finished in 3.01s
+

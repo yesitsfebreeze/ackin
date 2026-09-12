@@ -1,0 +1,12 @@
+   Compiling cartridge v0.1.0 (/Users/feb/dev/cartridge/.pearde/.lanes/quality-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.50s
+     Running unittests src/lib.rs (target/debug/deps/cartridge-67c8ccd36f19895e)
+
+running 4 tests
+test socket::tests::idle_disconnect_unsubscribes_without_a_future_publish ... ok
+test socket::tests::explicit_unsubscribe_removes_idle_pump_once ... ok
+test socket::tests::writer_failure_cancels_a_pending_call_and_unsubscribes ... ok
+test socket::tests::a_write_half_close_still_receives_its_pending_reply ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 138 filtered out; finished in 0.26s
+

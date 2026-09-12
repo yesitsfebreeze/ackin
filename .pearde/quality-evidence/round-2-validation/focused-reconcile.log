@@ -1,0 +1,9 @@
+   Compiling cartridge v0.1.0 (/Users/feb/dev/cartridge/.pearde/.lanes/quality-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.91s
+     Running unittests src/lib.rs (target/debug/deps/cartridge-67c8ccd36f19895e)
+
+running 1 test
+test socket::tests::disconnect_cleans_subscriptions_while_host_owned_reconcile_waits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.01s
+
