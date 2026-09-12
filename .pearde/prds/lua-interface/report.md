@@ -45,7 +45,7 @@ clippy clean. The lane's git history carries the port as commit `6fe121c`
 Spec sum 21, count 2 — under both board limits.
 
 - complexity: 30 — the chain link is a new cross-process channel with
-  lifecycle coupling (bind order, retry, gone-failure, fronting), but it is
+  lifecycle coupling (bind order, retry, gone-failure), but it is
   assembled from four standing mechanisms — the settled socket transport, the
   wire's reply envelope, the resolver's chain walk, the ledger's bindings —
   and the document config is one field.
@@ -233,3 +233,13 @@ green over real processes including the unprovided-key refusal
 5. Finding 7 of the analyst pass stands: the board copy at
    `.pearde/wiki/board/lua-interface.md` still reads `state: open ·
    complexity 0 · blast low`. Not mine to edit.
+
+## Corrections
+
+The skeptic (`skeptic.md`) returned CHANGE on the record, not the code:
+`Host::call` fronts nothing — it is a bare store `peek`, and a bound need
+called on the node's own socket refuses `` `<key>` is not provided `` (the
+chain-link bullet above now says so; the complexity bullet's "fronting" is
+gone), and spec01 box 4's refusal message now has its assert
+(`tests::node`'s chain test asserts the error names the unbound key).
+Landed `89be348`.
