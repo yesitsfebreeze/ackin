@@ -53,6 +53,14 @@ enum Command {
 		#[arg(default_value = "null")]
 		data: String,
 	},
+	/// Publish one event on a stream channel
+	Publish {
+		channel: String,
+		#[arg(default_value = "null")]
+		data: String,
+	},
+	/// Subscribe to a stream channel and print every event on it as it arrives
+	Follow { channel: String },
 	Tail,
 	/// Call a provided key with one JSON argument and print the reply
 	Call {
@@ -728,6 +736,22 @@ async fn main() {
 				.send(json!({ "emit": name, "data": json_arg(data) }))
 				.await
 				.expect("send");
+		}
+		Command::Publish { channel, data } => {
+			connect(&profile)
+				.await
+				.send(json!({ "publish": channel, "data": json_arg(data) }))
+				.await
+				.expect("send");
+		}
+		Command::Follow { channel } => {
+			let mut client = connect(&profile).await;
+			client.send(json!({ "subscribe": channel })).await.expect("send");
+			while let Some(m) = client.next().await {
+				if m.get("channel").is_some() || m.get("error").is_some() {
+					println!("{m}");
+				}
+			}
 		}
 		Command::Tail => {
 			let mut client = connect(&profile).await;

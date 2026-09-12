@@ -1,6 +1,8 @@
 use serde::Deserialize;
+use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,6 +26,15 @@ struct Request {
 	turn: Option<String>,
 	/// Debug mode: `"on"`, `"off"`, or `"status"` to only report.
 	debug: Option<String>,
+	/// Watch a stream channel; delivery arrives as `{"channel", "event"}` lines.
+	subscribe: Option<String>,
+	/// With `subscribe`: resume from the sequence the watcher last saw, so a
+	/// watcher that lost its connection ends up where it was.
+	since: Option<u64>,
+	/// Stop watching one.
+	unsubscribe: Option<String>,
+	/// Publish one event on a channel, as `{"publish": channel, "data": data}`.
+	publish: Option<String>,
 }
 
 pub fn path(dir: &Path) -> PathBuf {
@@ -74,6 +85,8 @@ pub async fn serve(host: Arc<Host>, path: &Path) -> std::io::Result<()> {
 async fn client(host: Arc<Host>, stream: UnixStream) {
 	let (read, mut write) = stream.into_split();
 	let (reply_tx, mut reply_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+	// Stream subscriptions of this one connection, by channel.
+	let subs: Arc<Mutex<HashMap<String, u64>>> = Arc::default();
 	let mut lifecycle = host.runtime().lifecycle();
 	let mut outbox = host.outbox();
 	let writer = tokio::spawn(async move {
@@ -112,6 +125,12 @@ async fn client(host: Arc<Host>, stream: UnixStream) {
 				continue;
 			}
 		};
+		if let Some(channel) = request.publish {
+			host
+				.runtime()
+				.stream()
+				.publish(&channel, "socket", crate::stream::Kind::Data, request.data.clone());
+		}
 		if let Some(name) = request.emit {
 			host.emit(&name, request.data);
 		}
@@ -124,6 +143,35 @@ async fn client(host: Arc<Host>, stream: UnixStream) {
 		}
 		if request.status {
 			let _ = reply_tx.send(status(&host));
+		}
+		if let Some(channel) = request.subscribe {
+			// One subscription per channel per connection: a repeat asks for what
+			// it already holds, and the old pump would keep delivering underneath.
+			if subs.lock().contains_key(&channel) {
+				continue;
+			}
+			let stream = host.runtime().stream().clone();
+			let sub = stream.subscribe(&channel, "socket", request.since);
+			subs.lock().insert(channel.clone(), sub.id);
+			// The weak handle is the disconnect detector: once the writer is
+			// gone its send fails, the leaving is announced, and the pump is over.
+			let pump_tx = reply_tx.downgrade();
+			let (pump_channel, pump_stream, id) = (channel.clone(), stream.clone(), sub.id);
+			tokio::spawn(async move {
+				let mut rx = sub.rx;
+				while let Some(envelope) = rx.recv().await {
+					let sent = pump_tx.upgrade().map(|tx| tx.send(json!({ "channel": channel, "event": envelope })));
+					if sent.is_none() {
+						pump_stream.unsubscribe(&pump_channel, id);
+						break;
+					}
+				}
+			});
+		}
+		if let Some(channel) = request.unsubscribe {
+			if let Some(id) = subs.lock().remove(&channel) {
+				host.runtime().stream().unsubscribe(&channel, id);
+			}
 		}
 		if let Some(state) = request.debug {
 			let reply = match state.as_str() {

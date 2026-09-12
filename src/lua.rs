@@ -209,6 +209,14 @@ impl Host {
 		self.send(
 			serde_json::json!({ "error": { "cartridge": cartridge, "message": message.to_string() } }),
 		);
+		// Errors are events: the failure lands on the stream too, so a watcher
+		// of this cartridge's channel learns of it without calling into it.
+		self.rt.stream().publish(
+			cartridge,
+			cartridge,
+			crate::stream::Kind::Error,
+			serde_json::json!(message.to_string()),
+		);
 	}
 
 	/// The envelope a cartridge's `send` puts on the socket.

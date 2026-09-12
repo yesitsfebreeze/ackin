@@ -9,7 +9,11 @@
 //! last. Cartridge to host: `{"provide": key}`, `{"on": name}`,
 //! `{"emit", "data"}`, `{"send", "data"}`, `{"call", "args", "id"}`,
 //! `{"meta": key, "id"}`, `{"reply": id, "data" | "error"}`, `{"error": text}`,
-//! and `{"ready": true}` when its apply is done. A value a process provides
+//! and `{"ready": true}` when its apply is done. The stream rides the same
+//! wire: `{"publish": channel, "data"}` from a cartridge, `{"subscribe":
+//! channel}` and `{"unsubscribe": channel}` from a cartridge that watches one,
+//! and delivery back as `{"channel": channel, "event": envelope}` lines. A
+//! value a process provides
 //! is a [`Remote`]: calling it from Lua or another process sends `call`.
 
 use std::collections::HashMap;
@@ -87,6 +91,10 @@ pub struct Link {
 	reload: AtomicBool,
 	tx: mpsc::UnboundedSender<Option<Json>>,
 	pending: Mutex<Option<Pending>>,
+	/// Stream subscriptions this end holds, by channel. The daemon's side uses
+	/// it to answer `{"unsubscribe"}`; the cartridge's side never subscribes
+	/// over its own link, so the map stays empty there.
+	subs: Mutex<HashMap<String, u64>>,
 	next: AtomicU64,
 	gone: &'static str,
 }
@@ -97,6 +105,7 @@ impl Link {
 			reload: AtomicBool::new(false),
 			tx,
 			pending: Mutex::new(Some(HashMap::new())),
+			subs: Mutex::new(HashMap::new()),
 			next: AtomicU64::new(1),
 			gone,
 		})
@@ -104,6 +113,34 @@ impl Link {
 
 	pub(crate) fn send(&self, m: Json) {
 		let _ = self.tx.send(Some(m));
+	}
+
+	/// Like [`Link::send`], but tells the caller whether the pipe still took the
+	/// frame — the stream forwarders exit on the first `false` and announce
+	/// their own leaving, so a dead subscriber is never queued into.
+	pub(crate) fn try_send(&self, m: Json) -> bool {
+		self.tx.send(Some(m)).is_ok()
+	}
+
+	pub(crate) fn set_sub(&self, channel: &str, id: Option<u64>) {
+		let mut subs = self.subs.lock();
+		match id {
+			Some(id) => subs.insert(channel.to_owned(), id),
+			None => subs.remove(channel),
+		};
+	}
+
+	pub(crate) fn sub_id(&self, channel: &str) -> Option<u64> {
+		self.subs.lock().get(channel).copied()
+	}
+
+	/// Announce every stream subscription this end still holds. Called when the
+	/// link is going away for good, so a dead watcher is a `leave` event on the
+	/// channel, not a silence.
+	pub(crate) fn leave_subs(&self, stream: &crate::stream::Stream) {
+		for (channel, id) in std::mem::take(&mut *self.subs.lock()) {
+			stream.unsubscribe(&channel, id);
+		}
 	}
 
 	/// Stop the writer once everything already queued is out.
@@ -350,7 +387,7 @@ async fn start(
 			link.shutdown();
 			return Err(Error::Apply(e.to_owned()));
 		}
-		if let Err(e) = handle(&host, &ctx, &link, m) {
+		if let Err(e) = handle(&host, &ctx, &link, &name, m) {
 			link.shutdown();
 			return Err(e);
 		}
@@ -369,7 +406,7 @@ async fn start(
 				let result = match serde_json::from_str::<Json>(&line) {
 					Ok(m) => match m["error"].as_str() {
 						Some(e) if m["reply"].as_u64().is_none() => Err(Error::Apply(e.to_owned())),
-						_ => handle(&host, &ctx, &link, m),
+						_ => handle(&host, &ctx, &link, &name, m),
 					},
 					Err(e) => Err(Error::Apply(e.to_string())),
 				};
@@ -378,6 +415,7 @@ async fn start(
 				}
 			}
 			link.shutdown();
+			link.leave_subs(host.runtime().stream());
 			if !stopping.load(Ordering::SeqCst) {
 				ctx
 					.runtime()
@@ -389,6 +427,7 @@ async fn start(
 		Box::pin(async move {
 			stopping.store(true, Ordering::SeqCst);
 			link.close();
+			link.leave_subs(host.runtime().stream());
 			link.send(json!({ "dispose": true }));
 			link.stop();
 			let mut child = child;
@@ -402,7 +441,7 @@ async fn start(
 	}))
 }
 
-fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, m: Json) -> Result<(), Error> {
+fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) -> Result<(), Error> {
 	if let Some(key) = m["provide"].as_str() {
 		let remote = Remote {
 			link: link.clone(),
@@ -431,6 +470,46 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, m: Json) -> Result<(), 
 	}
 	if let Some(name) = m["send"].as_str() {
 		host.send_event(name, m["data"].clone());
+		return Ok(());
+	}
+	if let Some(channel) = m["publish"].as_str() {
+		// Publishing knows nothing of its audience and asks nothing about it: the
+		// stream takes the envelope, and an empty channel costs one append.
+		host
+			.runtime()
+			.stream()
+			.publish(channel, name, crate::stream::Kind::Data, m["data"].clone());
+		return Ok(());
+	}
+	if let Some(channel) = m["subscribe"].as_str() {
+		// One subscription per channel per link: a repeat asks for what it
+		// already holds, and the old pump would keep delivering underneath it.
+		if link.sub_id(channel).is_some() {
+			return Ok(());
+		}
+		let stream = host.runtime().stream().clone();
+		let sub = stream.subscribe(channel, name, None);
+		link.set_sub(channel, Some(sub.id));
+		let (link, channel, stream) = (link.clone(), channel.to_owned(), stream.clone());
+		tokio::spawn(async move {
+			let mut rx = sub.rx;
+			let id = sub.id;
+			while let Some(envelope) = rx.recv().await {
+				if !link.try_send(json!({ "channel": channel, "event": envelope })) {
+					// The pipe is gone, so the leaving is announced here and the
+					// forwarder is over.
+					stream.unsubscribe(&channel, id);
+					break;
+				}
+			}
+		});
+		return Ok(());
+	}
+	if let Some(channel) = m["unsubscribe"].as_str() {
+		if let Some(id) = link.sub_id(channel) {
+			link.set_sub(channel, None);
+			host.runtime().stream().unsubscribe(channel, id);
+		}
 		return Ok(());
 	}
 	if link.accept(&m) {

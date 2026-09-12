@@ -133,6 +133,46 @@ impl UserData for LuaCtx {
 			this.host.send_event(&name, data);
 			Ok(())
 		});
+		methods.add_method("publish", |_, this, (channel, payload): (String, mlua::Value)| {
+			let data = this.host.to_json(payload);
+			this
+				.host
+				.runtime()
+				.stream()
+				.publish(&channel, &this.cartridge, crate::stream::Kind::Data, data);
+			Ok(())
+		});
+		methods.add_method("subscribe", |_, this, (channel, f): (String, Function)| {
+			let stream = this.host.runtime().stream().clone();
+			let sub = stream.subscribe(&channel, &this.cartridge, None);
+			// One pump per subscription, handling in arrival order so two events
+			// published one after the other never race inside the Lua function.
+			let pump_host = this.host.clone();
+			let pump_stream = stream.clone();
+			let pump_channel = channel.clone();
+			let pump = tokio::spawn(async move {
+				let mut rx = sub.rx;
+				while let Some(envelope) = rx.recv().await {
+					let value = match pump_host.lua.to_value(&envelope) {
+						Ok(value) => value,
+						Err(_) => break,
+					};
+					if f.call::<mlua::Value>(value).is_err() {
+						// A function that dies mid-watch leaves announced, not silent.
+						pump_stream.unsubscribe(&pump_channel, sub.id);
+						break;
+					}
+				}
+			});
+			this.ctx.effect_sync(move || {
+				Box::new(move || {
+					pump.abort();
+					stream.unsubscribe(&channel, sub.id);
+					Box::pin(async {})
+				})
+			});
+			Ok(())
+		});
 		methods.add_method(
 			"cartridge",
 			|_, this, (path, config): (String, mlua::Value)| {

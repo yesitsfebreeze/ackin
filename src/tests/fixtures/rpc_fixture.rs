@@ -38,6 +38,11 @@ async fn main() {
 				let host = service_host.clone();
 				let config = service_config.clone();
 				async move {
+					// Telemetry mode: one call, one published event on a channel.
+					if let Some(channel) = args.get("publish").and_then(|v| v.as_str()) {
+						host.publish(channel, args.get("data").cloned().unwrap_or(json!(null)));
+						return Ok(json!(true));
+					}
 					if args == "config" {
 						return Ok(config);
 					}
@@ -67,6 +72,19 @@ async fn main() {
 			});
 			if config["apply_call"] == true {
 				host.send("apply", host.call("lua", json!(7)).await?);
+			}
+			if config["telemetry"] == true {
+				// Watches `build` and echoes every envelope it receives onto the
+				// socket, so a test reads the channel and the watcher through one
+				// client: sequence order, publisher, and join/leave all in one stream.
+				let watcher = host.clone();
+				host.subscribe("build", move |envelope| {
+					let watcher = watcher.clone();
+					async move {
+						watcher.send("watched", envelope);
+						Ok(json!(null))
+					}
+				});
 			}
 			Ok(())
 		})

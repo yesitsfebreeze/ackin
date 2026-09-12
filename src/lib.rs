@@ -9,6 +9,7 @@ pub mod resolver;
 pub mod runtime;
 pub mod sdk;
 mod service;
+pub mod stream;
 pub mod socket;
 pub mod turn;
 

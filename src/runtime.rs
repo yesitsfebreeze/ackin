@@ -7,6 +7,7 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use parking_lot::Mutex;
+use serde_json::json;
 use tokio::sync::{broadcast, watch};
 
 pub use crate::fiber::FiberHandle;
@@ -237,6 +238,10 @@ impl Registry {
 pub struct Runtime {
 	pub(crate) reg: Mutex<Registry>,
 	lifecycle: broadcast::Sender<Transition>,
+	/// The stream every fiber of this runtime publishes to. It lives here so a
+	/// failure needs no second path: [`Runtime::fail`] is the one place an error
+	/// lands, and it is where the error becomes an event.
+	pub(crate) stream: Arc<crate::stream::Stream>,
 }
 
 pub const ROOT: Uid = 0;
@@ -269,6 +274,7 @@ impl Runtime {
 				listeners: HashMap::new(),
 			}),
 			lifecycle,
+			stream: Arc::new(crate::stream::Stream::new()),
 		})
 	}
 
@@ -278,6 +284,10 @@ impl Runtime {
 
 	pub fn lifecycle(&self) -> broadcast::Receiver<Transition> {
 		self.lifecycle.subscribe()
+	}
+
+	pub fn stream(&self) -> &Arc<crate::stream::Stream> {
+		&self.stream
 	}
 
 	pub fn fibers(&self) -> Vec<FiberInfo> {
@@ -336,7 +346,17 @@ impl Runtime {
 	}
 
 	pub(crate) fn fail(self: &Arc<Self>, uid: Uid, error: Error) {
+		let (name, stream) = {
+			let reg = self.reg.lock();
+			match reg.fibers.get(&uid) {
+				Some(f) => (f.name.clone(), self.stream.clone()),
+				None => return,
+			}
+		};
+		// The failure is published on the cartridge's own channel, so whoever
+		// watches that channel learns of it even if nobody called into it.
 		self.revise(uid, |f| f.error = Some(error.to_string()));
+		stream.publish(&name, &name, crate::stream::Kind::Error, json!(error.to_string()));
 	}
 }
 
@@ -616,7 +636,7 @@ impl Ctx {
 		);
 	}
 
-	fn listeners(&self, name: &str) -> Vec<Listener> {
+	fn listeners(&self, name: &str) -> Vec<(Uid, Listener)> {
 		let reg = self.rt.reg.lock();
 		reg
 			.listeners
@@ -624,27 +644,29 @@ impl Ctx {
 			.map(|l| {
 				l.iter()
 					.filter(|r| reg.fibers.get(&r.uid).is_some_and(|f| !f.staged))
-					.map(|r| r.f.clone())
+					.map(|r| (r.uid, r.f.clone()))
 					.collect()
 			})
 			.unwrap_or_default()
 	}
 
 	pub fn emit(&self, name: &str, payload: Value) {
-		for f in self.listeners(name) {
+		for (owner, f) in self.listeners(name) {
 			let rt = self.rt.clone();
-			let fiber = self.fiber;
 			let payload = payload.clone();
 			tokio::spawn(async move {
+				// A listener that fails fails its own fiber, so the error event
+				// lands on the failing cartridge's channel — the caller is not
+				// the party that broke.
 				if let Err(e) = f(payload).await {
-					rt.fail(fiber, e);
+					rt.fail(owner, e);
 				}
 			});
 		}
 	}
 
 	pub async fn bail(&self, name: &str, payload: Value) -> Result<Option<Value>, Error> {
-		for f in self.listeners(name) {
+		for (_, f) in self.listeners(name) {
 			if let Some(v) = f(payload.clone()).await? {
 				return Ok(Some(v));
 			}
@@ -653,8 +675,12 @@ impl Ctx {
 	}
 
 	pub async fn parallel(&self, name: &str, payload: Value) -> Result<(), Error> {
-		let results =
-			futures::future::join_all(self.listeners(name).into_iter().map(|f| f(payload.clone()))).await;
+		let results = futures::future::join_all(
+			self.listeners(name)
+				.into_iter()
+				.map(|(_, f)| f(payload.clone())),
+		)
+		.await;
 		let errors: Vec<String> = results
 			.into_iter()
 			.filter_map(|r| r.err())

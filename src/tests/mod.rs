@@ -12,6 +12,7 @@ mod resolver;
 mod node;
 mod rpc_contract;
 mod socket;
+mod stream;
 mod wire;
 
 use std::path::{Path, PathBuf};

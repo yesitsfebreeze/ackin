@@ -28,6 +28,9 @@ pub type Result<T> = std::result::Result<T, String>;
 type Fut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 type Handler = Arc<dyn Fn(Value) -> Fut<Result<Value>> + Send + Sync>;
 type Finalizer = Box<dyn FnOnce() -> Fut<()> + Send>;
+/// A stream subscription's handler, fed the envelope of every event the
+/// cartridge receives on its channel, in channel order.
+type Watcher = mpsc::UnboundedSender<Value>;
 
 /// A cartridge hosted below this one, and what its `hello` declared: the
 /// reload flag is what makes a frame the host above sends this cartridge the
@@ -43,6 +46,7 @@ pub struct Host {
 	link: Arc<Link>,
 	events: Arc<Mutex<HashMap<String, Handler>>>,
 	services: Arc<Mutex<HashMap<String, Handler>>>,
+	streams: Arc<Mutex<HashMap<String, Watcher>>>,
 	finalizers: Arc<Mutex<Vec<Finalizer>>>,
 	/// The provide keys this cartridge's own declaration carries — the only
 	/// keys a child's may join, so an undeclared child key stays private.
@@ -115,6 +119,43 @@ impl Host {
 	pub fn notify(&self, name: &str, data: Value) {
 		self.emit(name, data.clone());
 		self.send(name, data);
+	}
+
+	/// Publish one event on a named channel of the stream. One line, no setup,
+	/// no audience: a channel nobody listens to costs the host one append. The
+	/// event's envelope is built on the host — sequence, publisher and kind are
+	/// the stream's business, not the publisher's.
+	pub fn publish(&self, channel: &str, data: Value) {
+		self.write(json!({ "publish": channel, "data": data }));
+	}
+
+	/// Watch a channel: every event published to it from here on arrives at
+	/// `f` in channel order, each as its full envelope (channel, sequence,
+	/// publisher, kind, data), so a watcher can tell a join from a leave and
+	/// name how far it has read.
+	pub fn subscribe<F, Fut>(&self, channel: &str, f: F)
+	where
+		F: Fn(Value) -> Fut + Send + Sync + 'static,
+		Fut: Future<Output = Result<Value>> + Send + 'static,
+	{
+		let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+		let boxed = boxed(f);
+		// One pump per subscription: the wire is read in order and the pump
+		// handles in order, so two events never race inside the handler.
+		tokio::spawn(async move {
+			while let Some(envelope) = rx.recv().await {
+				let _ = boxed(envelope).await;
+			}
+		});
+		self.streams.lock().insert(channel.to_owned(), tx);
+		self.write(json!({ "subscribe": channel }));
+	}
+
+	/// Stop watching a channel. Both ends of it are themselves events on the
+	/// channel, so everyone watching knows who joined and who left.
+	pub fn unsubscribe(&self, channel: &str) {
+		self.streams.lock().remove(channel);
+		self.write(json!({ "unsubscribe": channel }));
 	}
 
 	/// Call a key this cartridge injects.
@@ -464,6 +505,7 @@ impl Cartridge {
 			link,
 			events: Arc::default(),
 			services: Arc::default(),
+			streams: Arc::default(),
 			finalizers: Arc::default(),
 			declared: self.provide.clone(),
 			children: Arc::default(),
@@ -516,6 +558,13 @@ impl Cartridge {
 				host.dispatch(&host.events, &m, name, m["data"].clone());
 			} else if let Some(key) = m["call"].as_str() {
 				host.dispatch(&host.services, &m, key, m["args"].clone());
+			} else if let Some(channel) = m["channel"].as_str() {
+				// Stream delivery: queued onto the channel's pump, which feeds the
+				// watcher in arrival order — an event published before another is
+				// handled before it, on this channel.
+				if let Some(tx) = host.streams.lock().get(channel).cloned() {
+					let _ = tx.send(m["event"].clone());
+				}
 			} else if m["dispose"] == true {
 				break;
 			}
