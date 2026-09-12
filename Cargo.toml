@@ -25,6 +25,11 @@ path = "src/tests/fixtures/rpc_fixture.rs"
 name = "lua_fixture"
 path = "src/tests/fixtures/lua_fixture.rs"
 
+# A resolver chain node: stays up, re-enters the binary for its dependent.
+[[example]]
+name = "chain_fixture"
+path = "src/tests/fixtures/chain_fixture.rs"
+
 [dependencies]
 tokio = { version = "1.53", features = ["full"] }
 futures = "0.3"

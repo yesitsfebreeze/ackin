@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
@@ -74,8 +75,30 @@ enum Command {
 	List,
 	/// Every cartridge installed under the cartridge root, and what each need binds to
 	Ledger,
+	/// Resolve a tool's chain off the ledger, to its far end, and start it
+	/// there. The far end's program comes up and re-enters this binary for
+	/// the next link, one re-entry per link, until the named tool is running
+	/// at the top of a tree assembled out of whatever the ledger held at the
+	/// moment of the ask
+	Up {
+		key: String,
+	},
+	/// Launch one node of a chain and hand off: resolve it against the fresh
+	/// ledger, read its program, and exec into it. A node coming up enters
+	/// this, not a person
+	Enter {
+		node: String,
+		/// The node paths still to launch after this one, in chain order
+		#[arg(long, default_value = "[]")]
+		rest: String,
+	},
 	/// Load the profile and run every contract its cartridges declare
 	Verify,
+	/// Run one chain node of a Lua-entry cartridge in-host. The re-entry
+	/// execs into this, so a node's program is the host itself; a person
+	/// never invokes it, and the ledger's env protocol is the only way in
+	#[command(hide = true)]
+	Node,
 }
 
 async fn connect(profile: &std::path::Path) -> Client {
@@ -127,6 +150,199 @@ async fn spawn(launch: Value) -> Result<Value, String> {
 		.await
 		.map_err(|e| format!("{program}: {e}"))?;
 	Ok(json!(status.code().unwrap_or(1)))
+}
+
+/// The binary a node re-enters: this invocation's own image.
+fn exe() -> PathBuf {
+	std::env::current_exe().expect("a running binary knows its own image")
+}
+
+/// What a chain node runs. A document that declares a `binary` names its own
+/// program, resolved the way every process component resolves its command —
+/// the cartridge's own `bin/`, then beside the running zirkle, then `PATH`.
+/// A document that declares none is **hosted**: the binary itself is the
+/// program, and the node mode runs the cartridge's Lua component in-host.
+enum Route {
+	Program(PathBuf),
+	Hosted,
+}
+
+/// What a chain node launches, resolved the way the ask and every re-entry
+/// resolve it — once, so `hello`, the ask and the hand-off name the same
+/// program. A document that would not read, and a `binary` that does not
+/// exist, refuse naming the node; the ask checks every node before the first
+/// one spawns.
+fn node_route(
+	node: &zirkle::ledger::Installed,
+) -> Result<Route, String> {
+	let manifest = node.dir.join(zirkle::loader::MANIFEST);
+	let document = zirkle::loader::Cartridge::document(&manifest)
+		.map_err(|e| format!("`{}`: {e}", node.path))?;
+	match document.binary {
+		Some(binary) => zirkle::cartridge::executable(&binary, &node.dir)
+			.map(Route::Program)
+			.map_err(|e| format!("`{}`: {e}", node.path)),
+		// The cartridge has no program of its own, so the host is it: the
+		// entry is resolved now, not evaluated — a missing Lua file is a
+		// refusal of the ask, an entry that fails to apply is the node's.
+		None => zirkle::loader::Cartridge::read(&manifest)
+			.map(|_| Route::Hosted)
+			.map_err(|e| format!("`{}`: {e}", node.path)),
+	}
+}
+
+/// The hosted node: the program a Lua-entry cartridge's chain node runs is
+/// the host itself. The re-entry execed into this mode, so this process is
+/// the tree link the document's `provide` declared and nothing launched it
+/// but its dependency: it runs the cartridge's Lua component in-host, then
+/// re-enters the binary for the next link of the chain, holding the child it
+/// spawned, so its own death takes its dependent with it. Its stdin closes
+/// when the dependency that launched it goes away, and EOF is the second
+/// half of that cascade.
+///
+/// The pid it writes under `ZIRKLE_NODES` is the probe's observation handle,
+/// not part of the mechanism: a test reads it to name the process it is
+/// asserting about, exactly as the program fixture does.
+async fn hosted_node() {
+	use tokio::io::AsyncReadExt;
+
+	let node = std::env::var("ZIRKLE_NODE").unwrap_or_default();
+	let chain: Vec<String> = serde_json::from_str(
+		&std::env::var("ZIRKLE_CHAIN").unwrap_or_default(),
+	)
+	.unwrap_or_default();
+	let (zirkle, root) = match (
+		std::env::var("ZIRKLE_ZIRKLE"),
+		std::env::var("ZIRKLE_ROOT"),
+	) {
+		(Ok(zirkle), Ok(root)) => (zirkle, root),
+		_ => {
+			eprintln!("node mode is entered, not asked: the ledger's env protocol is missing");
+			std::process::exit(2);
+		}
+	};
+	let root = PathBuf::from(root);
+
+	if let Some(nodes) = std::env::var_os("ZIRKLE_NODES") {
+		let _ = std::fs::write(
+			Path::new(&nodes).join(node.replace('/', "_")),
+			std::process::id().to_string(),
+		);
+	}
+
+	// The cartridge's Lua component, in-host: its document's `provide` is the
+	// provision the ledger walked, and the apply registers the values the way
+	// an in-host fiber does. The component's needs are **not** injections
+	// here: the chain is their resolution — the dependency launched this
+	// node, which is the binding the resolver already made — and carrying
+	// them as unmet injections would hold the apply waiting for providers
+	// that live in other processes and can never arrive in this one. A call
+	// to a need has no channel yet: the wire across chain nodes is open, and
+	// until it exists such a call refuses at the call site instead of
+	// stalling the node.
+	let host = zirkle::lua::Host::new(zirkle::runtime::Runtime::new(), &root, &root);
+	let mut component = match host.component(&root.join(&node), serde_json::Value::Null) {
+		Ok(component) => component,
+		Err(e) => {
+			eprintln!("`{node}`: {e}");
+			std::process::exit(1);
+		}
+	};
+	component.inject.clear();
+	host.runtime().ctx().cartridge(component);
+
+	// The node comes up, then re-enters the binary for the next link: the
+	// child is held, so dropping it — on exit or on kill — takes the rest of
+	// the tree along, and its stdin is the pipe this node's death closes.
+	let mut dependent: Option<tokio::process::Child> = None;
+	if let Some(next) = chain.first() {
+		let rest = serde_json::to_string(&chain[1..]).expect("node paths serialize");
+		let mut reentry = tokio::process::Command::new(&zirkle);
+		reentry
+			.args(["enter", next, "--rest", &rest, "--dir", root.to_string_lossy().as_ref()])
+			.env("ZIRKLE_ZIRKLE", &zirkle)
+			.env("ZIRKLE_ROOT", &root)
+			.stdin(Stdio::piped())
+			.kill_on_drop(true);
+		dependent = Some(reentry.spawn().expect("re-enter the resolver"));
+	}
+
+	// Stay up until the dependency that launched this node goes away, then
+	// exit. The far end of the chain is different: nothing launched it that
+	// owns it, so it has no pipe to watch and dies only when it is killed.
+	// The held child goes with this node: the drop is what kills it.
+	if std::env::var_os("ZIRKLE_BOTTOM").is_none() {
+		let mut stdin = tokio::io::stdin();
+		let mut buffer = [0u8; 64];
+		while stdin.read(&mut buffer).await.unwrap_or(0) > 0 {}
+	} else {
+		futures::future::pending::<()>().await;
+	}
+	drop(dependent);
+}
+
+/// The environment every node of the tree carries: its identity in the
+/// ledger, what is still to come after it, and how to re-enter the binary.
+/// The chain rides in the environment, not in a coordinator: the ask
+/// resolved it, and each node hands its remainder to its dependent.
+fn node_env(command: &mut std::process::Command, node: &str, rest: &[String], dir: &Path) {
+	command
+		.env("ZIRKLE_NODE", node)
+		.env(
+			"ZIRKLE_CHAIN",
+			serde_json::to_string(rest).expect("node paths serialize"),
+		)
+		.env("ZIRKLE_ZIRKLE", exe())
+		.env("ZIRKLE_ROOT", dir);
+}
+
+/// Start one node of the chain, detached. The invocation's job is to resolve
+/// and hand off, and nothing sits above the tree owning it: the ask returns
+/// while the tree keeps running, and the node's own death is what the rest
+/// of the tree watches for.
+fn launch_node(
+	node: &zirkle::ledger::Installed,
+	rest: &[&zirkle::ledger::Installed],
+	dir: &Path,
+) {
+	let paths: Vec<String> = rest.iter().map(|e| e.path.clone()).collect();
+	let mut command = match node_route(node) {
+		Ok(Route::Program(program)) => tokio::process::Command::new(program),
+		// The hosted node's program is this binary itself, in the node mode
+		// the re-entry execs into. Nothing else differs: detached, named,
+		// holding the env the re-entry reads.
+		Ok(Route::Hosted) => {
+			let mut command = tokio::process::Command::new(exe());
+			command.arg("node");
+			command
+		}
+		Err(e) => {
+			eprintln!("{e}");
+			std::process::exit(1);
+		}
+	};
+	command.current_dir(&node.dir);
+	node_env(command.as_std_mut(), &node.path, &paths, dir);
+	// The far end was launched by the ask, not by a dependency: nothing
+	// above it owns it, so it has no pipe to watch and nothing to cascade
+	// to it. Everything above it is launched by the node below. Its stdio
+	// is detached too — a node holding the asker's stdout would hold the
+	// ask open forever.
+	command
+		.env("ZIRKLE_BOTTOM", "1")
+		.stdin(Stdio::null())
+		.stdout(Stdio::null())
+		.stderr(Stdio::null());
+	match command.spawn() {
+		Ok(child) => {
+			println!("{}", child.id().unwrap_or(0));
+			let _ = child;
+		}
+		Err(e) => {
+			eprintln!("`{}`: {e}", node.path);
+			std::process::exit(1);
+		}
+	}
 }
 
 /// Newline-delimited JSON-RPC between an MCP client and the `mcp` service:
@@ -453,6 +669,72 @@ async fn main() {
 				std::process::exit(1);
 			}
 		}
+		Command::Up { key } => {
+			let ledger = zirkle::ledger::Ledger::scan(&dir);
+			// One ask, one resolution: the walk runs to the far end here, and
+			// every link after it is a re-entry that re-reads the ledger. A
+			// refusal is a refusal of the launch: nothing spawns, and the exit
+			// says so.
+			match zirkle::resolver::chain(&ledger, "", &key) {
+				Err(refusal) => {
+					eprintln!("{refusal}");
+					std::process::exit(1);
+				}
+				Ok(chain) => {
+					// Every node of the chain is checked before the first one
+					// spawns: a refusal belongs to the ask, not to a link that
+					// already came up.
+					for node in &chain {
+						if let Err(e) = node_route(node) {
+							eprintln!("{e}");
+							std::process::exit(1);
+						}
+					}
+					let (bottom, rest) = chain.split_first().expect("a resolved chain is never empty");
+					launch_node(bottom, rest, &dir);
+				}
+			}
+		}
+		Command::Enter { node, rest } => {
+			let ledger = zirkle::ledger::Ledger::scan(&dir);
+			// The step re-reads the ledger: a node that is no longer installed
+			// has no launch, however recently the chain held it.
+			let Some(entry) = ledger.get(&node) else {
+				eprintln!("`{node}` is no longer installed: nothing launches");
+				std::process::exit(1);
+			};
+			// A document that declares a binary execs into it; one that does
+			// not is hosted, and the host's own node mode is the program.
+			let mut command = match node_route(entry) {
+				Ok(Route::Program(program)) => std::process::Command::new(program),
+				Ok(Route::Hosted) => {
+					let mut command = std::process::Command::new(exe());
+					command.arg("node");
+					command
+				}
+				Err(e) => {
+					eprintln!("{e}");
+					std::process::exit(1);
+				}
+			};
+			use std::os::unix::process::CommandExt;
+			command
+				.env("ZIRKLE_NODE", &node)
+				.env("ZIRKLE_CHAIN", rest)
+				.env("ZIRKLE_ZIRKLE", exe())
+				.env("ZIRKLE_ROOT", &dir)
+				// The far end was the only node nothing launched; a node
+				// re-entered into has a dependency above it and loses the flag.
+				.env_remove("ZIRKLE_BOTTOM")
+				// The node's stdin is the dependency's pipe, inherited: when
+				// the dependency that launched it goes away, the pipe closes
+				// and EOF is the signal to take the rest of the tree along.
+				.current_dir(&entry.dir);
+			let error = command.exec();
+			eprintln!("{node}: {error}");
+			std::process::exit(1);
+		}
+		Command::Node => hosted_node().await,
 		Command::List => {
 			// `--yolo` is rejected above for every command but run and daemon.
 			let host = Host::new(Runtime::new(), &dir, &profile);

@@ -37,7 +37,7 @@ pub fn split(cmd: &str) -> Vec<String> {
 /// ships it, then beside the running zirkle — a dev-build convenience, since
 /// `cargo build --workspace` drops every binary next to this one — then on
 /// PATH. Relative explicit paths resolve inside the cartridge directory.
-pub(crate) fn executable(
+pub fn executable(
 	program: &str,
 	root: &std::path::Path,
 ) -> std::io::Result<std::path::PathBuf> {
