@@ -1,0 +1,152 @@
+use crate::lua::{block_on, Host};
+use crate::runtime::{Ctx, FiberHandle, Listener};
+use mlua::{Function, LuaSerdeExt, MetaMethod, UserData, UserDataMethods};
+use std::sync::Arc;
+
+pub(crate) struct LuaCtx {
+	host: Arc<Host>,
+	ctx: Ctx,
+	cartridge: String,
+}
+
+impl LuaCtx {
+	pub(crate) fn new(host: Arc<Host>, ctx: Ctx, cartridge: String) -> Self {
+		Self {
+			host,
+			ctx,
+			cartridge,
+		}
+	}
+
+	fn get(&self, key: &str) -> mlua::Result<mlua::Value> {
+		match self.ctx.get(key) {
+			Ok(v) => Ok(self.host.to_lua(&v)),
+			// A need the chain already resolved has no provider in this host's
+			// store: it lives in the dependency that launched this node. The
+			// chain link is the binding, so the get becomes a remote — the
+			// author calls it like any other provided key, and the frames
+			// cross the socket. An unbound need has no remote and keeps the
+			// store's own refusal.
+			Err(_) => match self.host.dependency(key) {
+				Some(remote) => Ok(self.host.to_lua(&remote)),
+				None => self
+					.ctx
+					.get(key)
+					.map(|v| self.host.to_lua(&v))
+					.map_err(external),
+			},
+		}
+	}
+
+	fn derive(&self, ctx: Ctx) -> Self {
+		Self {
+			host: self.host.clone(),
+			ctx,
+			cartridge: self.cartridge.clone(),
+		}
+	}
+}
+
+pub(crate) struct LuaFiber(FiberHandle);
+
+fn external(e: crate::runtime::Error) -> mlua::Error {
+	mlua::Error::external(e)
+}
+
+impl UserData for LuaFiber {
+	fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+		methods.add_method("uid", |_, this, ()| Ok(this.0.uid()));
+		methods.add_method("state", |_, this, ()| {
+			Ok(this.0.state().map(|s| format!("{s:?}")))
+		});
+		methods.add_method("error", |_, this, ()| Ok(this.0.error()));
+		methods.add_method("dispose", |_, this, ()| {
+			block_on(this.0.dispose());
+			Ok(())
+		});
+		methods.add_method("wait", |_, this, ()| {
+			block_on(this.0.settled());
+			Ok(())
+		});
+	}
+}
+
+impl UserData for LuaCtx {
+	fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+		methods.add_method("effect", |_, this, f: Function| {
+			let disposer: mlua::Value = f.call(())?;
+			let host = this.host.clone();
+			this.ctx.effect_sync(move || host.disposer(disposer));
+			Ok(())
+		});
+		methods.add_method("provide", |_, this, (key, value): (String, mlua::Value)| {
+			this.ctx.provide(&key, Arc::new(value)).map_err(external)
+		});
+		methods.add_method("get", |_, this, key: String| this.get(&key));
+		methods.add_method("peek", |_, this, key: String| {
+			Ok(this.ctx.peek(&key).map(|v| this.host.to_lua(&v)))
+		});
+		methods.add_method("meta", |lua, this, key: String| {
+			lua.to_value(&this.ctx.meta(&key))
+		});
+		methods.add_method("isolate", |_, this, key: String| {
+			Ok(this.derive(this.ctx.isolate(&key)))
+		});
+		methods.add_method(
+			"intercept",
+			|_, this, (key, meta): (String, mlua::Value)| {
+				let meta = this.host.to_json(meta);
+				Ok(this.derive(this.ctx.intercept(&key, meta)))
+			},
+		);
+		methods.add_method("on", |_, this, (name, f): (String, Function)| {
+			let host = this.host.clone();
+			let listener: Listener = Arc::new(move |payload| {
+				let result = f.call::<mlua::Value>(host.to_lua(&payload));
+				Box::pin(async move {
+					match result {
+						Ok(mlua::Value::Nil) => Ok(None),
+						Ok(v) => Ok(Some(Arc::new(v) as crate::runtime::Value)),
+						Err(e) => Err(crate::runtime::Error::Apply(e.to_string())),
+					}
+				})
+			});
+			this.ctx.on(&name, listener);
+			Ok(())
+		});
+		methods.add_method("emit", |_, this, (name, payload): (String, mlua::Value)| {
+			this.ctx.emit(&name, Arc::new(payload));
+			Ok(())
+		});
+		methods.add_method("bail", |_, this, (name, payload): (String, mlua::Value)| {
+			let answer = block_on(this.ctx.bail(&name, Arc::new(payload))).map_err(external)?;
+			Ok(answer.map(|v| this.host.to_lua(&v)))
+		});
+		methods.add_method(
+			"parallel",
+			|_, this, (name, payload): (String, mlua::Value)| {
+				block_on(this.ctx.parallel(&name, Arc::new(payload))).map_err(external)
+			},
+		);
+		methods.add_method("send", |_, this, (name, data): (String, mlua::Value)| {
+			let data = this.host.to_json(data);
+			this.host.send_event(&name, data);
+			Ok(())
+		});
+		methods.add_method(
+			"cartridge",
+			|_, this, (path, config): (String, mlua::Value)| {
+				let config = this.host.to_json(config);
+				let file = this.host.dir().join(&path);
+				let (component, _sources) = this.host.load_component(&file, config, &[])?;
+				Ok(LuaFiber(this.ctx.cartridge(component)))
+			},
+		);
+		methods.add_method("name", |_, this, ()| Ok(this.cartridge.clone()));
+		methods.add_method("state", |_, this, ()| {
+			let state = this.ctx.runtime().state_of(this.ctx.fiber());
+			Ok(state.map(|s| format!("{s:?}")))
+		});
+		methods.add_meta_method(MetaMethod::Index, |_, this, key: String| this.get(&key));
+	}
+}
