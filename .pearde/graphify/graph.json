@@ -62,6 +62,21 @@
       "date": "2026-09-12",
       "path": "sources/260912-fb23.md",
       "root": "kb"
+    },
+    {
+      "id": "a-pegged-syspolicyd-is-a-machine-fault-that-looks-exactly-li",
+      "title": "a-pegged-syspolicyd-is-a-machine-fault-that-looks-exactly-li",
+      "kind": "conclusions",
+      "type": "conclusion",
+      "tags": [
+        "build-signal",
+        "conclusion",
+        "macos",
+        "toolchain"
+      ],
+      "date": "2026-09-12",
+      "path": "conclusions/a-pegged-syspolicyd-is-a-machine-fault-that-looks-exactly-li.md",
+      "root": "kb"
     }
   ],
   "links": [
@@ -70,6 +85,27 @@
       "target": "260912-ebde",
       "relation": "links",
       "provenance": "wikilink",
+      "root": "kb"
+    },
+    {
+      "source": "a-pegged-syspolicyd-is-a-machine-fault-that-looks-exactly-li",
+      "target": "260912-ebde",
+      "relation": "derives",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "a-pegged-syspolicyd-is-a-machine-fault-that-looks-exactly-li",
+      "target": "260912-fb23",
+      "relation": "derives",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "a-pegged-syspolicyd-is-a-machine-fault-that-looks-exactly-li",
+      "target": "260912-7a41",
+      "relation": "derives",
+      "provenance": "frontmatter",
       "root": "kb"
     }
   ],
