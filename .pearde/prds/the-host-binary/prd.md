@@ -8,6 +8,7 @@ workflow: probe-then-spec
 needs:
   - the-build-signal
 actual: 0.02h
+commit: 2afb11f
 ---
 
 
