@@ -20,10 +20,13 @@ clippy clean. The lane's git history carries the port as commit `6fe121c`
   socket (`ZIRKLE_DEP`, set when the dependency re-enters), binds every
   document need to a remote over it (`Host::bind_dependency`), and
   `ctx:get` of a need resolves to that remote — in the node's fiber and in
-  every fiber nested under it. The node also fronts its bound needs to its
-  own socket callers (`Host::call` falls through to the dependency). The
-  stdin pipe stays the kill channel; the sockets carry the calls; neither
-  depends on the other.
+  every fiber nested under it. The node serves its own keys on its per-node
+  socket; a key bound from a dependency is reached through the dependency's
+  socket, not fronted by the node's own — a bound need called on the node's
+  socket refuses `` `<key>` is not provided ``, and answers only through
+  `ctx:get` in Lua (`Host::call` is a bare store peek). The stdin pipe stays
+  the kill channel; the sockets carry the calls; neither depends on the
+  other.
 - **The document carries its own config** (`loader::Cartridge.config` to
   `Declared` to a `load_component` fallback): no profile `config.lua` in the
   ledger shape, so the author's configuration travels in `cartridge.json`;

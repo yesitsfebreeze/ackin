@@ -196,7 +196,7 @@ async fn a_chain_node_calls_its_dependency_and_serves_its_dependents() {
 		}
 	};
 	assert_eq!(
-		reply["reply"], json!(1),
+		reply["error"], json!("`nowhere` is not provided"),
 		"a key nothing provides is refused by name: {reply}"
 	);
 
