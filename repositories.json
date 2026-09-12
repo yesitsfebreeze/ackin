@@ -1,0 +1,118 @@
+{
+  "source": "yesitsfebreeze/cile",
+  "revision": "4a5d983a2f7813067aac8312a5a283d7d6ba4ca7",
+  "repositories": [
+    {
+      "name": "agent",
+      "repository": "agent.ctg",
+      "package": "agent",
+      "cartridge": true,
+      "files": 16
+    },
+    {
+      "name": "fs",
+      "repository": "fs.ctg",
+      "package": "fs",
+      "cartridge": true,
+      "files": 14
+    },
+    {
+      "name": "gitfs",
+      "repository": "gitfs.ctg",
+      "package": "gitfs",
+      "cartridge": true,
+      "files": 8
+    },
+    {
+      "name": "harness",
+      "repository": "harness.ctg",
+      "package": "harness",
+      "cartridge": true,
+      "files": 33
+    },
+    {
+      "name": "landscape",
+      "repository": "landscape.ctg",
+      "package": "landscape",
+      "cartridge": false,
+      "files": 3
+    },
+    {
+      "name": "mcp",
+      "repository": "mcp.ctg",
+      "package": "mcp",
+      "cartridge": true,
+      "files": 7
+    },
+    {
+      "name": "memo",
+      "repository": "memo.ctg",
+      "package": "memo_cartridge",
+      "cartridge": true,
+      "files": 57
+    },
+    {
+      "name": "memory",
+      "repository": "memory.ctg",
+      "package": "memory",
+      "cartridge": true,
+      "files": 411
+    },
+    {
+      "name": "memory-tool",
+      "repository": "memory-tool.ctg",
+      "package": "memory-tool",
+      "cartridge": true,
+      "files": 4
+    },
+    {
+      "name": "policy",
+      "repository": "policy.ctg",
+      "package": null,
+      "cartridge": true,
+      "files": 3
+    },
+    {
+      "name": "proxy",
+      "repository": "proxy.ctg",
+      "package": "proxy",
+      "cartridge": true,
+      "files": 10
+    },
+    {
+      "name": "pty",
+      "repository": "pty.ctg",
+      "package": "pty",
+      "cartridge": true,
+      "files": 10
+    },
+    {
+      "name": "router",
+      "repository": "router.ctg",
+      "package": "router",
+      "cartridge": true,
+      "files": 15
+    },
+    {
+      "name": "sessions",
+      "repository": "sessions.ctg",
+      "package": "sessions",
+      "cartridge": true,
+      "files": 7
+    },
+    {
+      "name": "tools",
+      "repository": "tools.ctg",
+      "package": "tools",
+      "cartridge": true,
+      "files": 6
+    },
+    {
+      "name": "ui",
+      "repository": "ui.ctg",
+      "package": null,
+      "cartridge": true,
+      "files": 116
+    }
+  ]
+}

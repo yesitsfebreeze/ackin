@@ -8,3 +8,9 @@
 !/.cartridge/tools/
 !/.cartridge/proxy/
 !/.cartridge/mcp/
+
+/dist/
+/validation/
+/workspace/target/
+__pycache__/
+*.pyc

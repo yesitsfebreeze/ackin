@@ -53,3 +53,11 @@ warnings = "deny"
 
 # Keep the runtime and its Pearde lanes independent of a containing workspace.
 [workspace]
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
