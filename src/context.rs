@@ -47,7 +47,7 @@ impl LuaCtx {
 	}
 }
 
-pub(crate) struct LuaFiber(Arc<Host>, FiberHandle);
+pub(crate) struct LuaFiber(Arc<Host>, FiberHandle, crate::reload::Reload);
 
 fn external(e: crate::runtime::Error) -> mlua::Error {
 	mlua::Error::external(e)
@@ -69,7 +69,10 @@ impl UserData for LuaFiber {
 			Ok(())
 		});
 		methods.add_method("reload", |_, this, ()| {
-			this.0.request_reload(this.1.uid());
+			// The handle names the generation it was minted for, but the ask
+			// addresses the node: what persists across a swap is the shared
+			// reload transaction, so the live generation is found through it.
+			this.0.request_reload_for(this.1.uid(), this.2.clone());
 			Ok(())
 		});
 	}
@@ -196,7 +199,10 @@ impl UserData for LuaCtx {
 						.map(|(component, _)| component)
 						.map_err(|e| crate::runtime::Error::Apply(format!("rebuild of {path:?}: {e}")))
 				}));
-				Ok(LuaFiber(this.host.clone(), this.ctx.cartridge(component)))
+				// The handle keeps the node's transaction, so a reload fired
+				// after a swap re-finds the live generation through it.
+				let reload = component.reload.clone();
+				Ok(LuaFiber(this.host.clone(), this.ctx.cartridge(component), reload))
 			},
 		);
 		methods.add_method("name", |_, this, ()| Ok(this.cartridge.clone()));

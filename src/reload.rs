@@ -29,6 +29,12 @@ impl Reload {
 	pub(crate) fn gate(&self) -> Arc<tokio::sync::RwLock<()>> {
 		self.gate.clone()
 	}
+	/// Two handles name the same transaction when their shared parts are the
+	/// same allocation: a swap composes every generation of one node with the
+	/// node's own transaction, and a fresh node makes a new one.
+	pub(crate) fn same(&self, other: &Self) -> bool {
+		Arc::ptr_eq(&self.gate, &other.gate) && Arc::ptr_eq(&self.pending, &other.pending)
+	}
 	/// Bumped once per completed switch, so a waiter can tell generations apart.
 	pub(crate) fn epoch(&self) -> tokio::sync::watch::Receiver<u64> {
 		self.epoch.subscribe()

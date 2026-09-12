@@ -1346,6 +1346,41 @@ impl Host {
 		});
 	}
 
+	/// The Lua surface addresses the node, not the generation: a handle
+	/// captured before a swap names a uid the swap retired, so the ask re-finds
+	/// the live generation by what persists across one — the node's shared
+	/// [`Reload`] transaction — and fires the same ask on it. An ask whose
+	/// transaction no live fiber carries is refused on the report channel, as
+	/// the raw uid ask's refusals are.
+	pub(crate) fn request_reload_for(
+		self: &Arc<Self>,
+		uid: crate::runtime::Uid,
+		reload: crate::reload::Reload,
+	) {
+		let live = {
+			let reg = self.rt.reg.lock();
+			if reg.fibers.contains_key(&uid) {
+				Some(uid)
+			} else {
+				// A candidate is staged until the switch publishes it and the
+				// disposed generation is staged until it goes, so the live
+				// generation is the unstaged one.
+				reg.fibers
+					.iter()
+					.filter(|(_, f)| !f.retired && !f.staged && f.reload.same(&reload))
+					.map(|(uid, _)| *uid)
+					.max()
+			}
+		};
+		match live {
+			Some(live) => self.request_reload(live),
+			None => self.report(
+				&uid.to_string(),
+				"no live generation carries this node's reload transaction",
+			),
+		}
+	}
+
 	/// Replace one node of the running tree, addressed by its uid. A profile
 	/// entry goes through [`Host::replace_entry`]; a node composed inside
 	/// another cartridge runs the same transaction through its rebuild.
