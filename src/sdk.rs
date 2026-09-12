@@ -54,15 +54,6 @@ impl Host {
 		serde_json::from_value(value).map_err(|e| format!("injections: {e}"))
 	}
 
-	/// Cooperatively yield long-running calls before this cartridge is replaced.
-	pub fn on_reload<F, Fut>(&self, f: F)
-	where
-		F: Fn(Value) -> Fut + Send + Sync + 'static,
-		Fut: Future<Output = Result<Value>> + Send + 'static,
-	{
-		self.reload.lock().insert("reload".into(), boxed(f));
-	}
-
 	pub async fn request_reload(&self) -> Result<()> {
 		self.link.request(json!({"reload":true})).await.map(|_| ())
 	}
