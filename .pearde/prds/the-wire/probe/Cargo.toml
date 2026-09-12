@@ -1,0 +1,47 @@
+[package]
+name = "zirkle"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+rust-version = "1.89"
+autotests = false
+default-run = "zirkle"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "zirkle"
+path = "src/main.rs"
+
+# Built by process tests as a real SDK child, not a public usage example.
+[[example]]
+name = "rpc_fixture"
+path = "src/tests/fixtures/rpc_fixture.rs"
+
+# A cartridge that hosts rpc_fixture as its own child: the recursion fixture.
+[[example]]
+name = "nested_fixture"
+path = "src/tests/fixtures/nested_fixture.rs"
+
+# Provides `lua` as a process, the isolated alternate provider in composition tests.
+[[example]]
+name = "lua_fixture"
+path = "src/tests/fixtures/lua_fixture.rs"
+
+[dependencies]
+tokio = { version = "1.53", features = ["full"] }
+futures = "0.3"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde"] }
+notify = "9.0.0-rc.5"
+clap = { version = "4", features = ["derive"] }
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+warnings = "deny"
