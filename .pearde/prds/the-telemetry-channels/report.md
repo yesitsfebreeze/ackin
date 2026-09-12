@@ -144,3 +144,14 @@ probe-dedicated target dir, start a daemon over a throwaway profile with
 `--dir "$PROBE"` so the profile's bare Lua entries resolve, drive it with a
 second client, and print what that client received — the probe's stdout is
 the spec's evidence.
+
+## Corrections
+
+The skeptic (`skeptic.md`) returned CHANGE on three grounds, all landed
+`d880ac5`: the two racy stream tests now await the fiber's settle before the
+emit (`reconcile` spawns the fiber without awaiting `apply`, so `ctx:on`
+registration raced the emit — six consecutive green runs after), spec02
+box 3 is narrowed to what the test actually exercises (the dispose-path
+leave, `link.leave_subs`, is code-read only and owed a test), and spec03
+box 2 now names both guards, the test-proven socket one and the code-read
+`link.sub_id` one.
