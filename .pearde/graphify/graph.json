@@ -28,6 +28,42 @@
       "root": "kb"
     },
     {
+      "id": "260912-7adb",
+      "title": "the pegged-syspolicyd dyld hang is keyed by inode, so a hardlink runs and a copy does not",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-7adb.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-854a",
+      "title": "A pegged syspolicyd clears when launchd respawns it under a new pid, and only syspolicyd needs it",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-854a.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-9edf",
+      "title": "a warm cargo target dir does not restore a compile signal under a pegged syspolicyd",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-9edf.md",
+      "root": "kb"
+    },
+    {
       "id": "260912-b78d",
       "title": "zirkle memory.rs is the reload transaction, not just a memory bank",
       "kind": "sources",
@@ -37,6 +73,20 @@
       ],
       "date": "2026-09-12",
       "path": "sources/260912-b78d.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-ea92",
+      "title": "the build signal is live on this host and the gate that says so is falsifiable",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "build",
+        "macos",
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-ea92.md",
       "root": "kb"
     },
     {
@@ -81,6 +131,48 @@
   ],
   "links": [
     {
+      "source": "260912-7adb",
+      "target": "260912-7a41",
+      "relation": "links",
+      "provenance": "wikilink",
+      "root": "kb"
+    },
+    {
+      "source": "260912-7adb",
+      "target": "260912-ebde",
+      "relation": "links",
+      "provenance": "wikilink",
+      "root": "kb"
+    },
+    {
+      "source": "260912-854a",
+      "target": "a-pegged-syspolicyd-is-a-machine-fault-that-looks-exactly-li",
+      "relation": "links",
+      "provenance": "wikilink",
+      "root": "kb"
+    },
+    {
+      "source": "260912-9edf",
+      "target": "260912-7adb",
+      "relation": "links",
+      "provenance": "wikilink",
+      "root": "kb"
+    },
+    {
+      "source": "260912-ea92",
+      "target": "260912-854a",
+      "relation": "related",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-ea92",
+      "target": "260912-fb23",
+      "relation": "related",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
       "source": "260912-fb23",
       "target": "260912-ebde",
       "relation": "links",
@@ -105,6 +197,20 @@
       "source": "a-pegged-syspolicyd-is-a-machine-fault-that-looks-exactly-li",
       "target": "260912-7a41",
       "relation": "derives",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-854a",
+      "target": "260912-ea92",
+      "relation": "related",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-fb23",
+      "target": "260912-ea92",
+      "relation": "related",
       "provenance": "frontmatter",
       "root": "kb"
     }

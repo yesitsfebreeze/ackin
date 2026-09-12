@@ -7,6 +7,8 @@ priority: 90
 complexity: 32
 blast: high
 tags: [prd, state/claimed, origin/requested, blast/high]
+needs:
+  - "[[wiki/board/the-build-signal]]"
 workflow: "[[probe-then-spec]]"
 ---
 
@@ -17,6 +19,10 @@ workflow: "[[probe-then-spec]]"
 ## Fed by (needs this one)
 
 - [[wiki/board/the-manifest]]
+
+## Needs (gates this one behind)
+
+- [[wiki/board/the-build-signal]]
 
 Runs on: [[probe-then-spec]]
 

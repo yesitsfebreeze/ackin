@@ -3,7 +3,7 @@ atomic: record-what-the-build-learned
 subject: the split and the dead workarounds are one worker's head until they are written to the record
 date: 2026-09-12
 updated: 2026-09-12
-runs: 1
+runs: 2
 tags:
   - atomic
 ---

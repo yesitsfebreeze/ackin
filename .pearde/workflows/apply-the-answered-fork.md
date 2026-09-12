@@ -21,5 +21,9 @@ tags:
 
 ## Fails when
 
-- The answer is restated in prose and the module is left whole. Until the split exists, which callers die with the cut part is a guess.
+- The answer is restated in prose and the module is left whole. Until the
+  split exists, which callers die with the cut part is a guess. This bullet
+  binds only when the answered fork names code; a fork answered about the
+  machine, the environment or a privilege has no cut half, and the step is
+  recorded as not applicable with the contract line that says so quoted.
 - A caller of the cut part is left standing. The split is finished when a grep for the cut vocabulary returns nothing.
