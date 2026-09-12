@@ -178,6 +178,38 @@ async fn connect_retry(path: &std::path::Path) -> Client {
 	.expect("socket never came up")
 }
 
+/// A repeat subscribe on the same link is a no-op: one join in the log, one
+/// pump, one copy of every event — never an orphaned duplicate.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repeat_subscribe_spawns_no_second_pump() {
+	let dir = tempfile::tempdir().unwrap();
+	write(dir.path(), "init.lua", r#"return {}"#);
+	let (host, _) = boot(dir.path()).await;
+	let (server, path) = serve(host.clone());
+	let mut client = connect_retry(&path).await;
+	client.send(json!({ "subscribe": "build", "since": 0 })).await.unwrap();
+	client.send(json!({ "subscribe": "build", "since": 0 })).await.unwrap();
+	let join = next_envelope(&mut client, "build").await;
+	assert_eq!(join["kind"], json!("subscribe"));
+	// The second ask appended nothing: one join, one pump.
+	assert_eq!(host.runtime().stream().replay("build", 0).len(), 1);
+	client.send(json!({ "publish": "build", "data": { "n": 1 } })).await.unwrap();
+	let event = next_envelope(&mut client, "build").await;
+	assert_eq!(event["kind"], json!("data"));
+	// One copy, not two: nothing further arrives for the same publish.
+	let mut extra = 0;
+	while let Ok(Some(m)) =
+		tokio::time::timeout(Duration::from_millis(100), client.next()).await
+	{
+		if m["channel"] == "build" && m["event"]["kind"] == json!("data") {
+			extra += 1;
+		}
+	}
+	assert_eq!(extra, 0, "a second pump delivered a duplicate");
+	server.abort();
+	let _ = std::fs::remove_file(path);
+}
+
 /// Errors are events: a listener that fails publishes the failure on the
 /// cartridge's own channel, where a watcher sees it without calling in.
 #[tokio::test(flavor = "multi_thread")]
