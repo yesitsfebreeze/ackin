@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,6 +30,10 @@ pub struct Host {
 	pub(crate) reload_lock: tokio::sync::Mutex<()>,
 	/// The debug tap, present exactly while debug mode is on.
 	debug: Mutex<Option<tokio::task::JoinHandle<()>>>,
+	/// The chain link: a node's needs bound to the dependency that provides
+	/// them, over the dependency's socket. Empty everywhere but node mode,
+	/// where the chain is the resolution the ledger's walk already made.
+	deps: Mutex<HashMap<String, crate::cartridge::Remote>>,
 }
 
 impl Host {
@@ -95,6 +100,7 @@ impl Host {
 			loaded: Mutex::new(Vec::new()),
 			reload_lock: tokio::sync::Mutex::new(()),
 			debug: Mutex::new(None),
+			deps: Mutex::new(HashMap::new()),
 		})
 	}
 
@@ -166,6 +172,22 @@ impl Host {
 		&self.rt
 	}
 
+	/// Bind one chain need to its provider's remote: the value a `ctx:get` of
+	/// that need resolves to from now on, on this node and on every fiber
+	/// nested under it that walks out to the host. Node mode only — a host
+	/// with no chain has no dependency to bind.
+	pub fn bind_dependency(&self, key: &str, remote: crate::cartridge::Remote) {
+		self.deps.lock().insert(key.to_owned(), remote);
+	}
+
+	/// The remote a chain need resolves to, when this host's node mode holds one.
+	pub fn dependency(&self, key: &str) -> Option<crate::runtime::Value> {
+		self.deps
+			.lock()
+			.get(key)
+			.map(|remote| Arc::new(remote.clone()) as crate::runtime::Value)
+	}
+
 	pub fn dir(&self) -> &Path {
 		&self.dir
 	}
@@ -220,6 +242,11 @@ impl Host {
 			declared.name.clone(),
 			declared.sources.clone(),
 		);
+		// The document carries the cartridge's own configuration; a caller
+		// that names none inherits it, and one that names its own wins.
+		if config.is_null() && !declared.config.is_null() {
+			config = declared.config.clone();
+		}
 		if self.yolo && matches!(name.as_str(), "agent" | "memo") {
 			if config.is_null() {
 				config = serde_json::json!({});

@@ -92,7 +92,7 @@ pub struct Link {
 }
 
 impl Link {
-	pub(crate) fn new(tx: mpsc::UnboundedSender<Option<Json>>, gone: &'static str) -> Arc<Self> {
+	pub fn new(tx: mpsc::UnboundedSender<Option<Json>>, gone: &'static str) -> Arc<Self> {
 		Arc::new(Self {
 			reload: AtomicBool::new(false),
 			tx,
@@ -151,7 +151,7 @@ impl Link {
 
 	/// The inverse of [`Link::reply`]: hand a reply frame back to its waiter.
 	/// Returns whether `m` was one, so both ends decode the envelope identically.
-	pub(crate) fn accept(&self, m: &Json) -> bool {
+	pub fn accept(&self, m: &Json) -> bool {
 		let Some(id) = m["reply"].as_u64() else {
 			return false;
 		};
@@ -172,7 +172,7 @@ impl Link {
 	}
 
 	/// Fail every waiter, then stop the writer once the queue drains.
-	pub(crate) fn shutdown(&self) {
+	pub fn shutdown(&self) {
 		self.close();
 		self.stop();
 	}
@@ -200,6 +200,13 @@ pub struct Remote {
 }
 
 impl Remote {
+	/// A remote over a link this crate did not open itself: a chain node's
+	/// client side to its dependency's socket speaks the same frames, so the
+	/// need a document declares is a remote value the Lua surface wraps.
+	pub fn over(link: Arc<Link>, key: String) -> Self {
+		Self { link, key }
+	}
+
 	pub(crate) fn process_id(&self) -> usize {
 		Arc::as_ptr(&self.link) as usize
 	}

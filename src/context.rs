@@ -19,11 +19,23 @@ impl LuaCtx {
 	}
 
 	fn get(&self, key: &str) -> mlua::Result<mlua::Value> {
-		self
-			.ctx
-			.get(key)
-			.map(|v| self.host.to_lua(&v))
-			.map_err(external)
+		match self.ctx.get(key) {
+			Ok(v) => Ok(self.host.to_lua(&v)),
+			// A need the chain already resolved has no provider in this host's
+			// store: it lives in the dependency that launched this node. The
+			// chain link is the binding, so the get becomes a remote — the
+			// author calls it like any other provided key, and the frames
+			// cross the socket. An unbound need has no remote and keeps the
+			// store's own refusal.
+			Err(_) => match self.host.dependency(key) {
+				Some(remote) => Ok(self.host.to_lua(&remote)),
+				None => self
+					.ctx
+					.get(key)
+					.map(|v| self.host.to_lua(&v))
+					.map_err(external),
+			},
+		}
 	}
 
 	fn derive(&self, ctx: Ctx) -> Self {

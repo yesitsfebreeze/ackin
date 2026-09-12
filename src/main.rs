@@ -236,11 +236,27 @@ async fn hosted_node() {
 	// here: the chain is their resolution — the dependency launched this
 	// node, which is the binding the resolver already made — and carrying
 	// them as unmet injections would hold the apply waiting for providers
-	// that live in other processes and can never arrive in this one. A call
-	// to a need has no channel yet: the wire across chain nodes is open, and
-	// until it exists such a call refuses at the call site instead of
-	// stalling the node.
+	// that live in other processes and can never arrive in this one. The
+	// binding is the **chain link** instead: the dependency serves the keys
+	// it provides over the socket its ledger path derives, the node connects
+	// and binds every need to a remote over it, and a `ctx:get` of a need
+	// resolves to that remote — the author calls a need like any other
+	// provided key, and the frames cross the socket. An unbound need (the
+	// dependency link is down, the key was never the document's) keeps the
+	// store's own refusal.
 	let host = zirkle::lua::Host::new(zirkle::runtime::Runtime::new(), &root, &root);
+	let needs = zirkle::ledger::Ledger::scan(&root)
+		.get(&node)
+		.map(|e| e.needs.clone())
+		.unwrap_or_default();
+	let dep = std::env::var("ZIRKLE_DEP").unwrap_or_default();
+	let dep = dep.trim();
+	if !dep.is_empty() {
+		if let Err(e) = bind_dependency(&host, &root, dep, &needs).await {
+			eprintln!("`{node}`: {e}");
+			std::process::exit(1);
+		}
+	}
 	let mut component = match host.component(&root.join(&node), serde_json::Value::Null) {
 		Ok(component) => component,
 		Err(e) => {
@@ -251,9 +267,29 @@ async fn hosted_node() {
 	component.inject.clear();
 	host.runtime().ctx().cartridge(component);
 
+	// The node serves the keys it provides to whoever looks it up — its
+	// dependent connects here for its own needs, and the asker of the named
+	// tool reaches the top of the tree. The socket is up before the
+	// re-entry, so a dependent that binds at startup never finds the door
+	// closed.
+	let serve_path = zirkle::socket::node_path(&root, &node);
+	tokio::spawn({
+		let host = host.clone();
+		async move {
+			if let Err(e) = zirkle::socket::serve(host, &serve_path).await {
+				eprintln!("node socket: {e}");
+			}
+		}
+	});
+
 	// The node comes up, then re-enters the binary for the next link: the
 	// child is held, so dropping it — on exit or on kill — takes the rest of
 	// the tree along, and its stdin is the pipe this node's death closes.
+	// The pipe stays the kill channel and carries no frames; the calls cross
+	// the sockets, so the cascade needs nothing from the wire and the wire
+	// needs nothing from the pipe. This node names itself in the
+	// dependency's seat: the dependent reads `ZIRKLE_DEP` and derives the
+	// socket to call its needs over.
 	let mut dependent: Option<tokio::process::Child> = None;
 	if let Some(next) = chain.first() {
 		let rest = serde_json::to_string(&chain[1..]).expect("node paths serialize");
@@ -262,6 +298,7 @@ async fn hosted_node() {
 			.args(["enter", next, "--rest", &rest, "--dir", root.to_string_lossy().as_ref()])
 			.env("ZIRKLE_ZIRKLE", &zirkle)
 			.env("ZIRKLE_ROOT", &root)
+			.env("ZIRKLE_DEP", &node)
 			.stdin(Stdio::piped())
 			.kill_on_drop(true);
 		dependent = Some(reentry.spawn().expect("re-enter the resolver"));
@@ -279,6 +316,70 @@ async fn hosted_node() {
 		futures::future::pending::<()>().await;
 	}
 	drop(dependent);
+}
+
+/// Bind the node's needs to its dependency: a client on the dependency's
+/// socket, every need of the document a remote over it. The dependency served
+/// before it re-entered, but the door is only ever a spawn away — a short
+/// retry, then a refusal that names the link. The link dies with the
+/// socket: a dependency that goes away fails every call still in flight and
+/// the stdin EOF takes the node along.
+async fn bind_dependency(
+	host: &std::sync::Arc<Host>,
+	root: &Path,
+	dep: &str,
+	needs: &[String],
+) -> Result<(), String> {
+	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+	let path = zirkle::socket::node_path(root, dep);
+	let mut stream = None;
+	for _ in 0..40 {
+		match tokio::net::UnixStream::connect(&path).await {
+			Ok(s) => {
+				stream = Some(s);
+				break;
+			}
+			Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+		}
+	}
+	let stream = stream
+		.ok_or_else(|| format!("the dependency `{dep}` serves no socket at {}", path.display()))?;
+	let (read, mut write) = stream.into_split();
+	let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Option<serde_json::Value>>();
+	let link = zirkle::cartridge::Link::new(tx, "the dependency is gone");
+	// Every line the dependency writes is a reply to a call this node made;
+	// the socket protocol and the wire's reply envelope are the same shape,
+	// so the link decodes both ends of the conversation itself.
+	tokio::spawn({
+		let link = link.clone();
+		async move {
+			let mut lines = tokio::io::BufReader::new(read).lines();
+			while let Ok(Some(line)) = lines.next_line().await {
+				if let Ok(m) = serde_json::from_str::<serde_json::Value>(&line) {
+					link.accept(&m);
+				}
+			}
+			link.shutdown();
+		}
+	});
+	tokio::spawn(async move {
+		while let Some(Some(m)) = rx.recv().await {
+			let line = format!("{m}\n");
+			if write.write_all(line.as_bytes()).await.is_err() {
+				break;
+			}
+			if write.flush().await.is_err() {
+				break;
+			}
+		}
+	});
+	for key in needs {
+		host.bind_dependency(
+			key,
+			zirkle::cartridge::Remote::over(link.clone(), key.to_owned()),
+		);
+	}
+	Ok(())
 }
 
 /// The environment every node of the tree carries: its identity in the
@@ -692,6 +793,14 @@ async fn main() {
 					}
 					let (bottom, rest) = chain.split_first().expect("a resolved chain is never empty");
 					launch_node(bottom, rest, &dir);
+					// The tree answers at the top: the socket the named tool's
+					// node serves is where its keys are called, derived by
+					// anyone from the root and the node's ledger path.
+					let top = chain.last().expect("a resolved chain is never empty");
+					println!(
+						"{}",
+						json!({ "up": key, "nodes": chain.iter().map(|n| n.path.clone()).collect::<Vec<_>>(), "socket": zirkle::socket::node_path(&dir, &top.path) })
+					);
 				}
 			}
 		}

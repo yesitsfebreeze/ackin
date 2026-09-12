@@ -160,6 +160,12 @@ pub struct Cartridge {
 	pub integration: Option<String>,
 	/// Repository URL or other retrieval reference when source is not installed.
 	pub source: Option<String>,
+	/// The cartridge's own configuration, carried by the document. The ledger
+	/// shape has no profile `config.lua` to lay fields on at composition time,
+	/// so the document is where an author's configuration travels; the caller's
+	/// own config, when it names one, is laid over it.
+	#[serde(default)]
+	pub config: serde_json::Value,
 	/// Keys this cartridge offers. Private to its own subtree unless a parent
 	/// re-exports them: two cartridges may provide the same key without
 	/// colliding so long as neither subtree passes it into the other.
@@ -484,6 +490,7 @@ pub(crate) struct Declared {
 	pub(crate) sources: Vec<PathBuf>,
 	pub(crate) provide: Vec<String>,
 	pub(crate) needs: Vec<String>,
+	pub(crate) config: serde_json::Value,
 }
 
 /// What a profile entry's document declares, read from the document and its own
@@ -521,6 +528,7 @@ pub(crate) fn resolve(path: &Path) -> mlua::Result<Declared> {
 			sources: vec![path],
 			provide: Vec::new(),
 			needs: Vec::new(),
+			config: serde_json::Value::Null,
 		});
 	}
 	let (manifest, entry) = Cartridge::read(&path).map_err(mlua::Error::RuntimeError)?;
@@ -545,6 +553,7 @@ pub(crate) fn resolve(path: &Path) -> mlua::Result<Declared> {
 		sources,
 		provide: manifest.provide,
 		needs: manifest.needs,
+		config: manifest.config,
 	})
 }
 

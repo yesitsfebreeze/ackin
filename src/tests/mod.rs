@@ -9,6 +9,7 @@ mod manifest;
 mod process;
 mod reload;
 mod resolver;
+mod node;
 mod rpc_contract;
 mod socket;
 mod wire;

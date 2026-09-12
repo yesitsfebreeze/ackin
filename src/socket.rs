@@ -27,9 +27,21 @@ struct Request {
 }
 
 pub fn path(dir: &Path) -> PathBuf {
-	let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+	sockpath(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()))
+}
+
+/// The socket one chain node serves, keyed by the node's ledger path under the
+/// tree's root: any process that knows the root and the node can derive it, so
+/// a dependent finds its dependency's socket without being told where it is,
+/// and two nodes of one tree never share one.
+pub fn node_path(root: &Path, node: &str) -> PathBuf {
+	let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+	sockpath((canonical, node.to_owned()))
+}
+
+fn sockpath(what: impl Hash) -> PathBuf {
 	let mut h = DefaultHasher::new();
-	canonical.hash(&mut h);
+	what.hash(&mut h);
 	let hash = format!("{:016x}", h.finish());
 	std::env::var_os("XDG_RUNTIME_DIR")
 		.map(|d| PathBuf::from(d).join(format!("zirkle-{hash}.sock")))

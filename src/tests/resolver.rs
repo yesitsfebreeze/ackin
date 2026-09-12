@@ -292,17 +292,17 @@ fn fixture_path() -> std::path::PathBuf {
 		.clone()
 }
 
-fn zirkle_path() -> std::path::PathBuf {
+pub fn zirkle_path() -> std::path::PathBuf {
 	static ZIRKLE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 	ZIRKLE.get_or_init(|| built(&["-p", "zirkle"])).clone()
 }
 
 /// The pids the probe's nodes wrote, keyed by the node path they stood for.
-fn pids(dir: &Path, nodes: &[&str]) -> Vec<u32> {
+pub fn pids(dir: &Path, nodes: &[&str]) -> Vec<u32> {
 	try_pids(dir, nodes).expect("every node marked its pid")
 }
 
-fn try_pids(dir: &Path, nodes: &[&str]) -> Option<Vec<u32>> {
+pub fn try_pids(dir: &Path, nodes: &[&str]) -> Option<Vec<u32>> {
 	nodes
 		.iter()
 		.map(|node| {
@@ -317,7 +317,7 @@ fn try_pids(dir: &Path, nodes: &[&str]) -> Option<Vec<u32>> {
 }
 
 /// A node's parent in the process tree is the dependency that launched it.
-fn ppid(pid: u32) -> u32 {
+pub fn ppid(pid: u32) -> u32 {
 	let out = std::process::Command::new("ps")
 		.args(["-o", "ppid=", "-p", &pid.to_string()])
 		.output()
@@ -325,7 +325,7 @@ fn ppid(pid: u32) -> u32 {
 	String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
 }
 
-fn alive(pid: u32) -> bool {
+pub fn alive(pid: u32) -> bool {
 	std::process::Command::new("ps")
 		.args(["-p", &pid.to_string()])
 		.output()
@@ -333,7 +333,7 @@ fn alive(pid: u32) -> bool {
 		.unwrap_or(false)
 }
 
-fn wait_for(condition: impl Fn() -> bool, seconds: u64) -> bool {
+pub fn wait_for(condition: impl Fn() -> bool, seconds: u64) -> bool {
 	for _ in 0..seconds * 20 {
 		if condition() {
 			return true;
