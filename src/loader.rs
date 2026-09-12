@@ -63,6 +63,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::ledger::{Bound, Installed, Ledger};
+
+/// The entries a one-cartridge verify loads, and the contracts it runs.
+type Solo = (Vec<Entry>, Vec<(String, &'static str, String)>);
 use crate::runtime::{Component, FiberHandle};
 use mlua::{LuaSerdeExt, Table};
 use notify::{RecursiveMode, Watcher};
@@ -864,7 +867,7 @@ impl Host {
 	fn solo(
 		self: &Arc<Self>,
 		target: &str,
-	) -> Result<(Vec<Entry>, Vec<(String, &'static str, String)>), String> {
+	) -> Result<Solo, String> {
 		let ledger = Ledger::scan(&self.dir);
 		let at = match ledger.get(target) {
 			Some(e) => e.path.clone(),
