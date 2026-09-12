@@ -23,7 +23,7 @@ Finished test profile [unoptimized + debuginfo] target(s) in 4.45s
 127 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.17s
 ```
 
-Binary and all five example test targets also exited zero with zero tests.
+The binary and all four example test targets also exited zero with zero tests.
 The complete output is `/tmp/cartridge-command-adapter-full-final.log`.
 
 ```
@@ -55,3 +55,7 @@ passing tests are not invented performance, cleanliness or size scores.
 | 6 | separate-the-machine-failure-from-the-crate | passed | Finished test profile in 4.45s; machine-failure work not applicable after space recovery |
 | 7 | record-what-the-build-learned | passed | successful rerun recorded with command provenance |
 | 8 | write-the-specs | passed | existing spec retained, boxes closed as checks completed, output attached |
+
+## Skeptic consultation
+
+KEEP for this limited API addition: existing callers unchanged; synchronous and asynchronous denial tests check successful shell completion, denied output, and absent outside file. Linux refusal is inspected, not Linux runtime proof. Report and all six acceptance boxes reconciled with final 127-pass log before collect.
