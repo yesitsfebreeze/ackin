@@ -1,2 +1,10 @@
 /target
 .DS_Store
+
+/.claude/
+/.cartridge/*
+!/.cartridge/README.md
+!/.cartridge/default/
+!/.cartridge/tools/
+!/.cartridge/proxy/
+!/.cartridge/mcp/
