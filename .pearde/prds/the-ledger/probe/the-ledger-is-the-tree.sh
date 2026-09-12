@@ -88,6 +88,15 @@ out | grep -q '^broken.*error:' && echo "ok: broken is listed with its reason, a
 rm -rf "$cartridges/broken"
 
 echo
+echo "== 6b. a re-export nothing inside the cartridge offers is refused here too =="
+doc "$cartridges/dangling" dangling ',"export":["store.get"]'
+if run; then echo "FAIL: the ledger exited 0 on a dangling re-export"; exit 1; fi
+out | grep -q '^dangling.*passed on, but nothing inside this cartridge offers it' \
+	&& echo "ok: the ledger's unread is the host's refusal, so both listings exit 1 on the same tree" \
+	|| { echo "FAIL: the dangling re-export was not named"; out; exit 1; }
+rm -rf "$cartridges/dangling"
+
+echo
 echo "== 7. a need nothing offers: named, and not a failure =="
 doc "$cartridges/lonesome" lonesome ',"needs":["nobody.offers"]'
 out | grep -q 'nobody.offers <- ?' \

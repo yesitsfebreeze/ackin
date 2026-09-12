@@ -22,8 +22,10 @@ are top-level entries and a cartridge's direct children are its nested entries,
 recursively. A directory that is not a cartridge is not descended into, so a
 plain folder under the root does not extend a subtree. A root that does not
 exist is an empty ledger, not an error. An unreadable document is an entry with
-its reason (`unread`) and empty declarations, on the same terms
-`CartridgeInfo` keeps them apart.
+its reason (`unread`) and empty declarations. The ledger's read runs the
+document's own checks *and* the host's re-export check (`passed_on`), so it
+refuses exactly the trees the host refuses to load and the two listings can
+never disagree about what reads.
 
 `Installed::path` is the identity; `parent()` derives the scope;
 `offers()` chains `provide` and `export`. `Ledger::resolve(from, key)` walks
@@ -32,6 +34,17 @@ its reason (`unread`) and empty declarations, on the same terms
 or more entries of one scope offering the key, in path order — the answered
 fork, sorting names the clash, it does not pick a winner), or `None`.
 `bindings()` pairs every need of every entry with its `Bound`.
+
+The walk contract, as the walk implements it: a nested cartridge's `provide`
+is a candidate for every lookup whose walk passes its parent's scope, so it is
+seen by everything inside the parent's subtree — the parent, the parent's other
+children, their descendants — and invisible to the graph outside the parent
+unless a parent passes it on. This is the settled reading of the namespacing
+decision's "inner cartridges are hidden until passed on": hidden from outside
+the parent, not from the siblings within it. The manifest contract's sentence
+"satisfies its parent's needs and nothing else" names the graph outside the
+parent, and holds as written on that side — a lookup at the root, or from any
+unrelated subtree, cannot bind a nested key with no re-export anywhere.
 
 `src/tests/ledger.rs` — six tests:
 `an_entry_is_its_path_from_the_root`,
@@ -56,11 +69,19 @@ offering scope.
 ## Acceptance
 
 - [x] A lookup from a nested scope steps outward through more than one scope, proven by a test in `src/tests/ledger.rs` that fails without the walk.
-  - New test `a_walk_from_a_nested_scope_steps_outward`: `outer/inner/deep`
-    asks for a key its own subtree does not offer, `outer/inner` does not
-    offer it, `outer` re-exports it — `resolve("outer/inner/deep", key)` is
-    `One("outer")`. Without `outward()` stepping past the first scope the test
-    cannot pass; delete the loop body's later scopes and it reads `None`.
+  - Test `a_walk_from_a_nested_scope_steps_outward`, rebuilt in the skeptic
+    corrections pass on a tree every valid document passes:
+    `outer/inner/deep` declares `needs: ["outer.top"]`, the two scopes
+    between it and the top are silent, and `outer` provides `outer.top` —
+    `resolve("outer/inner/deep", "outer.top")` is `One("outer")`, and the same
+    ask is pinned through `bindings()` as a declared need. Without
+    `outward()` stepping past the first scope the test cannot pass; cut to the
+    asker's own subtree it reads `?`. The shape first proven here — `outer`
+    declaring `export: ["store.get"]` with a silent child, asked for by a key
+    the asker itself provided — is a tree the document format refuses, and a
+    lookup no valid document can make; the asker-exclusion it claimed to pin
+    is pinned synthetically in
+    `a_walk_answers_from_the_asker_subtree_then_steps_outward`.
 - [x] `cargo test --offline tests::ledger::` passes with at least the six this pass left plus the one above, and every name it prints comes from `src/tests/ledger.rs`.
   - Baseline this pass: `test result: ok. 6 passed; 0 failed; 0 ignored; 0
     measured; 68 filtered out`. After the box above: 7.

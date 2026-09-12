@@ -102,3 +102,89 @@ spec03: `s03a..s03b` both 0).
   defect outside scope observed.
 - No contract word needed looking up; no `## Failure` written — the run is
   green.
+
+## Corrections
+
+Skeptic consult (`skeptic.md`, verdict CHANGE, 2026-09-12) — three corrections
+judged real by the orchestrator, applied on the lane as one commit on top of
+`2dcce33`. No acceptance box ticked; the boxes' texts amended where the shape
+they describe changed.
+
+### 1. Sibling visibility pinned, both sides
+
+The ledger's reading holds: a nested cartridge's `provide` is visible to every
+lookup from inside its parent's subtree — the walk passes the parent's scope —
+and invisible to the graph outside the parent unless a parent re-exports it.
+Reconciled with the-manifest's "satisfies its parent's needs and nothing else"
+as naming the graph outside the parent; the-manifest's prd.md was not edited.
+
+- `src/ledger.rs` — the private-key rule's doc (`Installed::provide`) and the
+  `resolve` doc now state the reading; the module doc was checked and already
+  agreed ("a key deeper than one level reaches it only where every parent
+  between re-exported it").
+- `.pearde/prds/the-ledger/specs/spec01.md` — the walk contract, as the walk
+  implements it, stated after the `resolve` paragraph in "What already stands".
+- New test `a_child_provide_is_seen_by_its_parent_subtree_and_not_by_the_graph_outside`
+  in `src/tests/ledger.rs`: `outer/sib` binds `store.get` straight to
+  `outer/inner`'s provide with no re-export anywhere (and the parent binds it
+  too), while a top-level `stranger` and a lookup at the root itself read `?` —
+  the key never left the parent's subtree. Both asks are declared needs, pinned
+  through `bindings()` as well. On the live binary: `store.get <- outer/inner`
+  printed, `exit=0`.
+
+### 2. The ledger's read now agrees with the host's
+
+- `src/loader.rs` — `Cartridge::passed_on` made `pub(crate)` (doc note added);
+  `src/ledger.rs` `read_entry` runs it after `Cartridge::document`, so an
+  entry whose document fails the re-export check carries `unread` with the
+  host's reason and `zirkle ledger` exits 1 on a tree the host refuses to
+  load. Verified live on the skeptic's fixture: `ledger` and `list` now print
+  the same refusal line for `outer` and both exit 1. The doc claims at
+  `ledger.rs` (`offers`, module doc, `read_entry`) now describe the code.
+- `src/tests/ledger.rs` — `a_walk_from_a_nested_scope_steps_outward` rebuilt on
+  a tree every valid document passes: `deep` declares the need
+  (`needs: ["outer.top"]`), `outer/inner` is silent, `outer` provides
+  `outer.top`; the walk still crosses three scopes (cut to the asker's own
+  subtree the need reads `?`), the ask is a declared need pinned through
+  `bindings()`, and the test asserts every document on the tree reads. The
+  asker-exclusion the old test's doc claimed to pin is **kept as a synthetic
+  resolve() unit test** — it already lives in
+  `a_walk_answers_from_the_asker_subtree_then_steps_outward`
+  (`resolve("other", "store.get")` → `None` while `other` provides the key),
+  and the rebuilt test's doc comment says so; no separate new test was added.
+  New test `a_dangling_re_export_is_unread_on_the_ledger_read_too` pins the
+  read agreement itself (host's reason carried verbatim, declarations empty,
+  the child below still reads).
+- `spec01.md` — box 1's narrative amended to the shape actually proven
+  (dangling-re-export shape named as refused-by-format, asker-exclusion named
+  as synthetic); the "on the same terms `CartridgeInfo` keeps them apart"
+  sentence replaced with what the read now actually does.
+- `probe/the-ledger-is-the-tree.sh` — existing steps re-checked: the new read
+  changes no expected line or exit on any existing fixture (all pass
+  `passed_on`), so no fixture moved. A step 6b was added to pin the new
+  behaviour end to end: a dangling re-export is refused on the ledger listing
+  with the host's reason and a non-zero exit. (This edit lives in the main
+  checkout's copy, the one this lane's gate runs; the lane commit predates the
+  landing's rewrite of the prd files.)
+
+### 3. `Ledger::root()` deleted
+
+`grep -rn "\.root()" src/` confirmed no caller. `pub fn root()` and the
+`root: PathBuf` field it read are gone from `src/ledger.rs`; `scan` no longer
+stores it. No Cargo.toml dependency touched.
+
+### Gates (from the lane, after all three corrections)
+
+- `cargo test --offline` — `test result: ok. 77 passed; 0 failed; 0 ignored; 0
+  measured; 0 filtered out` (was 75; +1 sibling-visibility test, +1 dangling
+  re-export test; the rebuilt nested-walk test keeps its name).
+- `cargo clippy --offline --all-targets` — clean, no warnings.
+- `bash /Users/feb/dev/cartridge/.pearde/prds/the-ledger/probe/
+  the-ledger-is-the-tree.sh` — green end to end, `PROBE OK` (now 17 `ok:` lines,
+  including new step 6b).
+
+Files touched: `src/ledger.rs`, `src/loader.rs`, `src/tests/ledger.rs` (lane
+commit); `.pearde/prds/the-ledger/specs/spec01.md`,
+`.pearde/prds/the-ledger/report.md`,
+`.pearde/prds/the-ledger/probe/the-ledger-is-the-tree.sh` (main checkout; prd
+files are outside the lane tree).
