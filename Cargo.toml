@@ -50,3 +50,6 @@ tempfile = "3"
 
 [lints.rust]
 warnings = "deny"
+
+# Keep the runtime and its Pearde lanes independent of a containing workspace.
+[workspace]
