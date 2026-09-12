@@ -17,6 +17,40 @@ fn cartridge(dir: &Path, folder: &str, manifest: Value, entry: &str) {
 
 const INERT: &str = r#"return {apply=function(ctx) end}"#;
 
+#[test]
+fn documented_commands_are_data_and_keep_the_manifest_strict() {
+	let dir = tempfile::tempdir().unwrap();
+	let manifest = json!({
+		"name": "p", "entry": "init.lua", "description": "Example cartridge",
+		"commands": {"test": {"argv": ["just", "test", "p"], "cwd": "."}}
+	});
+	cartridge(
+		dir.path(),
+		"p",
+		manifest.clone(),
+		"error('entry evaluated')",
+	);
+	let path = dir.path().join("p/cartridge.json");
+	let (document, _) = crate::loader::Cartridge::read(&path).unwrap();
+	assert_eq!(document.description.as_deref(), Some("Example cartridge"));
+	assert_eq!(document.commands["test"].argv, ["just", "test", "p"]);
+	assert_eq!(document.commands["test"].cwd, ".");
+	assert!(document.grant.exec.is_empty());
+	for invalid in [
+		json!({"argv": "just test p", "cwd": "."}),
+		json!({"argv": ["just"], "cwd": ".", "shell": true}),
+	] {
+		let mut bad = manifest.clone();
+		bad["commands"]["test"] = invalid;
+		std::fs::write(&path, bad.to_string()).unwrap();
+		assert!(crate::loader::Cartridge::document(&path).is_err());
+	}
+	let mut bad = manifest;
+	bad["commmands"] = json!({});
+	std::fs::write(&path, bad.to_string()).unwrap();
+	assert!(crate::loader::Cartridge::document(&path).is_err());
+}
+
 /// `provide` and `needs` in the document reach the component without the entry
 /// repeating them, so the declaration has one home.
 #[tokio::test(flavor = "multi_thread")]

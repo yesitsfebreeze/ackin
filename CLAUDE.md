@@ -2,8 +2,9 @@
 
 Develop in `~/dev/cartridge/cartridge.ctg`. The parent owns submodule pointers and
 a forwarding Justfile; runtime code, documentation and build orchestration live
-here. Each sibling cartridge owns its implementation and `development.json`.
+here. Each sibling cartridge owns its implementation and `cartridge.json`.
 
+Read `llms.txt` for the linked architecture and cartridge-authoring guides.
 Read `.cartridge/memos/type/type.md` and `.cartridge/memos/type/system.md` for the
 native record protocol. The active record was migrated from sys. Historical
 notes retain their original context; the current layout and commands below

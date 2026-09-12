@@ -9,6 +9,10 @@
 //! {
 //!   "name": "store",            // required: the cartridge's own name
 //!   "entry": "init.lua",        // required: Lua entry, relative to this folder
+//!   "description": "Stores data", // optional: human-readable purpose
+//!   "commands": {              // optional: documentation, never auto-executed
+//!     "test": {"argv": ["just", "test", "store"], "cwd": "."}
+//!   },
 //!   "binary": "store-bin",      // optional: executable basename, when it
 //!                               //   differs from the cartridge folder
 //!   "ui": "ui/index.ts",        // optional: Solid UI module inside this folder
@@ -152,6 +156,11 @@ fn normalize(path: &Path) -> PathBuf {
 pub struct Cartridge {
 	pub name: String,
 	pub entry: String,
+	/// Human-readable purpose, alongside the executable behavior declaration.
+	pub description: Option<String>,
+	/// Documented commands; reading a manifest never executes them.
+	#[serde(default)]
+	pub commands: std::collections::BTreeMap<String, Command>,
 	/// Optional executable basename when it differs from the cartridge folder.
 	pub binary: Option<String>,
 	/// Optional Solid UI module, relative to this cartridge's folder.
@@ -188,6 +197,15 @@ pub struct Cartridge {
 	/// tightest policy and not the loosest.
 	#[serde(default)]
 	pub grant: Grant,
+}
+
+/// An argument array to run from `cwd`, relative to the manifest's folder.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Command {
+	pub argv: Vec<String>,
+	pub cwd: String,
+	pub description: Option<String>,
 }
 
 /// What a cartridge asks the machine for. Read twice — once to grant, once to

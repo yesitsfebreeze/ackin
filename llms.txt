@@ -1,12 +1,23 @@
-# Cartridge
+# Cartridge: system and authoring guide
 
-> Rust runtime, Lua composition and SDK process cartridges with a terminal UI,
-> authenticated model proxy and MCP tool server.
+Cartridge hosts replaceable Lua and SDK process cartridges. Start here, then
+read the linked plain-text guides relevant to the task. Paths are relative to
+this source repository, ~/dev/cartridge/cartridge.ctg.
 
-- [Development commands](README.md)
-- [Agent guidance](CLAUDE.md)
-- [Module catalog](repositories.json)
-- [Runtime development contract](development.json)
-- [Record types](.cartridge/memos/type/type.md)
-- [System memo protocol](.cartridge/memos/type/system.md)
-- [Migration record](MIGRATION.md)
+- [System architecture](docs/llms/architecture.txt): repository layout, runtime,
+  dependency resolution, processes, replacement, permissions, and cartridge roles.
+- [Creating cartridges](docs/llms/creating-cartridges.txt): complete Lua example,
+  Rust SDK adapter, manifest fields, registration, profiles, and validation.
+- [Development and operation](docs/llms/development.txt): build/test selection,
+  proxy, MCP registration, local data, Git workflow, and troubleshooting.
+- [Memos and knowledge](docs/llms/memos.txt): record types, validated writes,
+  discovery, system prompts, and the cartridge-creation routine.
+
+The executable declaration belongs in each cartridge.json. It includes purpose,
+services, dependencies, grants, and documented command argument arrays. Reading
+commands does not execute them. Memos hold context, decisions, and procedures.
+There is no separate development JSON.
+
+The guides describe this checkout, not a promise that unfinished sandbox work
+is complete. Source contracts and tests are authoritative when behavior changes.
+See src/loader.rs for the manifest schema and .pearde/ for the development board.

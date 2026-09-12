@@ -25,7 +25,8 @@ The parent contains Git metadata, its 17 submodules, and a forwarding Justfile. 
 cartridges are linked under `builtin/`. The `landscape.ctg` sibling is a Rust
 support library. [repositories.json](repositories.json) records all imported
 repositories and their source revision; [PORTING.md](PORTING.md) records the port
-and validation history. The original `~/dev/sys` checkout remains unchanged.
+and validation history. `~/dev/sys` now links to the preserved legacy checkout;
+see [MIGRATION.md](MIGRATION.md).
 
 ## Use
 
@@ -40,7 +41,7 @@ just build
 Without Just, use `python3 scripts/workspace.py build`. The launcher works from
 any working directory and runs the application here, giving profiles and stores
 stable paths. Provider operations require your own configuration; credentials
-and live stores were not copied from `~/dev/sys`.
+and live stores remain private; migration preserved them with backwards links.
 
 `just check`, `just test`, and `just links` validate the composed checkout.
 The runtime keeps its standalone Cargo workspace for independent builds and
@@ -101,12 +102,14 @@ internal memory crate. Invalid names fail rather than falling back to all tests.
 `just check <module>` runs formatting and strict Clippy for Rust modules; UI runs
 TypeScript checking and the Lua policy runs its protocol checks.
 
-Every repository has `development.json` with descriptions, services, dependencies,
+Each loadable cartridge has `cartridge.json` with its purpose, services, dependencies,
 and structured argument arrays. Command paths are relative to the repository
 containing that JSON. SDK `process` commands speak JSON lines on stdin/stdout;
 use `hello` to inspect their declared capabilities. `verify` applies only to
 cartridges with a declared self-test contract and self-contained configuration.
-The harness needs profile configuration; its development guide uses
+The runtime and landscape library use their README and Justfile instead of a
+cartridge manifest. Memos record development context and decisions.
+The harness needs profile configuration; its manifest documents
 `just invoke harness.selftest '{}' default` and `harness.integration` instead.
 
 The proxy uses `CARTRIDGE_PROXY_KEY` when supplied, otherwise a private generated
@@ -119,9 +122,12 @@ profile name `dev/proxy-4242`, for example `just status dev/proxy-4242`,
 or pass that profile name as the final argument to `just call`.
 
 MCP is client-owned: launch `just --justfile /absolute/path/to/cartridge.ctg/justfile mcp`
-with stdin/stdout pipes and exchange newline-delimited JSON-RPC. No Codex client
-configuration is changed automatically. The smoke command uses isolated state;
+with stdin/stdout pipes and exchange newline-delimited JSON-RPC. This machine
+registers that command in Codex as `cartridge`; inspect it with `codex mcp get cartridge`. The smoke command uses isolated state;
 its proxy has a local router fixture and makes no model inference requests.
 
 Development guidance and the native record were migrated from sys. See
 [MIGRATION.md](MIGRATION.md) for preserved sessions, state and the compatibility link.
+
+[llms.txt](llms.txt) indexes the detailed plain-text architecture, development,
+cartridge-authoring, and memo guides.

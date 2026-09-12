@@ -20,7 +20,7 @@ test target='all' *args:
 modules:
     @python3 scripts/workspace.py modules
 
-# Show a module's machine-readable development guide.
+# Show a cartridge manifest, or a support module's README.
 describe module:
     @python3 scripts/workspace.py describe "$@"
 

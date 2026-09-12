@@ -1,7 +1,7 @@
 # Development home migration
 
 The active source is `~/dev/cartridge/cartridge.ctg`. Sibling repositories own the
-cartridges; their `development.json` files describe their purpose and commands.
+cartridges; their `cartridge.json` files describe their purpose and commands.
 The parent now also has the explicitly requested forwarding Justfile.
 
 ## Information brought forward

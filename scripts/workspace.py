@@ -139,15 +139,18 @@ def main():
     if action in ("modules", "describe"):
         entries = [("runtime", ROOT), *((r["name"], REPOSITORIES / r["repository"]) for r in catalog())]
         for name, directory in entries:
+            manifest = directory / "cartridge.json"
             if action == "describe":
                 if len(sys.argv) != 3:
                     raise RuntimeError("Usage: just describe <module>")
                 if sys.argv[2].removesuffix(".ctg") not in (name, "cartridge" if name == "runtime" else name):
                     continue
-                print((directory / "development.json").read_text(), end="")
+                document = manifest if manifest.is_file() else directory / "README.md"
+                print(document.read_text(), end="")
                 return
             else:
-                description = json.loads((directory / "development.json").read_text())["description"]
+                description = (json.loads(manifest.read_text()).get("description", name)
+                               if manifest.is_file() else f"See {directory.name}/README.md")
                 print(f"{name:14} {description}")
         if action == "describe":
             raise RuntimeError(f"Unknown module {sys.argv[2]!r}; use just modules")
