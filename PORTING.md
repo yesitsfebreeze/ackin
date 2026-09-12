@@ -61,6 +61,28 @@ Raw local logs are kept under `validation/` and excluded from Git. Runtime
 quality scores and subsequent fixes remain in
 `.pearde/quality-review.md`.
 
+## Final root cleanup
+
+The final checkout has only `.git`, `.gitmodules`, and the 17 submodule
+directories at `~/dev/cartridge`. Run `just build`, `just check`, `just test`,
+and `./cartridge …` from `~/dev/cartridge/cartridge.ctg`.
+
+The relocated helper passed its complete check and test commands: 1,726 Rust
+tests passed, 17 existing memory tests were ignored, and all 34 UI tests passed.
+The final tooling correction separately passed all 7 focused tests (the full
+suite had run the preceding 6-test tooling revision). Formatting and strict
+Clippy passed for the final tools code.
+
+Actual debug bundling passed from the source, parent wrapper, and grouped
+workspace directories, always writing to `cartridge.ctg/dist/cartridge`.
+The relocated bundle contained all 15 manifests and 14 executables, resolved its
+ledger, and served `sessions.list` through the compiled SDK process. A new runtime
+worktree passed link checks and the tooling contract, then was removed.
+
+A fresh recursive local clone verified the exact parent contents, clean Git
+status, 15 cartridge links, and the runtime, shared cartridge, and memory Cargo
+workspaces. These checks are recorded in `validation/round-5-*.log`.
+
 ## Git hosting
 
 The submodule URLs name `yesitsfebreeze/<name>.ctg` on GitHub. Repositories and
