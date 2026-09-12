@@ -79,14 +79,111 @@ fn a_walk_answers_from_the_asker_subtree_then_steps_outward() {
 }
 
 /// A request made *from* a nested scope steps outward through more than one
-/// scope. The asker's own subtree is silent, its parent's scope answers with
-/// the asker alone — excluded, because nothing is its own answer — and only the
-/// top of the chain has the offer, re-exported from the depth that provides it.
-/// Delete the walk's later scopes and this reads `None`: every step past the
-/// first is load bearing, and the asker-exclusion here is the case pass two
-/// never ran, where the asker sits inside the scope that would otherwise bind.
+/// scope, on a tree every valid document passes: `deep` declares the need, the
+/// two scopes between it and the top are silent, and `outer` provides. The
+/// asker's own subtree is silent, its parent's scope is silent, and only the
+/// root scope answers — cut the walk to the asker's own subtree and the need
+/// reads `?`, so every step past the first is load bearing. The ask is a
+/// declared need the registry's own `bindings()` can make; the asker-exclusion
+/// the doc comment here once claimed to pin is not reachable from a valid
+/// document (the format refuses a key that is both provided here and needed
+/// from outside) and is pinned synthetically in
+/// `a_walk_answers_from_the_asker_subtree_then_steps_outward` instead.
 #[test]
 fn a_walk_from_a_nested_scope_steps_outward() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"outer",
+		json!({"name": "outer", "entry": "init.lua", "provide": ["outer.top"]}),
+	);
+	cartridge(
+		dir.path(),
+		"outer/inner",
+		json!({"name": "inner", "entry": "init.lua"}),
+	);
+	cartridge(
+		dir.path(),
+		"outer/inner/deep",
+		json!({"name": "deep", "entry": "init.lua", "needs": ["outer.top"]}),
+	);
+	let ledger = Ledger::scan(dir.path());
+	assert!(
+		ledger.entries().all(|e| e.unread.is_none()),
+		"every document on the walk test's tree reads"
+	);
+	match ledger.resolve("outer/inner/deep", "outer.top") {
+		Bound::One(e) => assert_eq!(e.path, "outer", "the walk ends at the top of the chain"),
+		other => panic!("expected the outward binding, got {:?}", other.paths()),
+	}
+	// The same ask as the registry makes it: a declared need, bound outward.
+	assert!(ledger.bindings().iter().any(|(e, key, b)| {
+		e.path == "outer/inner/deep" && *key == "outer.top" && b.paths() == vec!["outer"]
+	}));
+}
+
+/// The sibling case, both sides of it. A nested cartridge's `provide` is seen
+/// by every lookup from inside its parent's subtree — the walk passes the
+/// parent's scope — so `outer/sib` binds `store.get` straight to
+/// `outer/inner`'s provide with no re-export anywhere. And the graph outside
+/// the parent does not see it: a top-level asker binds to whatever the root
+/// scope offers, and here that is nothing. This is the settled reading of
+/// "inner cartridges are hidden until passed on" — hidden from outside the
+/// parent, not from the siblings within it.
+#[test]
+fn a_child_provide_is_seen_by_its_parent_subtree_and_not_by_the_graph_outside() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(dir.path(), "outer", json!({"name": "outer", "entry": "init.lua"}));
+	cartridge(
+		dir.path(),
+		"outer/inner",
+		json!({"name": "inner", "entry": "init.lua", "provide": ["store.get"]}),
+	);
+	cartridge(
+		dir.path(),
+		"outer/sib",
+		json!({"name": "sib", "entry": "init.lua", "needs": ["store.get"]}),
+	);
+	cartridge(
+		dir.path(),
+		"stranger",
+		json!({"name": "stranger", "entry": "init.lua", "needs": ["store.get"]}),
+	);
+	let ledger = Ledger::scan(dir.path());
+	match ledger.resolve("outer/sib", "store.get") {
+		Bound::One(e) => assert_eq!(e.path, "outer/inner", "the sibling binds the nested provide"),
+		other => panic!("expected the sibling binding, got {:?}", other.paths()),
+	}
+	// A lookup from the parent's scope binds the same key — the parent is
+	// inside its own subtree, the walk passes its scope too.
+	match ledger.resolve("outer", "store.get") {
+		Bound::One(e) => assert_eq!(e.path, "outer/inner"),
+		other => panic!("expected the parent binding, got {:?}", other.paths()),
+	}
+	// Outside the parent's subtree the key never arrived: the root scope
+	// offers nothing, so both the unrelated top-level asker and a lookup at
+	// the root itself read `?`.
+	assert!(matches!(ledger.resolve("stranger", "store.get"), Bound::None));
+	assert!(matches!(ledger.resolve("", "store.get"), Bound::None));
+	// The registry says the same thing on the same tree: the sibling's need is
+	// bound, the stranger's is named with `?`.
+	let bound = |path: &str| {
+		ledger
+			.bindings()
+			.iter()
+			.find(|(e, key, _)| e.path == path && *key == "store.get")
+			.map(|(_, _, b)| b.paths().iter().map(|p| p.to_string()).collect::<Vec<String>>())
+	};
+	assert_eq!(bound("outer/sib"), Some(vec!["outer/inner".to_string()]));
+	assert_eq!(bound("stranger"), Some(Vec::<String>::new()));
+}
+
+/// A document the host refuses — a re-export nothing inside the cartridge
+/// offers — is unread on the ledger's read too, with the host's reason. The
+/// ledger's verdict and the host's are the same verdict, so `zirkle ledger`
+/// exits non-zero on a tree the host refuses to load.
+#[test]
+fn a_dangling_re_export_is_unread_on_the_ledger_read_too() {
 	let dir = tempfile::tempdir().unwrap();
 	cartridge(
 		dir.path(),
@@ -98,16 +195,20 @@ fn a_walk_from_a_nested_scope_steps_outward() {
 		"outer/inner",
 		json!({"name": "inner", "entry": "init.lua"}),
 	);
-	cartridge(
-		dir.path(),
-		"outer/inner/deep",
-		json!({"name": "deep", "entry": "init.lua", "provide": ["store.get"]}),
-	);
 	let ledger = Ledger::scan(dir.path());
-	match ledger.resolve("outer/inner/deep", "store.get") {
-		Bound::One(e) => assert_eq!(e.path, "outer", "the walk ends at the top of the chain"),
-		other => panic!("expected the outward binding, got {:?}", other.paths()),
-	}
+	let outer = ledger.get("outer").unwrap();
+	assert!(
+		outer
+			.unread
+			.as_deref()
+			.unwrap()
+			.contains("`store.get` is passed on, but nothing inside this cartridge offers it"),
+		"the host's reason, carried verbatim"
+	);
+	assert!(outer.provide.is_empty() && outer.export.is_empty() && outer.needs.is_empty());
+	assert_eq!(outer.name, "");
+	// The child below it still reads: the refusal is about `outer`'s document.
+	assert!(ledger.get("outer/inner").unwrap().unread.is_none());
 }
 
 /// The answered fork: two entries of one scope offering one key is ambiguous

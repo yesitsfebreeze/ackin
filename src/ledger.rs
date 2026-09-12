@@ -23,9 +23,12 @@
 //! and a plain folder does not extend it.
 //!
 //! **An unreadable document is still an entry.** Its `unread` says why and its
-//! declarations are empty, exactly as [`crate::loader::CartridgeInfo`] does it:
-//! absent is not the same fact as empty, and a document that would not read
-//! must not read as one that offered nothing.
+//! declarations are empty. The read is the host's read: the document's own
+//! checks *and* the re-export check against the subtree, so the ledger refuses
+//! — as `unread` — exactly the trees the host refuses to load, and the two
+//! listings can never disagree about what reads. Absent is not the same fact
+//! as empty, and a document that would not read must not read as one that
+//! offered nothing.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -42,7 +45,13 @@ pub struct Installed {
 	pub dir: PathBuf,
 	/// The document's own `name`. Empty when the document would not read.
 	pub name: String,
-	/// Keys offered, private to this cartridge's own subtree.
+	/// Keys offered, private to this cartridge's own subtree. A nested
+	/// cartridge's `provide` is seen by every lookup made from inside its
+	/// parent's subtree — the walk passes the parent's scope — and by nothing
+	/// outside the parent unless a parent passes it on: that is the settled
+	/// reading of "inner cartridges are hidden until passed on", and
+	/// the-manifest's "satisfies its parent's needs and nothing else" names
+	/// the graph outside the parent, not the siblings within it.
 	pub provide: Vec<String>,
 	/// Inner keys passed outward under this cartridge's name.
 	pub export: Vec<String>,
@@ -59,8 +68,10 @@ impl Installed {
 	}
 
 	/// What this entry makes visible to whatever contains it: its own keys plus
-	/// the inner ones it passes on. `export` is validated against the subtree at
-	/// document-read time, so a re-export here names something real.
+	/// the inner ones it passes on. `export` is validated on the ledger's read
+	/// the same way the host validates it — [`Cartridge::passed_on`], against the
+	/// subtree at document-read time — so a re-export here names something real,
+	/// and a document the host refuses to load carries `unread` here too.
 	pub fn offers(&self) -> impl Iterator<Item = &String> {
 		self.provide.iter().chain(self.export.iter())
 	}
@@ -95,7 +106,6 @@ impl Bound<'_> {
 
 /// Every cartridge under one root, keyed by its path from that root.
 pub struct Ledger {
-	root: PathBuf,
 	entries: BTreeMap<String, Installed>,
 }
 
@@ -106,14 +116,7 @@ impl Ledger {
 	pub fn scan(root: &Path) -> Self {
 		let mut entries = BTreeMap::new();
 		descend(root, "", &mut entries);
-		Self {
-			root: root.to_path_buf(),
-			entries,
-		}
-	}
-
-	pub fn root(&self) -> &Path {
-		&self.root
+		Self { entries }
 	}
 
 	/// Every entry, in path order — so the listing does not depend on the order
@@ -162,9 +165,13 @@ impl Ledger {
 
 	/// Bind `key` for the cartridge at `from`. **A walk, not a map hit.** The
 	/// asking cartridge's own subtree answers first; only where it is silent
-	/// does the search step outward, one containing subtree at a time. A key
-	/// one subtree over is invisible however identical its name, because it was
-	/// never offered into any scope this walk passes through.
+	/// does the search step outward, one containing subtree at a time. A key one
+	/// subtree over is invisible however identical its name, because it was never
+	/// offered into any scope this walk passes through. The one visible side of
+	/// that privacy: a nested cartridge's `provide` is a candidate for every
+	/// lookup whose walk passes its parent's scope, so everything inside the
+	/// parent's subtree — the parent, the other children, their descendants —
+	/// sees it, and nothing outside the parent does until a parent passes it on.
 	///
 	/// The settled rule — two cartridges may provide the same key without
 	/// colliding — holds across scopes and does not hold inside one. Where two
@@ -239,9 +246,17 @@ fn descend(dir: &Path, scope: &str, into: &mut BTreeMap<String, Installed>) {
 /// The document as data. `Cartridge::document` is used rather than
 /// `Cartridge::read`, on the same grounds the manifest listing uses it: a
 /// cartridge whose Lua entry is missing has still declared what it declares,
-/// and the ledger records declarations, not evaluations.
+/// and the ledger records declarations, not evaluations. On top of the
+/// document's own checks the read runs [`Cartridge::passed_on`] — the same
+/// re-export validation the host's reader runs — so `unread` here and the
+/// host's refusal are the same verdict on the same tree.
 fn read_entry(folder: &Path, path: String) -> Installed {
-	match Cartridge::document(&folder.join(MANIFEST)) {
+	let manifest = folder.join(MANIFEST);
+	let read = Cartridge::document(&manifest).and_then(|doc| {
+		doc.passed_on(folder, &manifest)?;
+		Ok(doc)
+	});
+	match read {
 		Ok(doc) => Installed {
 			path,
 			dir: folder.to_path_buf(),

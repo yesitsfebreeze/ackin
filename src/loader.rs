@@ -400,7 +400,9 @@ impl Cartridge {
 
 	/// Every re-export names a key the subtree actually offers. This is the
 	/// second naming the nesting rule costs, and the check that it was paid.
-	fn passed_on(&self, root: &Path, manifest: &Path) -> Result<(), String> {
+	/// Crate-visible so the ledger's read runs it too: one validation, one
+	/// verdict, so the two listings refuse the same trees.
+	pub(crate) fn passed_on(&self, root: &Path, manifest: &Path) -> Result<(), String> {
 		if self.export.is_empty() {
 			return Ok(());
 		}
