@@ -8,6 +8,7 @@ needs:
   - the-wire
 workflow: wire-the-chain
 actual: 0.01h
+commit: 560f762 7367355
 ---
 
 # Lua interface
