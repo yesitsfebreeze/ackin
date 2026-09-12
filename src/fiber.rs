@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::StreamExt;
 
 use crate::runtime::{
-	execute, Component, Ctx, Error, Fiber, Realm, Registry, Runtime, State, Uid, View, ROOT,
+	execute, Component, Ctx, Error, Fiber, Meta, Realm, Registry, Runtime, State, Uid, View, ROOT,
 };
 
 impl Runtime {
@@ -235,6 +236,29 @@ impl FiberHandle {
 	pub async fn retry(&self) {
 		self.rt.revise(self.uid, |f| f.error = None);
 		self.rt.wait_settled(self.uid).await;
+	}
+}
+
+impl Runtime {
+	/// A handle onto a node of the tree that no profile slot owns.
+	pub(crate) fn handle(self: &Arc<Self>, uid: Uid) -> FiberHandle {
+		FiberHandle { rt: self.clone(), uid }
+	}
+
+	/// The context a replacement is composed under: the old generation's
+	/// parent, with the isolate and intercept the old generation ran with.
+	pub(crate) fn ctx_under(
+		self: &Arc<Self>,
+		parent: Uid,
+		isolate: Arc<HashMap<String, Realm>>,
+		intercept: Arc<HashMap<String, Meta>>,
+	) -> Ctx {
+		Ctx {
+			rt: self.clone(),
+			fiber: parent,
+			isolate,
+			intercept,
+		}
 	}
 }
 

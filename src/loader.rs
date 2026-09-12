@@ -1334,6 +1334,145 @@ impl Host {
 					host.replace_entry(entry).await;
 				}
 			});
+			return;
+		}
+		// A node composed inside another cartridge has no profile slot; the
+		// same subtree transaction answers its ask.
+		let host = self.clone();
+		tokio::spawn(async move {
+			if let Err(e) = host.replace_node(uid).await {
+				host.report(&uid.to_string(), e);
+			}
+		});
+	}
+
+	/// Replace one node of the running tree, addressed by its uid. A profile
+	/// entry goes through [`Host::replace_entry`]; a node composed inside
+	/// another cartridge runs the same transaction through its rebuild.
+	pub async fn replace_node(
+		self: &Arc<Self>,
+		uid: crate::runtime::Uid,
+	) -> Result<crate::runtime::Uid, String> {
+		let _reload = self.reload_lock.lock().await;
+		let entry = self
+			.loaded
+			.lock()
+			.iter()
+			.find(|l| l.fiber.as_ref().is_some_and(|f| f.uid() == uid))
+			.map(|l| l.entry.clone());
+		if let Some(entry) = entry {
+			self.replace_entry(entry).await;
+			return Ok(uid);
+		}
+		self.swap_node(uid).await
+	}
+
+	/// The subtree transaction: rebuild the node's component from its source,
+	/// drain its service calls, publish only an active candidate presenting the
+	/// same provided keys, and dispose the old generation. A rejected candidate
+	/// unfreezes the old bank and the live generation stays.
+	async fn swap_node(
+		self: &Arc<Self>,
+		uid: crate::runtime::Uid,
+	) -> Result<crate::runtime::Uid, String> {
+		let (rebuild, reload, isolate, intercept, parent) = {
+			let reg = self.rt.reg.lock();
+			let Some(f) = reg.fibers.get(&uid) else {
+				return Err(format!("no running node carries uid {uid}"));
+			};
+			let Some(rebuild) = f.rebuild.clone() else {
+				return Err("this node was not composed to be replaceable".into());
+			};
+			(
+				rebuild,
+				f.reload.clone(),
+				f.isolate.clone(),
+				f.intercept.clone(),
+				f.parent.unwrap_or(crate::runtime::ROOT),
+			)
+		};
+		let old = self.rt.handle(uid);
+		old.settled().await;
+		if old.state() != Some(crate::runtime::State::Active) {
+			return Err("the live generation is no longer active".into());
+		}
+		if !reload.begin() {
+			return Err("a reload is already in flight for this node".into());
+		}
+		let composing = self.rt.ctx_under(parent, isolate, intercept);
+		let mut component = match rebuild(composing.clone()) {
+			Ok(component) => component,
+			Err(e) => {
+				reload.finish();
+				return Err(e.to_string());
+			}
+		};
+		// Every generation of the node is a resident participant carrying the
+		// same rebuild, so the next swap after this one finds the node again.
+		component.resident = true;
+		component.rebuild = Some(rebuild.clone());
+		let mut values = {
+			let reg = self.rt.reg.lock();
+			reg
+				.provided(uid)
+				.into_iter()
+				.filter_map(|(_, realm)| reg.value(realm))
+				.collect::<Vec<_>>()
+		};
+		// A process may provide several keys, but its lifecycle hook runs once.
+		let mut prepared = std::collections::HashSet::new();
+		values.retain(|value| {
+			value
+				.downcast_ref::<crate::service::Service>()
+				.and_then(|service| service.process_id())
+				.is_some_and(|id| prepared.insert(id))
+		});
+		for value in &values {
+			if let Some(service) = value.downcast_ref::<crate::service::Service>() {
+				if let Err(e) = service.prepare().await {
+					for value in &values {
+						if let Some(service) = value.downcast_ref::<crate::service::Service>() {
+							service.cancel().await;
+						}
+					}
+					reload.finish();
+					return Err(e);
+				}
+			}
+		}
+		let _calls = reload.gate().write_owned().await;
+		component.reload = reload.clone();
+		component.staged = true;
+		// The candidate provides into private realms, as a profile entry's
+		// candidate does; the switch publishes it into the live realms.
+		let keys = component.provide.clone();
+		let candidate = keys
+			.iter()
+			.fold(composing.clone(), |ctx, key| ctx.isolate(key))
+			.cartridge(component);
+		candidate.settled().await;
+		let result = if let Some(error) = candidate.error() {
+			Err(error)
+		} else {
+			self.rt.switch(uid, candidate.uid()).map_err(|e| e.to_string())
+		};
+		match result {
+			Ok(()) => {
+				reload.finish();
+				drop(_calls);
+				old.dispose().await;
+				Ok(candidate.uid())
+			}
+			Err(error) => {
+				candidate.dispose().await;
+				for value in &values {
+					if let Some(service) = value.downcast_ref::<crate::service::Service>() {
+						service.cancel().await;
+					}
+				}
+				reload.finish();
+				Err(error)
+			}
 		}
 	}
 

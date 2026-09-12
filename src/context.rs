@@ -47,7 +47,7 @@ impl LuaCtx {
 	}
 }
 
-pub(crate) struct LuaFiber(FiberHandle);
+pub(crate) struct LuaFiber(Arc<Host>, FiberHandle);
 
 fn external(e: crate::runtime::Error) -> mlua::Error {
 	mlua::Error::external(e)
@@ -55,17 +55,21 @@ fn external(e: crate::runtime::Error) -> mlua::Error {
 
 impl UserData for LuaFiber {
 	fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-		methods.add_method("uid", |_, this, ()| Ok(this.0.uid()));
+		methods.add_method("uid", |_, this, ()| Ok(this.1.uid()));
 		methods.add_method("state", |_, this, ()| {
-			Ok(this.0.state().map(|s| format!("{s:?}")))
+			Ok(this.1.state().map(|s| format!("{s:?}")))
 		});
-		methods.add_method("error", |_, this, ()| Ok(this.0.error()));
+		methods.add_method("error", |_, this, ()| Ok(this.1.error()));
 		methods.add_method("dispose", |_, this, ()| {
-			block_on(this.0.dispose());
+			block_on(this.1.dispose());
 			Ok(())
 		});
 		methods.add_method("wait", |_, this, ()| {
-			block_on(this.0.settled());
+			block_on(this.1.settled());
+			Ok(())
+		});
+		methods.add_method("reload", |_, this, ()| {
+			this.0.request_reload(this.1.uid());
 			Ok(())
 		});
 	}
@@ -178,8 +182,21 @@ impl UserData for LuaCtx {
 			|_, this, (path, config): (String, mlua::Value)| {
 				let config = this.host.to_json(config);
 				let file = this.host.dir().join(&path);
-				let (component, _sources) = this.host.load_component(&file, config, &[])?;
-				Ok(LuaFiber(this.ctx.cartridge(component)))
+				let (mut component, _sources) = this.host.load_component(&file, config.clone(), &[])?;
+				// A composed node is a long-lived participant of the tree, like a
+				// profile entry: its services are stable across a swap and it
+				// carries the rebuild that re-reads its source for the next one.
+				component.resident = true;
+				let rebuild_host = this.host.clone();
+				let rebuild_path = file.clone();
+				component.rebuild = Some(Arc::new(move |_ctx| {
+					let (host, path, config) =
+						(rebuild_host.clone(), rebuild_path.clone(), config.clone());
+					host.load_component(&path, config, &[])
+						.map(|(component, _)| component)
+						.map_err(|e| crate::runtime::Error::Apply(format!("rebuild of {path:?}: {e}")))
+				}));
+				Ok(LuaFiber(this.host.clone(), this.ctx.cartridge(component)))
 			},
 		);
 		methods.add_method("name", |_, this, ()| Ok(this.cartridge.clone()));

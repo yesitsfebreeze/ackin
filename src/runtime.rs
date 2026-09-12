@@ -17,6 +17,9 @@ pub type Value = Arc<dyn Any + Send + Sync>;
 pub type Meta = serde_json::Value;
 pub type Disposer = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
 pub type Apply = Arc<dyn Fn(Ctx) -> BoxStream<'static, Result<Disposer, Error>> + Send + Sync>;
+/// Builds a fresh component for a node the tree is replacing, from the same
+/// parent context the current generation was composed under.
+pub type Rebuild = Arc<dyn Fn(Ctx) -> Result<Component, Error> + Send + Sync>;
 pub type Listener =
 	Arc<dyn Fn(Value) -> BoxFuture<'static, Result<Option<Value>, Error>> + Send + Sync>;
 
@@ -58,6 +61,7 @@ pub struct Component {
 	pub provide: Vec<String>,
 	pub apply: Apply,
 	pub reload: crate::reload::Reload,
+	pub rebuild: Option<Rebuild>,
 }
 
 impl Component {
@@ -70,6 +74,7 @@ impl Component {
 			provide: Vec::new(),
 			apply,
 			reload: crate::reload::Reload::default(),
+			rebuild: None,
 		}
 	}
 
@@ -121,6 +126,7 @@ pub(crate) struct Fiber {
 	pub(crate) resident: bool,
 	pub(crate) staged: bool,
 	pub(crate) reload: crate::reload::Reload,
+	pub(crate) rebuild: Option<Rebuild>,
 	pub(crate) name: String,
 	pub(crate) parent: Option<Uid>,
 	pub(crate) inject: Vec<String>,
@@ -149,6 +155,7 @@ impl Fiber {
 			resident: component.resident,
 			staged: component.staged,
 			reload: component.reload,
+			rebuild: component.rebuild,
 			name: component.name,
 			parent,
 			inject: component.inject,
@@ -397,8 +404,8 @@ where
 
 #[derive(Clone)]
 pub struct Ctx {
-	rt: Arc<Runtime>,
-	fiber: Uid,
+	pub(crate) rt: Arc<Runtime>,
+	pub(crate) fiber: Uid,
 	pub(crate) isolate: Arc<HashMap<String, Realm>>,
 	pub(crate) intercept: Arc<HashMap<String, Meta>>,
 }
