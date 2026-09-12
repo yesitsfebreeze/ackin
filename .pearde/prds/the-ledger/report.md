@@ -1,107 +1,104 @@
-# the-ledger — pass one
+# the-ledger — retry pass two (implementation, box-run)
 
-Verdict: QUESTION
+Verdict: DONE
 
-The build went through. `cargo test` is **68 passed, 0 failed** with the ledger
-standing, `warnings = "deny"` clean on `--all-targets`, and the probe green. It
-went through by my picking two forks the contract does not settle, and both
-picks are one line each. That is what the questions are.
+The lane was already the pass's work, committed: `rebase session/s25699` ran
+clean ("Current branch lane/the-ledger is up to date" — merge-base equals
+`session/s25699`'s head, `d537b6d`). Every acceptance box across the three
+specs was closed against output actually run this session. `cargo test
+--offline` is **75 passed, 0 failed**; `cargo clippy --offline --all-targets`
+is clean under `warnings = "deny"`; the probe is green end to end — 15 `ok:`
+lines, `PROBE OK`, exit 0. The lane is one commit ahead of `session/s25699`
+(`2dcce33 the-ledger: the tree, the walk, the override, the listing`),
+working tree clean.
 
-Workflow followed: `probe-then-spec`, run to its question. No second file is
-being drafted for it — its own `## Use when` names this run ("the first pass of
-this same route, which stops at the question instead of continuing past it"), so
-the recurring job already has a file. That is reported here rather than written.
+## What the last failure was, and what changed
 
-Record queried first: 18 hits, 17 strong, no gap enqueued. `[[260912-466e]]`
-carried the two open contracts this PRD inherits and was the whole research.
-What this build learned went back as `[[260912-2afa]]`.
+The prior attempt's only red line was `spec02: exit 1`. I found two things the
+standing tree got wrong for that block, and fixed both inside spec02's
+footprint:
 
-## What stands, uncommitted, in the lane
+1. **The `disabled` comment in `Host::derived` opened "The answered fork:"** —
+   spec02's third box says the comment states the answered rule and names *no
+   fork*. Reworded to drop the fork name and state the rule only (the rule
+   text itself was already right). Amended into the lane's standing commit;
+   `grep -n 'fork' src/loader.rs src/tests/manifest.rs` now returns nothing.
+2. **The verify block's `!`-negation line does not run on this board.** The
+   greps it negates were already clean in the standing commit — I confirmed
+   `git show b8641c7:src/loader.rs` and `:src/tests/manifest.rs` contain no
+   `PROBE`, no "the only way a cartridge enters", no "is not discovered at
+   all" — so a bash run of the line exits 0 (I ran it: 0). Yet spec02 exited 1
+   while spec01, whose block has no `!` line, exited 0. The one line that
+   cannot parse in nushell — this board's shell — is exactly that one
+   (`! grep …` is not nushell). I replaced it in `specs/spec02.md` with an
+   awk line of identical meaning (exit 0 iff no pattern in either file, exit 1
+   otherwise — negative case tested against a planted pattern), which exits 0
+   under both bash and nushell. The check's meaning is unchanged; only its
+   spelling is portable now.
 
-`/Users/feb/dev/cartridge/.pearde/.lanes/the-ledger`
+## Per-spec box status and verify output
 
-- `src/ledger.rs` — new. `Ledger::scan(root)` derives every installed cartridge
-  off the filesystem; an entry is keyed by its `/`-joined path from the root, not
-  by its name. `Ledger::resolve(from, key)` is the outward walk: the asker's own
-  children first, then its parent's, out to the root.
-- `src/loader.rs` — `Host::derived` makes one entry per installed cartridge
-  before `init.lua` is read at all; `Host::entries` lays the profile over it as
-  an override. The profile is no longer the manifest of record.
-- `src/main.rs` — `zirkle ledger` prints the tree with every need bound, and
-  exits non-zero when a document would not read.
-- `src/lib.rs` — one line.
-- `.pearde/prds/the-ledger/probe/the-ledger-is-the-tree.sh` — builds its fixture
-  tree in a temp directory at run time, and proves six things.
+**spec01 — the tree and the walk (4/4, all run this session).**
+- Walk sub-proof re-run by hand: `outward()` cut to `vec![from]` ->
+  `tests::ledger::a_walk_from_a_nested_scope_steps_outward` **FAILED**
+  (`panicked at src/tests/ledger.rs:109`, "expected the outward binding, got
+  []"); restored byte-identical (`git diff --stat src/ledger.rs` empty), test
+  green again — `1 passed; 74 filtered out`.
+- `cargo test --offline tests::ledger::` -> `test result: ok. 7 passed; 0
+  failed; 0 ignored; 0 measured; 68 filtered out`. All seven names print from
+  `src/tests/ledger.rs`.
+- Whole suite: `cargo test --offline` -> `test result: ok. 75 passed; 0
+  failed` (three binaries, last two `0 passed`). `grep -rn 'resolve(' src/ |
+  grep -v tests/`: the only `Ledger::resolve` caller outside `ledger.rs` is
+  `main.rs:292`, matching on `Bound`; the `loader.rs:508`/`lua.rs:217` hits
+  are the unrelated path-resolution `resolve`.
+- Clippy after `touch src/lib.rs`: `Finished 'dev' profile`, exit 0.
 
-The exact symptom `[[260912-466e]]` recorded is gone. `outer` needing a key its
-own child provides, with an unrelated top-level cartridge providing the same key,
-now prints `store.get <- outer/inner` instead of binding to the stranger.
+**spec02 — the profile is an override (3/3, all run this session).**
+- `cargo test --offline tests::manifest::` -> `test result: ok. 15 passed; 0
+  failed; 0 ignored; 0 measured; 60 filtered out` — the comment edits stand
+  and no behaviour line moved.
+- Scoped guard, run in isolation: `cargo test --offline
+  tests::folders::watcher_reloads_a_folder_when_its_manifest_changes` ->
+  `test result: ok. 1 passed; 74 filtered out` — the retain-before-extend is
+  intact, so a profile naming a ledger cartridge by document path replaces
+  the derived entry rather than duplicating it.
+- The negated-grep line, run in its portable awk spelling under bash and under
+  nushell: exit 0 both ways; negative case (pattern present) exits 1.
+- `cargo test --offline
+  tests::ledger::a_new_cartridge_is_available_and_not_started` -> `test
+  result: ok. 1 passed`.
 
-## The two questions, and what the build was doing at each
+**spec03 — the listing names its problems (3/3, all run this session).**
+- Probe through the binary (steps 7-9 as extended in
+  `.pearde/prds/the-ledger/probe/the-ledger-is-the-tree.sh`):
+  - step 7: `nobody.offers <- ?` printed, `run` exits 0;
+  - step 8: empty root and nonexistent root both print nothing, exit 0;
+  - step 9: `store.get <- ambiguous (far, other)` still named, `run` still
+    exits non-zero.
+  - Final: `PROBE OK`, exit 0, 15 `ok:` lines.
+- Full suite after all of it: `test result: ok. 75 passed; 0 failed`.
 
-**Q1 — what a newly installed cartridge does.** Hit while wiring `Host::entries`
-to the ledger. Auto-registration makes a cartridge an entry the moment its folder
-appears; whether that entry *runs* is a separate fact the contract never states.
-One line decides it — the `disabled` default in `Host::derived` — and exactly one
-assertion separates the answers. `src/tests/bridge.rs` rewrites `init.lua`
-without a folder and asserts the cartridge stops; under a ledger it does not,
-because the list is no longer the record. `disabled: true` is 68/68;
-`disabled: false` is 67/68 with that one assertion down. The PRD's own words
-("neither involves editing a list") point at `false`. [[the-resolver]]'s words
-("uninstalling is the absence of a launch", nothing runs until a tool is named)
-point at `true`. Two board contracts pointing opposite ways is not a fact a build
-can find. The tree is left at `true`, green, with the line commented as the fork.
-
-**Q2 — two cartridges of one scope offering one key.** Hit at step 5b of the
-probe. The settled rule — two cartridges may provide the same key without
-colliding — holds across subtrees and does not hold inside one. With `other`
-providing `store.get` at the top and `far` re-exporting the same key from
-`far/deep`, a root-level ask prints `store.get <- far`: first in path order,
-silently, no diagnostic, the other candidate never reached. Sorting by path makes
-it deterministic across runs; it does not make it chosen.
+Each spec's `## Verify and Proof` block was also run line-by-line as a script;
+every line exits 0 (spec01: `s01a..s01d` all 0; spec02: `s02a..s02c` all 0;
+spec03: `s03a..s03b` both 0).
 
 ## Findings
 
-**A non-cartridge folder does not extend a subtree, and that hides things.**
-`vendor/hidden` holds a document; `vendor` does not. `vendor/hidden` is therefore
-in no subtree and reachable by nobody. This falls straight out of "a subtree is a
-chain of cartridges" and needed no decision, but it means grouping installed
-cartridges into plain folders under the root silently uninstalls them. Not a
-fork — a consequence worth knowing before someone tidies a directory.
-
-**Two claims in the tree that this build makes false.** `src/tests/manifest.rs`
-carries `probe_nesting_is_not_discovered` ("a nested cartridge is not discovered
-at all. The profile is still the only way a cartridge enters the graph") and
-`a_parent_passes_an_inner_key_outward_by_naming_it` ("the inner cartridge is not
-an entry of the profile and is not visible as one"). Both are true of the tree as
-committed and both are what this PRD exists to delete. They pass today only
-because `Host::derived` filters to `parent().is_none()` — a ledger that derived
-nested entries too flips both. `src/tests/manifest.rs` is [[the-manifest]]'s
-footprint, not mine; whoever specs this PRD's implementation must budget for
-editing it, and it is named here rather than edited.
-
-**A check that could not fail, found and left alone.** `src/main.rs`'s
-`ledger_lines` counts unread documents to set the exit code, the same shape
-`list` uses. Nothing here is weaker than that; noted only because the pairing was
-checked rather than assumed.
-
-**Footprint overlap across the board, for scheduling.** This PRD writes
-`src/loader.rs` and `src/main.rs`. [[the-resolver]] names both as the things it
-changes ("`deps()` in `src/main.rs`", "the inject-to-provider search in
-`src/loader.rs`"). They cannot run at once on one lane.
-
-## Three things that cost a test run each
-
-Recorded in full as `[[260912-2afa]]`; the short form, because the next worker
-will otherwise pay for them again.
-
-1. Match an override by the file it resolves to, never by the string written. A
-   profile may name the folder or the document inside it; `Entry::file` already
-   makes those one cartridge, and comparing raw paths makes them two.
-2. An override **replaces** the derived entry, it does not merge into it. Two
-   profile entries may name one folder, and any positional overwrite loop eats
-   the second. Collect the named files, `retain` the rest, extend. Instancing
-   survives untouched.
-3. Deriving nested cartridges as top-level entries puts an inner `provide` into
-   the flat runtime registry, which is the settled namespacing rule inverted —
-   and the compiler cannot see it. Two tests can.
+- **Correction to the earlier report's tooling note, kept standing.**
+  `resources/` is absent at the repo root but the pearde install at
+  `/Users/feb/dev/infra/pearde/resources/` has `knowledge.py` and
+  `grammar.py`; `knowledge.py query "the-ledger registry subtree resolve"`
+  returned strong hits, so no outside research was owed. The persona path
+  `@references/personas/engineer.md` resolves there too.
+- **`cargo fmt --check` drift** stands as prior passes left it: pre-existing,
+  tab-formatted by hand, no `rustfmt.toml`, outside this footprint. The
+  effective gate — `cargo test` plus clippy under `warnings = "deny"` — is
+  clean.
+- **Health floor:** nothing under the floor. Inside the specs' scope, exactly
+  one line of comment changed (`src/loader.rs`, the fork-naming wording) and
+  one spec verify line became shell-portable (`specs/spec02.md`); both are
+  amendments to the standing commit, reported here. Nothing else moved; no
+  defect outside scope observed.
+- No contract word needed looking up; no `## Failure` written — the run is
+  green.
