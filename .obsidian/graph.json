@@ -1,0 +1,79 @@
+{
+  "collapse-filter": false,
+  "search": "-file:\"prd\" -path:\"specs\" -path:\"wiki/.graphify\" -path:\"wiki/graphs\" -path:\"wiki/pending\" -path:\".absorbed\" -file:\"Dashboard\" -path:\"graphify\" -path:\"wiki/index\"",
+  "showTags": true,
+  "showAttachments": false,
+  "hideUnresolved": true,
+  "showOrphans": false,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "tag:#prd",
+      "color": {
+        "a": 1,
+        "rgb": 12382067
+      }
+    },
+    {
+      "query": "tag:#memo",
+      "color": {
+        "a": 1,
+        "rgb": 16692479
+      }
+    },
+    {
+      "query": "tag:#workflow",
+      "color": {
+        "a": 1,
+        "rgb": 6116761
+      }
+    },
+    {
+      "query": "tag:#atomic",
+      "color": {
+        "a": 1,
+        "rgb": 9406406
+      }
+    },
+    {
+      "query": "tag:#conclusion",
+      "color": {
+        "a": 1,
+        "rgb": 4357119
+      }
+    },
+    {
+      "query": "tag:#source",
+      "color": {
+        "a": 1,
+        "rgb": 5066061
+      }
+    },
+    {
+      "query": "tag:#pending",
+      "color": {
+        "a": 1,
+        "rgb": 16251222
+      }
+    },
+    {
+      "query": "tag:#graph",
+      "color": {
+        "a": 1,
+        "rgb": 10306297
+      }
+    }
+  ],
+  "collapse-display": false,
+  "showArrow": true,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1.42160969615728,
+  "lineSizeMultiplier": 2.4512008489723,
+  "collapse-forces": false,
+  "centerStrength": 0.131088025022341,
+  "repelStrength": 6.952636282395,
+  "linkStrength": 1,
+  "linkDistance": 75,
+  "scale": 1,
+  "close": false
+}

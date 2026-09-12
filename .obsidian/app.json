@@ -1,0 +1,31 @@
+{
+  "alwaysUpdateLinks": true,
+  "newLinkFormat": "shortest",
+  "useMarkdownLinks": false,
+  "attachmentFolderPath": "attachments",
+  "showLineNumber": true,
+  "promptDelete": false,
+  "userIgnoreFilters": [
+    "pearde/graphify/",
+    "pearde/.state/",
+    "pearde/.claims/",
+    "pearde/wiki/.graphify/",
+    "pearde/wiki/Dashboard.report.md",
+    "pearde/wiki/graphs/",
+    "pearde/wiki/pending/",
+    "pearde/wiki/sources/.absorbed/",
+    "/(^|\\/)node_modules\\//",
+    "/(^|\\/)__pycache__\\//",
+    "/(^|\\/)venv\\//",
+    "/(^|\\/)\\.venv\\//",
+    "/(^|\\/)vendor\\//",
+    "/(^|\\/)\\.next\\//",
+    "/(^|\\/)\\.cache\\//",
+    "/(^|\\/)\\.pytest_cache\\//",
+    "/(^|\\/)\\.mypy_cache\\//",
+    "/(^|\\/)\\.ruff_cache\\//",
+    "/(^|\\/)\\.gstack\\//",
+    "/^(dist|build|target|coverage)\\//"
+  ],
+  "showUnsupportedFiles": false
+}

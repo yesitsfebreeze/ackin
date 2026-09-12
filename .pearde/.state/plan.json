@@ -1,0 +1,57 @@
+{
+ "after": {
+  "hot-reload": [],
+  "lua-interface": [],
+  "the-host-binary": [],
+  "the-ledger": [],
+  "the-manifest": [],
+  "the-resolver": [],
+  "the-sandbox": [],
+  "the-telemetry-channels": [],
+  "the-wire": [],
+  "verify-one-cartridge": []
+ },
+ "planned_at": "2026-09-12",
+ "schedule": {
+  "hot-reload": {
+   "end": 192.0,
+   "start": 160.0
+  },
+  "lua-interface": {
+   "end": 192.0,
+   "start": 160.0
+  },
+  "the-host-binary": {
+   "end": 32.0,
+   "start": 0.0
+  },
+  "the-ledger": {
+   "end": 96.0,
+   "start": 64.0
+  },
+  "the-manifest": {
+   "end": 64.0,
+   "start": 32.0
+  },
+  "the-resolver": {
+   "end": 128.0,
+   "start": 96.0
+  },
+  "the-sandbox": {
+   "end": 160.0,
+   "start": 128.0
+  },
+  "the-telemetry-channels": {
+   "end": 192.0,
+   "start": 160.0
+  },
+  "the-wire": {
+   "end": 160.0,
+   "start": 128.0
+  },
+  "verify-one-cartridge": {
+   "end": 192.0,
+   "start": 160.0
+  }
+ }
+}

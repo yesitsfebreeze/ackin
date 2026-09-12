@@ -1,0 +1,11 @@
+# pearde knowledge — controls a graphify extract's scope.
+# sources/ and conclusions/ stay the only content corpora; the tool's own
+# graph in .graphify/ is hand-built, no extraction needed.
+pending/
+sources/.absorbed/
+graphs/
+.graphify/
+.obsidian/
+Dashboard.md
+Dashboard.report.md
+WORKFLOW.md
