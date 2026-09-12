@@ -3,7 +3,7 @@ atomic: write-the-specs
 subject: the next worker gets the file, not the head, and every unverified claim has to arrive as a box that can fail
 date: 2026-09-12
 updated: 2026-09-12
-runs: 1
+runs: 2
 tags:
   - atomic
 ---

@@ -3,7 +3,7 @@ atomic: query-the-record-first
 subject: the machine stall this run hits was already on record from pass one, so no time was spent rediscovering it
 date: 2026-09-12
 updated: 2026-09-12
-runs: 3
+runs: 4
 tags:
   - atomic
 ---

@@ -3,7 +3,7 @@ atomic: apply-the-answered-fork
 subject: the answer is a sentence until the module is actually split; the split is what shows which callers die with the cut part
 date: 2026-09-12
 updated: 2026-09-12
-runs: 2
+runs: 3
 tags:
   - atomic
 ---

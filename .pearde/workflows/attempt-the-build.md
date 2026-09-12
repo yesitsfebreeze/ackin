@@ -3,7 +3,7 @@ atomic: attempt-the-build
 subject: a rename applied by string match across eight files is a guess until a compiler reads it
 date: 2026-09-12
 updated: 2026-09-12
-runs: 3
+runs: 4
 tags:
   - atomic
 ---
