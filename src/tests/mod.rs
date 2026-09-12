@@ -4,6 +4,7 @@ mod contracts;
 mod folders;
 mod foreground;
 mod lifecycle;
+mod manifest;
 mod process;
 mod reload;
 mod rpc_contract;

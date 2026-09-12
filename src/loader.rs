@@ -1,3 +1,63 @@
+//! The cartridge document, and the one place its format is written.
+//!
+//! A cartridge declares itself in `cartridge.json`, and that same document is
+//! its capability request. It is read as data: parsing it never evaluates the
+//! Lua entry, so what a cartridge asks for is readable before anything of it
+//! runs, and a disabled cartridge still declares what it would ask for.
+//!
+//! ```json
+//! {
+//!   "name": "store",            // required: the cartridge's own name
+//!   "entry": "init.lua",        // required: Lua entry, relative to this folder
+//!   "binary": "store-bin",      // optional: executable basename, when it
+//!                               //   differs from the cartridge folder
+//!   "ui": "ui/index.ts",        // optional: Solid UI module inside this folder
+//!   "selftest": "store.check",  // optional: a provided key proving behaviour
+//!   "integration": "store.wire",// optional: a provided key proving wiring
+//!   "source": "https://…",      // optional: where to retrieve source from
+//!   "provide": ["store.get"],   // optional: keys offered, private by default
+//!   "needs": ["log.write"],     // optional: keys asked for
+//!   "export": ["inner.store"],  // optional: inner keys passed outward
+//!   "grant": {                  // optional: the capability request
+//!     "read":  ["data"],        //   paths readable, relative or absolute
+//!     "write": ["cache"],       //   paths writable; writable implies readable
+//!     "net":   ["api.host"],    //   hosts reachable, or the bare `*`
+//!     "exec":  ["rg"]           //   programs runnable, by basename or path
+//!   }
+//! }
+//! ```
+//!
+//! **An absent `grant` grants nothing.** `Grant::default()` is empty on all
+//! four of `read`, `write`, `net` and `exec`, which is the tightest policy and
+//! not the loosest. Every field added after `source` is `#[serde(default)]`,
+//! so a document written before the capability request existed still reads,
+//! while `deny_unknown_fields` keeps a misspelled one an error.
+//!
+//! **The document wins wherever it speaks.** Where `provide` or `needs` is
+//! non-empty it replaces what the Lua entry declares; where the document is
+//! silent — or where a bare `.lua` path is entered, which has no document at
+//! all — the entry stays the only source.
+//!
+//! **A name travels outward only where a parent passes it on.** A cartridge's
+//! `provide` keys are private to its own subtree: a nested cartridge satisfies
+//! its parent and nothing else. A parent makes an inner key visible outward by
+//! naming it in its own `export`, one level at a time, so a deep key reaches
+//! the top only when every level between re-exports it. Two cartridges may
+//! therefore provide the same key without colliding. A key is unique within a
+//! subtree, never across the graph.
+//!
+//! **Two readers, one document.** The resolver takes `provide`, `needs` and
+//! `export` and binds them; the sandbox takes `grant` and confines to it.
+//! There is no second grant file and no separate policy document — what a
+//! cartridge is granted is what it declared on the way in, which is what makes
+//! uninstalling it mean something.
+//!
+//! **What this module does not settle.** Nothing here loads a nested
+//! cartridge: `Cartridge::offered` reads a subtree off the filesystem to
+//! validate a re-export, and that is all. Where the ledger looks for
+//! cartridges, and how a need is resolved outward through subtrees, are the
+//! ledger's and the resolver's contracts, not this format's.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,6 +96,18 @@ pub struct CartridgeInfo {
 	pub entry: Entry,
 	pub inject: Vec<String>,
 	pub provide: Vec<String>,
+	/// Inner keys this cartridge passes outward, straight off its document.
+	pub export: Vec<String>,
+	/// The capability request, straight off the same document. `None` when the
+	/// document could not be read at all — absent, never empty, because an empty
+	/// grant is the tightest policy and must not double as "could not be read".
+	pub grant: Option<Grant>,
+	/// Why the document would not read, when it would not. Kept apart from
+	/// `error` because they are different facts: this one is about the document
+	/// and is known whether or not anything tried to load the cartridge, while
+	/// `error` is what happened when the entry was evaluated. Conflating them is
+	/// the same mistake as keeping the request in a second file.
+	pub unread: Option<String>,
 	pub error: Option<String>,
 }
 
@@ -88,12 +160,54 @@ pub struct Cartridge {
 	pub integration: Option<String>,
 	/// Repository URL or other retrieval reference when source is not installed.
 	pub source: Option<String>,
+	/// Keys this cartridge offers. Private to its own subtree unless a parent
+	/// re-exports them: two cartridges may provide the same key without
+	/// colliding so long as neither subtree passes it into the other.
+	#[serde(default)]
+	pub provide: Vec<String>,
+	/// Keys this cartridge asks for. Resolved against its own subtree first,
+	/// then outward.
+	#[serde(default)]
+	pub needs: Vec<String>,
+	/// Keys provided somewhere inside this cartridge's subtree that it passes
+	/// outward under its own name. The second naming the nesting rule costs.
+	#[serde(default)]
+	pub export: Vec<String>,
+	/// The capability request: the same declaration the resolver grants and the
+	/// sandbox confines to. Absent means nothing is asked for, which is the
+	/// tightest policy and not the loosest.
+	#[serde(default)]
+	pub grant: Grant,
+}
+
+/// What a cartridge asks the machine for. Read twice — once to grant, once to
+/// confine — out of this one document, so there is no second policy file.
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Grant {
+	/// Filesystem paths readable by this cartridge, relative to its own folder
+	/// unless absolute.
+	#[serde(default)]
+	pub read: Vec<String>,
+	/// Filesystem paths writable by this cartridge. A writable path is readable.
+	#[serde(default)]
+	pub write: Vec<String>,
+	/// Hosts this cartridge may reach. `*` is every host.
+	#[serde(default)]
+	pub net: Vec<String>,
+	/// Programs this cartridge may execute, by basename or path.
+	#[serde(default)]
+	pub exec: Vec<String>,
 }
 
 impl Cartridge {
-	/// Read a manifest and resolve the entry it names. The loader and the
-	/// bundler share this, so what ships and what loads agree on the format.
-	pub fn read(manifest: &Path) -> Result<(Cartridge, PathBuf), String> {
+	/// The document, read and checked against itself and nothing else. Every
+	/// failure here is a failure of the document: it will not parse, or it
+	/// declares something the format refuses. Nothing on the filesystem around
+	/// the cartridge is touched — the Lua entry is not resolved and a declared
+	/// `ui` file is not looked for — because a cartridge declares what it
+	/// declares whether or not the files it points at are in place.
+	pub fn document(manifest: &Path) -> Result<Cartridge, String> {
 		let source =
 			std::fs::read_to_string(manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
 		let cartridge: Cartridge =
@@ -125,6 +239,34 @@ impl Cartridge {
 				manifest.display()
 			));
 		}
+		if let Some(ui) = &cartridge.ui {
+			let path = Path::new(ui);
+			if path.as_os_str().is_empty()
+				|| !path
+					.components()
+					.all(|p| matches!(p, std::path::Component::Normal(_)))
+				|| !path
+					.extension()
+					.is_some_and(|e| e == "tsx" || e == "ts" || e == "js" || e == "jsx")
+			{
+				return Err(format!(
+					"{}: ui must be a relative JavaScript/TypeScript module",
+					manifest.display()
+				));
+			}
+		}
+		cartridge.check(manifest)?;
+		Ok(cartridge)
+	}
+
+	/// The document, plus the files it names: the Lua entry is resolved and a
+	/// declared `ui` is located. The loader and the bundler share this, so what
+	/// ships and what loads agree on the format. An error from here may be a
+	/// fact about the tree rather than about the document — which is why
+	/// [`Cartridge::document`] exists beside it.
+	pub fn read(manifest: &Path) -> Result<(Cartridge, PathBuf), String> {
+		let cartridge = Self::document(manifest)?;
+		let entry = Path::new(&cartridge.entry);
 		let root = manifest
 			.parent()
 			.ok_or_else(|| format!("{}: no cartridge folder", manifest.display()))?
@@ -142,19 +284,6 @@ impl Cartridge {
 		}
 		if let Some(ui) = &cartridge.ui {
 			let path = Path::new(ui);
-			if path.as_os_str().is_empty()
-				|| !path
-					.components()
-					.all(|p| matches!(p, std::path::Component::Normal(_)))
-				|| !path
-					.extension()
-					.is_some_and(|e| e == "tsx" || e == "ts" || e == "js" || e == "jsx")
-			{
-				return Err(format!(
-					"{}: ui must be a relative JavaScript/TypeScript module",
-					manifest.display()
-				));
-			}
 			let resolved = root
 				.join(path)
 				.canonicalize()
@@ -168,6 +297,163 @@ impl Cartridge {
 		}
 		Ok((cartridge, entry))
 	}
+
+	/// Every declaration this document carries, checked without reading anything
+	/// else. A key is a nonempty exact string; a wildcard is not a declaration.
+	fn check(&self, manifest: &Path) -> Result<(), String> {
+		let at = |what: &str| format!("{}: {what}", manifest.display());
+		let key = |field: &str, k: &String| -> Result<(), String> {
+			if k.trim().is_empty() || k.contains('*') || k.contains('\0') {
+				return Err(at(&format!(
+					"`{field}` entry `{k}` must be a nonempty exact key"
+				)));
+			}
+			Ok(())
+		};
+		let mut seen = std::collections::HashSet::new();
+		for k in &self.provide {
+			key("provide", k)?;
+			if !seen.insert(k.as_str()) {
+				return Err(at(&format!("duplicate provide declaration `{k}`")));
+			}
+		}
+		for k in &self.export {
+			key("export", k)?;
+			if self.provide.contains(k) {
+				return Err(at(&format!(
+					"`{k}` is provided here, so it is not re-exported from inside"
+				)));
+			}
+			if !seen.insert(k.as_str()) {
+				return Err(at(&format!("duplicate export declaration `{k}`")));
+			}
+		}
+		let mut asked = std::collections::HashSet::new();
+		for k in &self.needs {
+			key("needs", k)?;
+			if !asked.insert(k.as_str()) {
+				return Err(at(&format!("duplicate needs declaration `{k}`")));
+			}
+			if self.provide.contains(k) {
+				return Err(at(&format!(
+					"`{k}` is provided here, so it is not also needed from outside"
+				)));
+			}
+		}
+		for (field, keys) in [("selftest", &self.selftest), ("integration", &self.integration)] {
+			if let Some(k) = keys {
+				// The guard on an empty `provide` is required, not forgotten: `harness`
+				// in ~/dev/sys/builtin declares `selftest: "harness.selftest"` with no
+				// document-level `provide`, because its Lua entry is what provides.
+				// Dropping the guard would refuse a manifest that is already written.
+				if !self.provide.is_empty() && !self.provide.contains(k) {
+					return Err(at(&format!("`{field}` names `{k}`, which this cartridge does not provide")));
+				}
+			}
+		}
+		self.grant.check(&at)
+	}
+}
+
+/// The document's name on disk. A folder is a cartridge exactly when it holds
+/// one, and every reader of the format agrees on this one spelling.
+pub const MANIFEST: &str = "cartridge.json";
+
+/// The layout rule, stated once: **a nested cartridge is a direct child
+/// directory of its parent's folder holding a `cartridge.json`.** One level and
+/// no deeper — `outer/inner/cartridge.json` is nested in `outer`, while
+/// `outer/vendor/inner/cartridge.json` is nested in `outer/vendor` and is
+/// hidden from `outer` until `outer/vendor` passes its key on. Nothing here
+/// descends, because descending would make a grandchild's subtree visible to a
+/// grandparent that never named it, which is the rule's whole point.
+///
+/// Sorted, so what a subtree offers does not depend on directory order.
+fn nested(root: &Path) -> Vec<PathBuf> {
+	let Ok(dir) = std::fs::read_dir(root) else {
+		return Vec::new();
+	};
+	let mut manifests: Vec<PathBuf> = dir
+		.flatten()
+		.map(|e| e.path().join(MANIFEST))
+		.filter(|m| m.is_file())
+		.collect();
+	manifests.sort();
+	manifests
+}
+
+impl Cartridge {
+	/// What this cartridge's own subtree offers it: every nested cartridge's
+	/// `provide`, plus whatever each of those passes on from deeper in. One
+	/// level at a time, because a nested cartridge's own subtree is hidden from
+	/// everything outside it — including from this cartridge's parent.
+	pub fn offered(root: &Path) -> Result<Vec<String>, String> {
+		let mut keys = Vec::new();
+		for manifest in nested(root) {
+			// The child is read as a document and not resolved: what it offers is a
+			// declaration, and a child whose Lua entry is missing has still made it.
+			let child = Self::document(&manifest)?;
+			keys.extend(child.provide);
+			keys.extend(child.export);
+		}
+		Ok(keys)
+	}
+
+	/// Every re-export names a key the subtree actually offers. This is the
+	/// second naming the nesting rule costs, and the check that it was paid.
+	fn passed_on(&self, root: &Path, manifest: &Path) -> Result<(), String> {
+		if self.export.is_empty() {
+			return Ok(());
+		}
+		let offered = Self::offered(root)?;
+		for key in &self.export {
+			if !offered.contains(key) {
+				return Err(format!(
+					"{}: `{key}` is passed on, but nothing inside this cartridge offers it",
+					manifest.display()
+				));
+			}
+		}
+		Ok(())
+	}
+}
+
+impl Grant {
+	fn check(&self, at: &dyn Fn(&str) -> String) -> Result<(), String> {
+		for (field, paths) in [("read", &self.read), ("write", &self.write)] {
+			for p in paths {
+				let path = Path::new(p);
+				// A path is blank on the same terms a key is: `trim()` on both, so
+				// `"   "` is refused in a grant exactly as it is in `provide`.
+				if p.trim().is_empty() || p.contains('\0') {
+					return Err(at(&format!(
+						"`grant.{field}` entry `{p}` must be a nonempty exact path"
+					)));
+				}
+				if !path.is_absolute()
+					&& !path
+						.components()
+						.all(|c| matches!(c, std::path::Component::Normal(_)))
+				{
+					return Err(at(&format!(
+						"`grant.{field}` path `{p}` must be absolute or stay inside the cartridge folder"
+					)));
+				}
+			}
+		}
+		for host in &self.net {
+			if host.trim().is_empty() || host.contains('\0') || (host.contains('*') && host != "*") {
+				return Err(at(&format!(
+					"`grant.net` entry `{host}` must be a host name or `*`"
+				)));
+			}
+		}
+		for program in &self.exec {
+			if program.trim().is_empty() || program.contains('\0') {
+				return Err(at("`grant.exec` needs a nonempty program"));
+			}
+		}
+		Ok(())
+	}
 }
 
 /// The file a path names: a Lua entry as written, otherwise the manifest of the
@@ -176,14 +462,50 @@ fn classify(path: &Path) -> PathBuf {
 	if path.extension().is_some_and(|ext| ext == "lua")
 		|| path
 			.file_name()
-			.is_some_and(|name| name == "cartridge.json")
+			.is_some_and(|name| name == MANIFEST)
 	{
 		return path.to_path_buf();
 	}
-	path.join("cartridge.json")
+	path.join(MANIFEST)
 }
 
-pub(crate) fn resolve(path: &Path) -> mlua::Result<(PathBuf, String, Vec<PathBuf>)> {
+/// What the document says the *entry* is and declares, with every file it names
+/// resolved. A bare Lua entry has no document, so it declares nothing and the
+/// entry stays the only source.
+///
+/// `export` and `grant` are not here: they are read by the listing, which must
+/// be able to read them off a document whose files are not all in place, and
+/// that is [`document`]'s job rather than this one's.
+pub(crate) struct Declared {
+	pub(crate) entry: PathBuf,
+	pub(crate) name: String,
+	pub(crate) sources: Vec<PathBuf>,
+	pub(crate) provide: Vec<String>,
+	pub(crate) needs: Vec<String>,
+}
+
+/// What a profile entry's document declares, read from the document and its own
+/// subtree alone. Narrower than [`resolve`] on purpose: no Lua entry is
+/// resolved and no declared `ui` file is looked for, so an `Err` here means the
+/// **document** could not be read — never that the tree around it is
+/// incomplete, and never that the cartridge asked for nothing.
+///
+/// A bare `.lua` path has no document, so it declares nothing and that is not
+/// an error.
+pub(crate) fn document(path: &Path) -> Result<(Vec<String>, Grant), String> {
+	let path = normalize(&classify(path));
+	if path.extension().is_some_and(|ext| ext == "lua") {
+		return Ok((Vec::new(), Grant::default()));
+	}
+	let cartridge = Cartridge::document(&path)?;
+	let root = path.parent().ok_or_else(|| {
+		format!("{}: no cartridge folder", path.display())
+	})?;
+	cartridge.passed_on(root, &path)?;
+	Ok((cartridge.export, cartridge.grant))
+}
+
+pub(crate) fn resolve(path: &Path) -> mlua::Result<Declared> {
 	let path = normalize(&classify(path));
 	if path.extension().is_some_and(|ext| ext == "lua") {
 		let name = path
@@ -191,11 +513,21 @@ pub(crate) fn resolve(path: &Path) -> mlua::Result<(PathBuf, String, Vec<PathBuf
 			.unwrap_or_default()
 			.to_string_lossy()
 			.into_owned();
-		return Ok((path.clone(), name, vec![path]));
+		return Ok(Declared {
+			entry: path.clone(),
+			name,
+			sources: vec![path],
+			provide: Vec::new(),
+			needs: Vec::new(),
+		});
 	}
 	let (manifest, entry) = Cartridge::read(&path).map_err(mlua::Error::RuntimeError)?;
+	let root = path.parent().expect("manifest has a folder");
+	manifest
+		.passed_on(root, &path)
+		.map_err(mlua::Error::RuntimeError)?;
 	let mut sources = vec![path.clone(), entry.clone()];
-	if let Some(ui) = manifest.ui {
+	if let Some(ui) = &manifest.ui {
 		sources.push(
 			path
 				.parent()
@@ -205,7 +537,13 @@ pub(crate) fn resolve(path: &Path) -> mlua::Result<(PathBuf, String, Vec<PathBuf
 				.map_err(mlua::Error::external)?,
 		);
 	}
-	Ok((entry, manifest.name, sources))
+	Ok(Declared {
+		entry,
+		name: manifest.name,
+		sources,
+		provide: manifest.provide,
+		needs: manifest.needs,
+	})
 }
 
 fn validate(entry: &Entry) -> mlua::Result<()> {
@@ -481,9 +819,14 @@ impl Host {
 		let mut out = Vec::new();
 		for entry in self.entries()?.iter().filter(|e| !e.disabled) {
 			let manifest = normalize(&classify(&self.dir.join(&entry.path)));
-			if !manifest.ends_with("cartridge.json") {
+			if !manifest.ends_with(MANIFEST) {
 				continue;
 			}
+			// `Cartridge::read` and not `resolve`: this walks the profile for the
+			// obligations a document declares, and `passed_on` is deliberately not
+			// run here. A re-export is checked once, where the cartridge enters the
+			// graph through `resolve`; re-checking it would make a contract listing
+			// fail on a neighbour's bad `export`, which is not this call's business.
 			let (cartridge, _) = Cartridge::read(&manifest).map_err(mlua::Error::RuntimeError)?;
 			for (obligation, key) in [
 				("selftest", cartridge.selftest),
@@ -631,18 +974,38 @@ impl Host {
 				.entries()?
 				.into_iter()
 				.map(|entry| {
+					// The document is data, so the request is readable whether or not the
+					// entry is evaluated — a disabled cartridge still declares what it asks for.
+					// A document that cannot be read declares nothing *knowable*, which is
+					// not the same as declaring nothing: the error is carried, and the
+					// grant is absent rather than empty, so the two never read alike.
+					// Absent, never empty: an empty grant is the tightest policy, so a
+					// document that would not read must not be able to produce one. A
+					// disabled cartridge has still declared, so this is read either way.
+					let (export, grant, unread) = match document(&self.dir.join(&entry.path)) {
+						Ok((export, grant)) => (export, Some(grant), None),
+						Err(e) => (Vec::new(), None, Some(e)),
+					};
 					let (inject, provide, error) = if entry.disabled {
 						(Vec::new(), Vec::new(), None)
 					} else {
 						match self.component_of(&entry) {
 							Ok(c) => (c.inject, c.provide, None),
-							Err(e) => (Vec::new(), Vec::new(), Some(e.to_string())),
+							// The document's own failure is already carried by `unread`, so
+							// it is not repeated here: one fact, printed once.
+							Err(e) => {
+								let e = (unread.is_none()).then(|| e.to_string());
+								(Vec::new(), Vec::new(), e)
+							}
 						}
 					};
 					CartridgeInfo {
 						entry,
 						inject,
 						provide,
+						export,
+						grant,
+						unread,
 						error,
 					}
 				})

@@ -214,7 +214,12 @@ impl Host {
 		mut config: serde_json::Value,
 		extra: &[String],
 	) -> mlua::Result<(Component, Vec<PathBuf>)> {
-		let (path, name, mut files) = crate::loader::resolve(path)?;
+		let declared = crate::loader::resolve(path)?;
+		let (path, name, mut files) = (
+			declared.entry.clone(),
+			declared.name.clone(),
+			declared.sources.clone(),
+		);
 		if self.yolo && matches!(name.as_str(), "agent" | "memo") {
 			if config.is_null() {
 				config = serde_json::json!({});
@@ -240,7 +245,11 @@ impl Host {
 			files.push(executable);
 			let component = crate::cartridge::component(self.clone(), name, command, config)
 				.map_err(mlua::Error::external)?;
-			let component = declarations(component, descriptor.inject.iter().chain(extra).cloned())?;
+			let component = declarations(
+				component,
+				descriptor.inject.iter().chain(extra).cloned(),
+				&declared,
+			)?;
 			return Ok((component, files));
 		}
 		let module = match module {
@@ -295,7 +304,10 @@ impl Host {
 		)
 		.inject(inject)
 		.provide(provide);
-		Ok((declarations(component, extra.iter().cloned())?, files))
+		Ok((
+			declarations(component, extra.iter().cloned(), &declared)?,
+			files,
+		))
 	}
 
 	pub(crate) fn disposer(&self, v: mlua::Value) -> Disposer {
@@ -439,7 +451,19 @@ pub(crate) fn block_on<F: std::future::Future>(f: F) -> F::Output {
 fn declarations(
 	mut component: Component,
 	extra: impl IntoIterator<Item = String>,
+	declared: &crate::loader::Declared,
 ) -> mlua::Result<Component> {
+	// The document is the declaration when it makes one: what a cartridge takes
+	// away when it goes is exactly what it declared on the way in, so a key the
+	// entry offers and the document never names is not offered. A document that
+	// declares nothing leaves the entry as the only source, which is how every
+	// cartridge written before the document carried these fields still loads.
+	if !declared.provide.is_empty() {
+		component.provide = declared.provide.clone();
+	}
+	if !declared.needs.is_empty() {
+		component.inject = declared.needs.clone();
+	}
 	component.inject.extend(extra);
 	for key in component.inject.iter().chain(&component.provide) {
 		if key.trim().is_empty() || key.contains('*') {

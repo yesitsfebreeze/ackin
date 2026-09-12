@@ -218,7 +218,13 @@ fn deps(all: &[CartridgeInfo], cartridge: &CartridgeInfo, depth: usize, stack: &
 	}
 }
 
-fn list(cartridges: &[CartridgeInfo]) {
+/// Prints one line per cartridge and answers how many **documents** could not be
+/// read — not how many entries failed, which is a different and larger number:
+/// a cartridge whose Lua entry or declared `ui` file is missing has still made
+/// its declarations, and they are printed. An unreadable document prints why
+/// and no declaration columns at all, so it never reads as a document that
+/// asked for nothing.
+fn list(cartridges: &[CartridgeInfo]) -> usize {
 	for p in cartridges {
 		let mut line = format!("{}  {}", p.entry.id, p.entry.path);
 		if p.entry.disabled {
@@ -227,12 +233,33 @@ fn list(cartridges: &[CartridgeInfo]) {
 		if !p.provide.is_empty() {
 			line.push_str(&format!("  provides {}", p.provide.join(", ")));
 		}
-		if let Some(e) = &p.error {
-			line.push_str(&format!("  error: {e}"));
+		if !p.export.is_empty() {
+			line.push_str(&format!("  exports {}", p.export.join(", ")));
+		}
+		// What it asked for is what it gets and the wall it hits, so it is listed
+		// next to what it provides rather than in a second place.
+		if let Some(grant) = &p.grant {
+			for (label, asked) in [
+				("reads", &grant.read),
+				("writes", &grant.write),
+				("net", &grant.net),
+				("execs", &grant.exec),
+			] {
+				if !asked.is_empty() {
+					line.push_str(&format!("  {label} {}", asked.join(", ")));
+				}
+			}
+		}
+		// At most one of the two is ever set: `unread` is the document's own
+		// failure and `error` is what evaluating the entry hit, and `manifest`
+		// does not report the first twice.
+		for note in [p.unread.as_deref(), p.error.as_deref()].into_iter().flatten() {
+			line.push_str(&format!("  error: {note}"));
 		}
 		println!("{line}");
 		deps(cartridges, p, 1, &mut vec![p.entry.id.clone()]);
 	}
+	cartridges.iter().filter(|p| p.unread.is_some()).count()
 }
 
 #[tokio::main]
@@ -376,7 +403,13 @@ async fn main() {
 			// `--yolo` is rejected above for every command but run and daemon.
 			let host = Host::new(Runtime::new(), &dir, &profile);
 			match host.manifest() {
-				Ok(cartridges) => list(&cartridges),
+				Ok(cartridges) => {
+					// A document that would not read is a failure of the listing, not a
+					// footnote in it: the line is printed, and the exit says so.
+					if list(&cartridges) > 0 {
+						std::process::exit(1);
+					}
+				}
 				Err(e) => {
 					eprintln!("{}: {e}", profile.join("init.lua").display());
 					std::process::exit(1);
