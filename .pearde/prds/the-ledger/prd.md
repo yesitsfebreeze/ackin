@@ -26,5 +26,13 @@ Auto-registration is the requirement. Installing a cartridge is putting it where
 the ledger looks. Uninstalling it is taking it away. Neither involves editing a
 list, because a list that must be edited is a second place for the truth to live.
 
-Depends on the namespacing decision in [[the-manifest]]: a flat ledger and a
-ledger of subtrees are different data structures.
+The namespacing decision in [[the-manifest]] is **settled**, and it fixes this
+PRD's data structure before a spec is written: *hidden until passed on*. The
+ledger is therefore a **namespace of subtrees, not a flat table.** An entry is
+identified by its path from the root, never by its bare name; two cartridges may
+provide the same key without colliding; a key resolves against the asking
+cartridge's subtree and walks outward; and a parent that wants an inner key
+visible outside re-exports it by name in its own manifest. Removing a parent
+removes its whole subtree, which is what makes the auto-registration above
+symmetric — putting a tree where the ledger looks installs everything in it,
+taking it away uninstalls everything in it.

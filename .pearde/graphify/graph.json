@@ -2,7 +2,76 @@
   "directed": false,
   "multigraph": false,
   "graph": {},
-  "nodes": [],
-  "links": [],
+  "nodes": [
+    {
+      "id": "260912-6b69",
+      "title": "separating the zirkle reload transaction from the memory bank",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-6b69.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-7a41",
+      "title": "A pegged syspolicyd hangs every freshly linked Mach-O in _dyld_start",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-7a41.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-b78d",
+      "title": "zirkle memory.rs is the reload transaction, not just a memory bank",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-b78d.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-ebde",
+      "title": "cargo build stalls with no CPU when macOS syspolicyd is pegged",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-ebde.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-fb23",
+      "title": "what does not clear a pegged syspolicyd",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-fb23.md",
+      "root": "kb"
+    }
+  ],
+  "links": [
+    {
+      "source": "260912-fb23",
+      "target": "260912-ebde",
+      "relation": "links",
+      "provenance": "wikilink",
+      "root": "kb"
+    }
+  ],
   "hyperedges": []
 }

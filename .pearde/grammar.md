@@ -318,3 +318,5 @@ conversation.
 | host | The binary. Installed once, holds no features, does nothing on its own. Not a supervisor — nothing sits above the tree owning it. |
 | stream | The append-only JSON event log a cartridge publishes to. One object per line, ordered, replayable — replaying it twice reaches the same state twice. Never the ledger, which is the registry of installed cartridges. |
 | channel | A named topic on the stream. A cartridge publishes to it without knowing who listens; another subscribes by name and receives everything on it in order. Subscribing and unsubscribing are themselves events on it. |
+| subtree | A cartridge and everything nested beneath it. The region a provide key is visible in before it is passed on: names are unique within a subtree, never across the whole graph. Not pearde's own 'scope', which is what a feature is made of. |
+| re-export | A parent naming an inner cartridge's provide key in its own manifest, so the graph outside can bind to it. The one way a name leaves its subtree; without it, nesting is private. |

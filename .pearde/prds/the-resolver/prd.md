@@ -35,6 +35,14 @@ Pointers: `deps()` in `src/main.rs` already performs this walk for display, and
 `src/loader.rs` already resolves an `inject` key to its providing cartridge. The
 walk exists; this PRD makes it the launch path instead of a report.
 
+Lookup is a walk, not a map hit. [[the-manifest]]'s namespacing fork is settled
+— *hidden until passed on* — so a `need` resolves against the asking cartridge's
+own subtree first and walks outward from there, and it binds only to keys that
+were provided in that subtree or re-exported into it. A provide key one subtree
+over is invisible and is not a candidate, however identical the name. The
+`inject`-to-provider search in `src/loader.rs` searches a flat list today and is
+the thing this changes.
+
 Must not change: a cycle in the chain is still detected and still refused —
 `deps()` tracks a stack for exactly this and the launch path inherits the duty.
 
