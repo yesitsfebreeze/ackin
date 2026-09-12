@@ -4,6 +4,57 @@
   "graph": {},
   "nodes": [
     {
+      "id": "260912-1501",
+      "title": "Every cartridge.json field the capability request added is optional, so the fifteen manifests already written still read",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-1501.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-466e",
+      "title": "A cartridge document can declare a subtree namespace before anything loads a subtree, and the gap shows as a need binding outside its own parent",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-466e.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-6922",
+      "title": "a spawn-harness startup benchmark on this host carries a 1.0ms floor, so subtract it or the number is not the binary's",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "benchmark",
+        "macos",
+        "measurement",
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-6922.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-6a8c",
+      "title": "A document that will not read and an entry that will not load are two facts, and one field for both costs you either a silent exit or a test outside your footprint",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-6a8c.md",
+      "root": "kb"
+    },
+    {
       "id": "260912-6b69",
       "title": "separating the zirkle reload transaction from the memory bank",
       "kind": "sources",
@@ -13,6 +64,18 @@
       ],
       "date": "2026-09-12",
       "path": "sources/260912-6b69.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-777a",
+      "title": "The zirkle test that pinned a disabled entry's error column could never fail, and two passes in a row built an argument on it",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-777a.md",
       "root": "kb"
     },
     {
@@ -52,6 +115,18 @@
       "root": "kb"
     },
     {
+      "id": "260912-8bef",
+      "title": "An unreadable cartridge document must be absent from the listing, not empty in it, and carrying its error further breaks a test outside the footprint",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-8bef.md",
+      "root": "kb"
+    },
+    {
       "id": "260912-9edf",
       "title": "a warm cargo target dir does not restore a compile signal under a pegged syspolicyd",
       "kind": "sources",
@@ -61,6 +136,22 @@
       ],
       "date": "2026-09-12",
       "path": "sources/260912-9edf.md",
+      "root": "kb"
+    },
+    {
+      "id": "260912-a3a0",
+      "title": "the zirkle host trim compiles, tests green, and measures 2.07ms inert",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "build",
+        "measurement",
+        "rust",
+        "source",
+        "zirkle"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-a3a0.md",
       "root": "kb"
     },
     {
@@ -102,6 +193,18 @@
       "root": "kb"
     },
     {
+      "id": "260912-f295",
+      "title": "The one-level nesting rule holds only because a test fails when the walk is made recursive; the rule itself lives in one helper",
+      "kind": "sources",
+      "type": "source",
+      "tags": [
+        "source"
+      ],
+      "date": "2026-09-12",
+      "path": "sources/260912-f295.md",
+      "root": "kb"
+    },
+    {
       "id": "260912-fb23",
       "title": "what does not clear a pegged syspolicyd",
       "kind": "sources",
@@ -131,6 +234,34 @@
   ],
   "links": [
     {
+      "source": "260912-6922",
+      "target": "260912-a3a0",
+      "relation": "related",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-6a8c",
+      "target": "260912-8bef",
+      "relation": "links",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-777a",
+      "target": "260912-8bef",
+      "relation": "links",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-777a",
+      "target": "260912-6a8c",
+      "relation": "links",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
       "source": "260912-7adb",
       "target": "260912-7a41",
       "relation": "links",
@@ -152,10 +283,38 @@
       "root": "kb"
     },
     {
+      "source": "260912-854a",
+      "target": "260912-ea92",
+      "relation": "related",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-8bef",
+      "target": "260912-1501",
+      "relation": "related",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
       "source": "260912-9edf",
       "target": "260912-7adb",
       "relation": "links",
       "provenance": "wikilink",
+      "root": "kb"
+    },
+    {
+      "source": "260912-a3a0",
+      "target": "260912-6b69",
+      "relation": "links",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-a3a0",
+      "target": "260912-ea92",
+      "relation": "links",
+      "provenance": "frontmatter",
       "root": "kb"
     },
     {
@@ -173,10 +332,24 @@
       "root": "kb"
     },
     {
+      "source": "260912-f295",
+      "target": "260912-466e",
+      "relation": "related",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
       "source": "260912-fb23",
       "target": "260912-ebde",
       "relation": "links",
       "provenance": "wikilink",
+      "root": "kb"
+    },
+    {
+      "source": "260912-fb23",
+      "target": "260912-ea92",
+      "relation": "related",
+      "provenance": "frontmatter",
       "root": "kb"
     },
     {
@@ -201,15 +374,22 @@
       "root": "kb"
     },
     {
-      "source": "260912-854a",
-      "target": "260912-ea92",
+      "source": "260912-a3a0",
+      "target": "260912-6922",
       "relation": "related",
       "provenance": "frontmatter",
       "root": "kb"
     },
     {
-      "source": "260912-fb23",
-      "target": "260912-ea92",
+      "source": "260912-1501",
+      "target": "260912-8bef",
+      "relation": "related",
+      "provenance": "frontmatter",
+      "root": "kb"
+    },
+    {
+      "source": "260912-466e",
+      "target": "260912-f295",
       "relation": "related",
       "provenance": "frontmatter",
       "root": "kb"
