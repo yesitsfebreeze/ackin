@@ -38,10 +38,16 @@ the emitter.
       the watcher receives, and a late subscriber's replay of the log reads
       `subscribe, subscribe, data, data, data, unsubscribe` —
       `tests::stream::a_process_cartridge_publishes_and_watches_over_the_wire`
-- [x] disposing (or exiting) a cartridge that watches a channel announces the
-      leave on the channel rather than leaving a dead member — exercised in the
-      same wire test via the process fixture's unsubscribe path and
-      `link.leave_subs` on the exited/disposer paths
+- [x] a member leaving a channel announces the leave rather than leaving a dead
+      member — the wire test exercises this for the socket client's explicit
+      `{"unsubscribe"}`: the leave envelope it reads comes from that explicit
+      unsubscribe, not from the process fixture's dispose path
+      (`tests::stream::a_process_cartridge_publishes_and_watches_over_the_wire`).
+      The disposing (or exiting) half of the requirement — `link.leave_subs` on
+      the exited/disposer paths (`src/cartridge.rs:418`, `:430`) announcing the
+      leave when a watching cartridge is disposed or exits — is verified by code
+      reading only, not proven by a test: no test disposes or exits a watching
+      cartridge and asserts the leave envelope on its channel. Owed a test.
 - [x] a socket client that vanishes mid-feed loses its subscription with an
       announced leave (weak-sender disconnect detection in the socket pump) —
       covered by the subscription lifecycle boxes above; the stream-level sweep

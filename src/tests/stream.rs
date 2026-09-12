@@ -222,6 +222,10 @@ async fn a_failing_listener_publishes_an_error_event_on_its_channel() {
 	);
 	write(dir.path(), "init.lua", r#"return { { id = "failing", path = "failing.lua" } }"#);
 	let (host, _) = boot(dir.path()).await;
+	// `reconcile` spawns the cartridge fiber and returns without awaiting
+	// `apply`; wait for the listener's `ctx:on` to be registered before the
+	// emit, or the emit can race the registration and win.
+	host.fiber_of("failing").unwrap().settled().await;
 	let (server, path) = serve(host.clone());
 	let mut client = connect_retry(&path).await;
 	client.send(json!({ "subscribe": "failing", "since": 0 })).await.unwrap();
@@ -251,6 +255,10 @@ async fn a_lua_cartridge_publishes_and_a_late_watcher_replays_the_log() {
 	);
 	write(dir.path(), "init.lua", r#"return { { id = "builder", path = "builder.lua" } }"#);
 	let (host, _) = boot(dir.path()).await;
+	// `reconcile` spawns the cartridge fiber and returns without awaiting
+	// `apply`; wait for the listener's `ctx:on` to be registered before the
+	// emit, or the emit can race the registration and win.
+	host.fiber_of("builder").unwrap().settled().await;
 	let (_server, path) = serve(host.clone());
 	let mut late = connect_retry(&path).await;
 	late.send(json!({ "subscribe": "build", "since": 0 })).await.unwrap();

@@ -30,12 +30,15 @@ composition tests' echo witness.
       closed by spec02's wire test
       (`tests::stream::a_process_cartridge_publishes_and_watches_over_the_wire`),
       whose echo seqs are exactly the three publishes' sequences
-- [x] `subscribe` is idempotent on the link: a second `host.subscribe` for the
-      same channel does not create a second daemon-side pump (guarded by
-      `link.sub_id` early-return in `cartridge::handle`) — no test exercised the
-      repeat, so this worker added
-      `tests::stream::a_repeat_subscribe_spawns_no_second_pump` (one join in the
-      log, one copy of the publish, zero duplicates)
+- [x] `subscribe` is idempotent: a repeat subscribe for the same channel does
+      not create a second daemon-side pump. Two guards exist — the socket
+      connection's `subs` map early-return (`src/socket.rs:150`) and the
+      `link.sub_id` early-return in `cartridge::handle` (`src/cartridge.rs:487`).
+      The added test
+      `tests::stream::a_repeat_subscribe_spawns_no_second_pump` drives the
+      socket guard (one join in the log, one copy of the publish, zero
+      duplicates); the `link.sub_id` guard is verified by code reading only — no
+      test repeats `host.subscribe` through the rpc fixture on a process link.
 - [x] a watcher echoes what arrives even when call replies interleave with
       channel frames — the wire test collects its echo seqs and the socket
       event in either order and still finds one gapless sequence
