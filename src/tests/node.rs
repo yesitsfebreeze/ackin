@@ -1,5 +1,5 @@
+use super::resolver::{alive, cartridge_path, pids, ppid, try_pids, wait_for};
 use super::*;
-use super::resolver::{alive, pids, ppid, try_pids, wait_for, zirkle_path};
 use serde_json::json;
 
 /// The document carries the cartridge's own configuration, so an author's
@@ -105,12 +105,16 @@ async fn a_chain_node_calls_its_dependency_and_serves_its_dependents() {
 	let nodes_dir = root.join(".nodes");
 	std::fs::create_dir_all(&nodes_dir).unwrap();
 
-	let ask = std::process::Command::new(zirkle_path())
+	let ask = std::process::Command::new(cartridge_path())
 		.args(["up", "tool.hello", "--dir", &root.to_string_lossy()])
-		.env("ZIRKLE_NODES", &nodes_dir)
+		.env("CARTRIDGE_NODES", &nodes_dir)
 		.output()
 		.unwrap();
-	assert!(ask.status.success(), "{}", String::from_utf8_lossy(&ask.stderr));
+	assert!(
+		ask.status.success(),
+		"{}",
+		String::from_utf8_lossy(&ask.stderr)
+	);
 	let line = String::from_utf8_lossy(&ask.stdout)
 		.lines()
 		.rev()
@@ -128,7 +132,11 @@ async fn a_chain_node_calls_its_dependency_and_serves_its_dependents() {
 		try_pids(&root, &["echo", "tool"])
 	);
 	let pids = pids(&root, &["echo", "tool"]);
-	assert_eq!(ppid(pids[1]), pids[0], "the dependency launched its dependent");
+	assert_eq!(
+		ppid(pids[1]),
+		pids[0],
+		"the dependency launched its dependent"
+	);
 
 	// The named tool's socket: the chain link answers through it.
 	let socket = crate::socket::node_path(&root, "tool");
@@ -196,7 +204,8 @@ async fn a_chain_node_calls_its_dependency_and_serves_its_dependents() {
 		}
 	};
 	assert_eq!(
-		reply["error"], json!("`nowhere` is not provided"),
+		reply["error"],
+		json!("`nowhere` is not provided"),
 		"a key nothing provides is refused by name: {reply}"
 	);
 
@@ -207,5 +216,8 @@ async fn a_chain_node_calls_its_dependency_and_serves_its_dependents() {
 		.args(["-9", &echo.to_string()])
 		.status()
 		.unwrap();
-	assert!(wait_for(|| !alive(tool), 10), "the dependent followed its dependency");
+	assert!(
+		wait_for(|| !alive(tool), 10),
+		"the dependent followed its dependency"
+	);
 }

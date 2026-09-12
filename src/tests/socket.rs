@@ -73,7 +73,7 @@ async fn socket_calls_a_lua_wrapped_sdk_process_with_correlated_errors() {
 		dir.path(),
 		"child.lua",
 		&format!(
-			"return zirkle.process({})",
+			"return cartridge.process({})",
 			json!(super::process::sdk_fixture())
 		),
 	);
@@ -132,7 +132,7 @@ async fn one_turn_id_crosses_the_socket_the_host_a_cartridge_and_lua() {
 		"provider.lua",
 		r#"return {provide={"lua"},apply=function(ctx)
 		ctx:provide("lua", function(args)
-			if args == "turn" then return zirkle.turn() end
+			if args == "turn" then return cartridge.turn() end
 			return args
 		end)
 	end}"#,
@@ -141,7 +141,7 @@ async fn one_turn_id_crosses_the_socket_the_host_a_cartridge_and_lua() {
 		dir.path(),
 		"child.lua",
 		&format!(
-			"return zirkle.process({})",
+			"return cartridge.process({})",
 			json!(super::process::sdk_fixture())
 		),
 	);

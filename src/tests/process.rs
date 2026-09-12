@@ -32,7 +32,7 @@ async fn a_process_provides_listens_and_is_disposed() {
 	write(
 		dir.path(),
 		"process.lua",
-		&format!("return zirkle.process({})", json!(script)),
+		&format!("return cartridge.process({})", json!(script)),
 	);
 	write(
 		dir.path(),
@@ -52,7 +52,7 @@ async fn a_process_provides_listens_and_is_disposed() {
 pub(super) fn sdk_fixture() -> std::path::PathBuf {
 	static BINARY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 	BINARY
-		.get_or_init(|| super::built(&["-p", "zirkle", "--example", "rpc_fixture"]))
+		.get_or_init(|| super::built(&["-p", "cartridge", "--example", "rpc_fixture"]))
 		.clone()
 }
 
@@ -61,7 +61,7 @@ pub(super) fn sdk_fixture() -> std::path::PathBuf {
 pub(super) fn lua_fixture() -> std::path::PathBuf {
 	static BINARY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 	BINARY
-		.get_or_init(|| super::built(&["-p", "zirkle", "--example", "lua_fixture"]))
+		.get_or_init(|| super::built(&["-p", "cartridge", "--example", "lua_fixture"]))
 		.clone()
 }
 
@@ -233,7 +233,7 @@ async fn lua_wrappers_merge_injections_before_start_and_preserve_config() {
 		&format!(
 			r#"
 		local command = {{{}}}
-		local function wrap() return zirkle.process(command, {{ inject = {{"lua", "lua"}} }}) end
+		local function wrap() return cartridge.process(command, {{ inject = {{"lua", "lua"}} }}) end
 		return wrap()
 	"#,
 			json!(binary)
@@ -309,7 +309,7 @@ async fn disabled_processes_never_run_hello_apply_or_replace() {
 	write(
 		dir.path(),
 		"p.lua",
-		&format!("return zirkle.process({})", json!(script)),
+		&format!("return cartridge.process({})", json!(script)),
 	);
 	write(
 		dir.path(),
@@ -321,7 +321,7 @@ async fn disabled_processes_never_run_hello_apply_or_replace() {
 	write(
 		dir.path(),
 		"p.lua",
-		&format!("-- changed\nreturn zirkle.process({})", json!(script)),
+		&format!("-- changed\nreturn cartridge.process({})", json!(script)),
 	);
 	host.replace(&dir.path().join("p.lua")).await;
 	assert!(host.fiber_of("p").is_none());
@@ -358,16 +358,15 @@ async fn invalid_registration_fails_before_changing_loaded_fibers() {
 		.contains("duplicate entry id"));
 	assert_eq!(host.fiber_of("p").unwrap().uid(), original);
 	for source in [
-		"return zirkle.process('')",
-		"return zirkle.process('/does/not/exist')",
+		"return cartridge.process('')",
+		"return cartridge.process('/does/not/exist')",
 		"return {inject={'tool.*'},apply=function() end}",
 		"return {provide={'key','key'},apply=function() end}",
 		"return {inject={3},apply=function() end}",
 	] {
 		write(dir.path(), "bad.lua", source);
 		assert!(
-			host
-				.component(&dir.path().join("bad.lua"), json!({}))
+			host.component(&dir.path().join("bad.lua"), json!({}))
 				.is_err(),
 			"{source}"
 		);
@@ -409,7 +408,7 @@ async fn watches_reload_wrappers_binaries_and_new_executable_directories_once() 
 	write(
 		dir.path(),
 		"p.lua",
-		&format!("return zirkle.process({})", json!(first)),
+		&format!("return cartridge.process({})", json!(first)),
 	);
 	write(
 		dir.path(),
@@ -435,7 +434,10 @@ async fn watches_reload_wrappers_binaries_and_new_executable_directories_once() 
 	write(
 		dir.path(),
 		"p.lua",
-		&format!("-- wrapper edit\nreturn zirkle.process({})", json!(first)),
+		&format!(
+			"-- wrapper edit\nreturn cartridge.process({})",
+			json!(first)
+		),
 	);
 	assert_eq!(next_event(&mut rx, "version").await, 1);
 	watched_script(first_bin.path(), 2, &log);
@@ -444,7 +446,7 @@ async fn watches_reload_wrappers_binaries_and_new_executable_directories_once() 
 	write(
 		dir.path(),
 		"new.lua",
-		&format!("return zirkle.process({})", json!(second)),
+		&format!("return cartridge.process({})", json!(second)),
 	);
 	write(
 		dir.path(),
@@ -459,7 +461,10 @@ async fn watches_reload_wrappers_binaries_and_new_executable_directories_once() 
 	write(
 		dir.path(),
 		"new.lua",
-		&format!("-- paired edit\nreturn zirkle.process({})", json!(second)),
+		&format!(
+			"-- paired edit\nreturn cartridge.process({})",
+			json!(second)
+		),
 	);
 	watched_script(second_bin.path(), 5, &log);
 	assert_eq!(next_event(&mut rx, "version").await, 5);
@@ -511,7 +516,7 @@ async fn ordinary_lua_composition_can_load_a_process_wrapper() {
 		dir.path(),
 		"child.lua",
 		&format!(
-			"local descriptor = zirkle.process({}); return descriptor",
+			"local descriptor = cartridge.process({}); return descriptor",
 			json!(sdk_fixture())
 		),
 	);
@@ -537,4 +542,80 @@ async fn ordinary_lua_composition_can_load_a_process_wrapper() {
 	);
 	host.fiber_of("parent").unwrap().dispose().await;
 	assert!(host.call("roundtrip", json!("config")).await.is_err());
+}
+
+async fn unready_fixture() -> (
+	tempfile::TempDir,
+	std::sync::Arc<crate::lua::Host>,
+	std::path::PathBuf,
+) {
+	use std::os::unix::fs::PermissionsExt;
+	let dir = tempfile::tempdir().unwrap();
+	let child = dir.path().join("unready.sh");
+	let pid = dir.path().join("pid");
+	std::fs::write(&child, format!("#!/bin/sh\nif [ \"$1\" = hello ]; then echo '{{}}'; exit 0; fi\necho $$ > '{}'\nwhile read line; do :; done\n",pid.display())).unwrap();
+	std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o755)).unwrap();
+	write(
+		dir.path(),
+		"child.lua",
+		&format!("return cartridge.process({})", serde_json::json!(child)),
+	);
+	write(
+		dir.path(),
+		"init.lua",
+		"return {{id='child',path='child.lua'}}",
+	);
+	let (host, _) = boot(dir.path()).await;
+	tokio::time::timeout(std::time::Duration::from_secs(1), async {
+		while !pid.exists() {
+			tokio::task::yield_now().await;
+		}
+	})
+	.await
+	.unwrap();
+	(dir, host, pid)
+}
+
+async fn assert_reaped(pid: &std::path::Path) {
+	let pid = std::fs::read_to_string(pid).unwrap();
+	tokio::time::timeout(std::time::Duration::from_secs(1), async {
+		loop {
+			if !std::process::Command::new("/bin/kill")
+				.args(["-0", pid.trim()])
+				.stderr(std::process::Stdio::null())
+				.status()
+				.unwrap()
+				.success()
+			{
+				break;
+			}
+			tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+		}
+	})
+	.await
+	.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn disposing_a_child_before_ready_kills_it_without_waiting_for_startup_deadline() {
+	let (_dir, host, pid) = unready_fixture().await;
+	tokio::time::timeout(
+		std::time::Duration::from_secs(1),
+		host.fiber_of("child").unwrap().dispose(),
+	)
+	.await
+	.unwrap();
+	assert_reaped(&pid).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_child_that_stays_alive_without_ready_times_out_and_is_reaped() {
+	let (_dir, host, pid) = unready_fixture().await;
+	let fiber = host.fiber_of("child").unwrap();
+	tokio::time::timeout(std::time::Duration::from_secs(7), fiber.settled())
+		.await
+		.unwrap();
+	assert!(fiber.error().unwrap().contains("timed out before ready"));
+	assert_reaped(&pid).await;
+	fiber.dispose().await;
 }

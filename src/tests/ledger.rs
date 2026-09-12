@@ -23,17 +23,28 @@ fn cartridge(dir: &Path, folder: &str, manifest: Value) {
 #[test]
 fn an_entry_is_its_path_from_the_root() {
 	let dir = tempfile::tempdir().unwrap();
-	cartridge(dir.path(), "left", json!({"name": "same", "entry": "init.lua"}));
+	cartridge(
+		dir.path(),
+		"left",
+		json!({"name": "same", "entry": "init.lua"}),
+	);
 	cartridge(
 		dir.path(),
 		"left/nested",
 		json!({"name": "same", "entry": "init.lua"}),
 	);
-	cartridge(dir.path(), "right", json!({"name": "same", "entry": "init.lua"}));
+	cartridge(
+		dir.path(),
+		"right",
+		json!({"name": "same", "entry": "init.lua"}),
+	);
 	let ledger = Ledger::scan(dir.path());
 	assert_eq!(ledger.len(), 3);
 	assert_eq!(
-		ledger.entries().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+		ledger
+			.entries()
+			.map(|e| e.path.as_str())
+			.collect::<Vec<_>>(),
 		vec!["left", "left/nested", "right"]
 	);
 	assert_eq!(ledger.get("left/nested").unwrap().name, "same");
@@ -72,10 +83,7 @@ fn a_walk_answers_from_the_asker_subtree_then_steps_outward() {
 		other => panic!("expected the root-scope binding, got {:?}", other.paths()),
 	}
 	// The asker itself is not its own answer.
-	assert!(matches!(
-		ledger.resolve("other", "store.get"),
-		Bound::None
-	));
+	assert!(matches!(ledger.resolve("other", "store.get"), Bound::None));
 }
 
 /// A request made *from* a nested scope steps outward through more than one
@@ -133,7 +141,11 @@ fn a_walk_from_a_nested_scope_steps_outward() {
 #[test]
 fn a_child_provide_is_seen_by_its_parent_subtree_and_not_by_the_graph_outside() {
 	let dir = tempfile::tempdir().unwrap();
-	cartridge(dir.path(), "outer", json!({"name": "outer", "entry": "init.lua"}));
+	cartridge(
+		dir.path(),
+		"outer",
+		json!({"name": "outer", "entry": "init.lua"}),
+	);
 	cartridge(
 		dir.path(),
 		"outer/inner",
@@ -151,7 +163,10 @@ fn a_child_provide_is_seen_by_its_parent_subtree_and_not_by_the_graph_outside() 
 	);
 	let ledger = Ledger::scan(dir.path());
 	match ledger.resolve("outer/sib", "store.get") {
-		Bound::One(e) => assert_eq!(e.path, "outer/inner", "the sibling binds the nested provide"),
+		Bound::One(e) => assert_eq!(
+			e.path, "outer/inner",
+			"the sibling binds the nested provide"
+		),
 		other => panic!("expected the sibling binding, got {:?}", other.paths()),
 	}
 	// A lookup from the parent's scope binds the same key — the parent is
@@ -163,7 +178,10 @@ fn a_child_provide_is_seen_by_its_parent_subtree_and_not_by_the_graph_outside() 
 	// Outside the parent's subtree the key never arrived: the root scope
 	// offers nothing, so both the unrelated top-level asker and a lookup at
 	// the root itself read `?`.
-	assert!(matches!(ledger.resolve("stranger", "store.get"), Bound::None));
+	assert!(matches!(
+		ledger.resolve("stranger", "store.get"),
+		Bound::None
+	));
 	assert!(matches!(ledger.resolve("", "store.get"), Bound::None));
 	// The registry says the same thing on the same tree: the sibling's need is
 	// bound, the stranger's is named with `?`.
@@ -172,7 +190,12 @@ fn a_child_provide_is_seen_by_its_parent_subtree_and_not_by_the_graph_outside() 
 			.bindings()
 			.iter()
 			.find(|(e, key, _)| e.path == path && *key == "store.get")
-			.map(|(_, _, b)| b.paths().iter().map(|p| p.to_string()).collect::<Vec<String>>())
+			.map(|(_, _, b)| {
+				b.paths()
+					.iter()
+					.map(|p| p.to_string())
+					.collect::<Vec<String>>()
+			})
 	};
 	assert_eq!(bound("outer/sib"), Some(vec!["outer/inner".to_string()]));
 	assert_eq!(bound("stranger"), Some(Vec::<String>::new()));
@@ -180,7 +203,7 @@ fn a_child_provide_is_seen_by_its_parent_subtree_and_not_by_the_graph_outside() 
 
 /// A document the host refuses — a re-export nothing inside the cartridge
 /// offers — is unread on the ledger's read too, with the host's reason. The
-/// ledger's verdict and the host's are the same verdict, so `zirkle ledger`
+/// ledger's verdict and the host's are the same verdict, so `cartridge ledger`
 /// exits non-zero on a tree the host refuses to load.
 #[test]
 fn a_dangling_re_export_is_unread_on_the_ledger_read_too() {
@@ -234,7 +257,11 @@ fn two_entries_of_one_scope_offering_one_key_is_a_clash() {
 	);
 	let ledger = Ledger::scan(dir.path());
 	let bound = ledger.resolve("asker", "store.get");
-	assert!(bound.is_clashed(), "expected a clash, got {:?}", bound.paths());
+	assert!(
+		bound.is_clashed(),
+		"expected a clash, got {:?}",
+		bound.paths()
+	);
 	assert_eq!(
 		bound.paths(),
 		vec!["left", "right"],
@@ -251,12 +278,19 @@ fn two_entries_of_one_scope_offering_one_key_is_a_clash() {
 #[test]
 fn an_unreadable_document_is_an_entry_with_its_reason() {
 	let dir = tempfile::tempdir().unwrap();
-	cartridge(dir.path(), "broken", json!({"name": "broken", "entry": "init.lua"}));
+	cartridge(
+		dir.path(),
+		"broken",
+		json!({"name": "broken", "entry": "init.lua"}),
+	);
 	write(dir.path(), "broken/cartridge.json", "{ this is not json");
 	let ledger = Ledger::scan(dir.path());
 	assert_eq!(ledger.len(), 1);
 	let entry = ledger.get("broken").unwrap();
-	assert_eq!(entry.provide.len() + entry.export.len() + entry.needs.len(), 0);
+	assert_eq!(
+		entry.provide.len() + entry.export.len() + entry.needs.len(),
+		0
+	);
 	assert!(entry.unread.is_some());
 }
 
@@ -281,7 +315,11 @@ async fn a_new_cartridge_is_available_and_not_started() {
 		json!({"name": "fresh", "entry": "init.lua", "provide": ["fresh.key"]}),
 	);
 	// Nothing of it runs: applying the entry would evaluate it.
-	write(dir.path(), "fresh/init.lua", r#"error("a fresh cartridge must not run")"#);
+	write(
+		dir.path(),
+		"fresh/init.lua",
+		r#"error("a fresh cartridge must not run")"#,
+	);
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
 	let listed = host.manifest().unwrap();
 	let fresh = listed.iter().find(|c| c.entry.id == "fresh").unwrap();
@@ -291,5 +329,9 @@ async fn a_new_cartridge_is_available_and_not_started() {
 	// Uninstalling is taking it away: the entry goes with the folder.
 	std::fs::remove_dir_all(dir.path().join("fresh")).unwrap();
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
-	assert!(!host.manifest().unwrap().iter().any(|c| c.entry.id == "fresh"));
+	assert!(!host
+		.manifest()
+		.unwrap()
+		.iter()
+		.any(|c| c.entry.id == "fresh"));
 }

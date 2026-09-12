@@ -1,7 +1,7 @@
 //! Offline SDK child that provides `lua`, used as an isolated alternate
 //! provider in the composition regression tests.
+use cartridge::sdk::Cartridge;
 use serde_json::json;
-use zirkle::sdk::Cartridge;
 
 #[tokio::main]
 async fn main() {

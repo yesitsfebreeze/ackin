@@ -168,7 +168,7 @@ async fn wrapped_process_isolation_metadata_and_dependency_restart_compose() {
 		dir.path(),
 		"alternate.lua",
 		&format!(
-			"return zirkle.process({})",
+			"return cartridge.process({})",
 			json!(super::process::lua_fixture())
 		),
 	);
@@ -176,7 +176,7 @@ async fn wrapped_process_isolation_metadata_and_dependency_restart_compose() {
 		dir.path(),
 		"child.lua",
 		&format!(
-			"return zirkle.process({})",
+			"return cartridge.process({})",
 			json!(super::process::sdk_fixture())
 		),
 	);
@@ -211,15 +211,13 @@ async fn wrapped_process_isolation_metadata_and_dependency_restart_compose() {
 		assert_eq!(next_event(&mut rx, "state").await, json!(null));
 		assert!(host.call("roundtrip", json!(null)).await.is_err());
 		assert_eq!(
-			host
-				.invoke(original.clone(), json!(null))
+			host.invoke(original.clone(), json!(null))
 				.await
 				.unwrap_err(),
 			"cartridge is gone"
 		);
 		// Await dispatch itself: a retained listener would fail against its dead link.
-		host
-			.runtime()
+		host.runtime()
 			.ctx()
 			.parallel("probe", std::sync::Arc::new(json!("removed")))
 			.await
@@ -232,8 +230,7 @@ async fn wrapped_process_isolation_metadata_and_dependency_restart_compose() {
 			host.call("roundtrip", json!(0)).await.unwrap(),
 			json!({"data":{"value":0},"meta":{"description":"isolated metadata"},"absent":null})
 		);
-		host
-			.runtime()
+		host.runtime()
 			.ctx()
 			.parallel("probe", std::sync::Arc::new(json!("one")))
 			.await
@@ -263,7 +260,7 @@ fn local_list_resolves_wrappers_without_starting_a_daemon_or_applying_cartridges
 		dir.path(),
 		"child.lua",
 		&format!(
-			"return zirkle.process({})",
+			"return cartridge.process({})",
 			json!(super::process::sdk_fixture())
 		),
 	);
@@ -278,14 +275,15 @@ fn local_list_resolves_wrappers_without_starting_a_daemon_or_applying_cartridges
 	assert_eq!(cartridges[1].provide, ["roundtrip"]);
 	assert!(cartridges.iter().all(|p| p.error.is_none()));
 	assert_eq!(host.runtime().fibers().len(), 1);
-	let output = std::process::Command::new(super::built(&["-p", "zirkle", "--bin", "zirkle"]))
-		.arg("--dir")
-		.arg(dir.path())
-		.arg("--profile")
-		.arg(dir.path())
-		.arg("list")
-		.output()
-		.unwrap();
+	let output =
+		std::process::Command::new(super::built(&["-p", "cartridge", "--bin", "cartridge"]))
+			.arg("--dir")
+			.arg(dir.path())
+			.arg("--profile")
+			.arg(dir.path())
+			.arg("list")
+			.output()
+			.unwrap();
 	assert!(
 		output.status.success(),
 		"{}",

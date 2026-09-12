@@ -20,6 +20,7 @@
 //!   as a duty: the launch path refuses the cycle the listing would name.
 
 use crate::ledger::{Bound, Installed, Ledger};
+use std::collections::HashSet;
 
 /// Why the chain could not be resolved.
 #[derive(Debug, PartialEq)]
@@ -51,13 +52,16 @@ impl std::fmt::Display for Refusal {
 /// The chain starting `key` from `from` requires, **bottom-up**: the far end
 /// first, the entry that provides `key` last. `from` is `""` for an ask made
 /// at the root — the asker of a tool is whoever is asking, not a cartridge.
-pub fn chain<'a>(
-	ledger: &'a Ledger,
-	from: &str,
-	key: &str,
-) -> Result<Vec<&'a Installed>, Refusal> {
+pub fn chain<'a>(ledger: &'a Ledger, from: &str, key: &str) -> Result<Vec<&'a Installed>, Refusal> {
 	let mut chain = Vec::new();
-	walk(ledger, from, key, &mut chain, &mut Vec::new())?;
+	walk(
+		ledger,
+		from,
+		key,
+		&mut chain,
+		&mut Vec::new(),
+		&mut HashSet::new(),
+	)?;
 	Ok(chain)
 }
 
@@ -73,6 +77,7 @@ fn walk<'a>(
 	key: &str,
 	chain: &mut Vec<&'a Installed>,
 	stack: &mut Vec<String>,
+	completed: &mut HashSet<String>,
 ) -> Result<(), Refusal> {
 	match ledger.resolve(from, key) {
 		Bound::None => Err(Refusal::Unbound {
@@ -90,14 +95,16 @@ fn walk<'a>(
 					at: provider.path.clone(),
 				});
 			}
+			if completed.contains(&provider.path) {
+				return Ok(());
+			}
 			stack.push(provider.path.clone());
 			for need in &provider.needs {
-				walk(ledger, &provider.path, need, chain, stack)?;
+				walk(ledger, &provider.path, need, chain, stack, completed)?;
 			}
 			stack.pop();
-			if !chain.iter().any(|e| e.path == provider.path) {
-				chain.push(provider);
-			}
+			completed.insert(provider.path.clone());
+			chain.push(provider);
 			Ok(())
 		}
 	}

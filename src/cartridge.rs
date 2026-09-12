@@ -1,5 +1,5 @@
 //! Process components registered by a Lua wrapper returning
-//! `zirkle.process(command, {inject = {"extra.key"}})`. The command's `hello`
+//! `cartridge.process(command, {inject = {"extra.key"}})`. The command's `hello`
 //! invocation declares static injections and provides; its normal invocation
 //! is one fiber using JSON lines on stdin/stdout. Entry config arrives at apply.
 //!
@@ -38,13 +38,10 @@ pub fn split(cmd: &str) -> Vec<String> {
 
 /// Resolve once so hello, apply and watches name the same executable. A bare
 /// program name is searched for in the cartridge's own `bin/`, where a bundle
-/// ships it, then beside the running zirkle — a dev-build convenience, since
+/// ships it, then beside the running cartridge — a dev-build convenience, since
 /// `cargo build --workspace` drops every binary next to this one — then on
 /// PATH. Relative explicit paths resolve inside the cartridge directory.
-pub fn executable(
-	program: &str,
-	root: &std::path::Path,
-) -> std::io::Result<std::path::PathBuf> {
+pub fn executable(program: &str, root: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
 	use std::os::unix::fs::PermissionsExt;
 	let path = std::path::Path::new(program);
 	let paths = if path.components().count() > 1 || path.is_absolute() {
@@ -69,8 +66,7 @@ pub fn executable(
 	paths
 		.into_iter()
 		.find(|path| {
-			path
-				.metadata()
+			path.metadata()
 				.is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 		})
 		.ok_or_else(|| {
@@ -259,8 +255,7 @@ impl Remote {
 		Ok(())
 	}
 	pub async fn call(&self, args: Json) -> Result<Json, String> {
-		self
-			.link
+		self.link
 			.request(json!({ "call": self.key, "args": args }))
 			.await
 	}
@@ -278,15 +273,25 @@ pub struct Manifest {
 }
 
 pub(crate) fn manifest(cmd: &[String]) -> Result<Manifest, String> {
-	let program = cmd
-		.first()
-		.ok_or_else(|| "empty cmd".to_owned())?;
-	let out = std::process::Command::new(program)
-		.args(&cmd[1..])
-		.arg("hello")
-		.stderr(Stdio::piped())
-		.output()
-		.map_err(|e| format!("{program}: {e}"))?;
+	// The synchronous composition API also works outside Tokio. Its bounded
+	// discovery runtime never nests block_on inside the caller's executor.
+	std::thread::scope(|scope| {
+		scope
+			.spawn(|| {
+				tokio::runtime::Builder::new_current_thread()
+					.enable_all()
+					.build()
+					.map_err(|e| e.to_string())?
+					.block_on(manifest_async(cmd))
+			})
+			.join()
+			.map_err(|_| "discovery worker panicked".to_owned())?
+	})
+}
+
+pub(crate) async fn manifest_async(cmd: &[String]) -> Result<Manifest, String> {
+	let out = crate::process::discover(cmd, crate::process::STARTUP_TIMEOUT).await?;
+	let program = &cmd[0];
 	for line in String::from_utf8_lossy(&out.stderr).lines() {
 		crate::turn::diagnostic_line(program, line);
 	}
@@ -305,15 +310,14 @@ pub fn component(
 	let m = manifest(&cmd).map_err(Error::Apply)?;
 	let cartridge = name.clone();
 	let apply = Arc::new(move |ctx: Ctx| {
-		let (host, name, cmd, config) = (host.clone(), cartridge.clone(), cmd.clone(), config.clone());
+		let (host, name, cmd, config) =
+			(host.clone(), cartridge.clone(), cmd.clone(), config.clone());
 		futures::stream::once(async move { start(host, ctx, name, cmd, config, m.reload).await })
 			.boxed()
 	});
-	Ok(
-		Component::new(name, apply)
-			.inject(m.inject)
-			.provide(m.provide),
-	)
+	Ok(Component::new(name, apply)
+		.inject(m.inject)
+		.provide(m.provide))
 }
 
 async fn start(
@@ -324,20 +328,22 @@ async fn start(
 	config: Json,
 	reload: bool,
 ) -> Result<Disposer, Error> {
-	let mut child = Command::new(&cmd[0])
-		.args(&cmd[1..])
-		.stdin(Stdio::piped())
-		.stdout(Stdio::piped())
-		.stderr(Stdio::piped())
-		.kill_on_drop(true)
-		.spawn()
-		.map_err(|e| Error::Apply(format!("{}: {e}", cmd[0])))?;
+	let mut child = crate::process::Child::new(
+		Command::new(&cmd[0])
+			.args(&cmd[1..])
+			.stdin(Stdio::piped())
+			.stdout(Stdio::piped())
+			.stderr(Stdio::piped())
+			.kill_on_drop(true)
+			.spawn()
+			.map_err(|e| Error::Apply(format!("{}: {e}", cmd[0])))?,
+	);
 	let mut stdin = child.stdin.take().expect("piped stdin");
 	let stdout = child.stdout.take().expect("piped stdout");
 	// The host owns every diagnostic byte: redaction and the byte cap are only
 	// possible where it formats the writes, so a cartridge never inherits stderr.
 	let stderr = child.stderr.take().expect("piped stderr");
-	tokio::spawn({
+	child.tasks.spawn({
 		let name = name.clone();
 		async move {
 			let mut lines = BufReader::new(stderr).lines();
@@ -350,7 +356,7 @@ async fn start(
 	let link = Link::new(tx, "cartridge is gone");
 	link.reload.store(reload, Ordering::Relaxed);
 	let writer_link = link.clone();
-	tokio::spawn(async move {
+	child.tasks.spawn(async move {
 		while let Some(Some(m)) = rx.recv().await {
 			let mut line = m.to_string();
 			line.push('\n');
@@ -361,39 +367,62 @@ async fn start(
 		}
 	});
 	link.send(json!({ "apply": { "name": name, "config": config } }));
-	let mut lines = BufReader::new(stdout).lines();
-	loop {
-		let Ok(Some(line)) = lines.next_line().await else {
-			link.shutdown();
-			let status = child
-				.try_wait()
-				.ok()
-				.flatten()
-				.map(|s| s.to_string())
-				.unwrap_or_else(|| "closed stdout".into());
-			return Err(Error::Apply(format!("exited before ready: {status}")));
-		};
-		let m: Json = serde_json::from_str(&line).map_err(|e| {
-			link.shutdown();
-			Error::Apply(e.to_string())
-		})?;
-		if m["ready"] == true {
-			break;
+	let mut startup = BufReader::new(stdout);
+	let mut remaining = 64 * 1024;
+	let ready = tokio::time::timeout(crate::process::STARTUP_TIMEOUT, async {
+		loop {
+			let Some(line) = crate::process::startup_line(&mut startup, &mut remaining)
+				.await
+				.map_err(|error| {
+					link.shutdown();
+					Error::Apply(error.to_string())
+				})?
+			else {
+				link.shutdown();
+				let status = child
+					.try_wait()
+					.ok()
+					.flatten()
+					.map(|s| s.to_string())
+					.unwrap_or_else(|| "closed stdout".into());
+				return Err(Error::Apply(format!("exited before ready: {status}")));
+			};
+			let m: Json = serde_json::from_str(&line).map_err(|e| {
+				link.shutdown();
+				Error::Apply(e.to_string())
+			})?;
+			if m["ready"] == true {
+				break;
+			}
+			if let Some(e) = m["error"]
+				.as_str()
+				.filter(|_| m["reply"].as_u64().is_none())
+			{
+				link.shutdown();
+				return Err(Error::Apply(e.to_owned()));
+			}
+			if let Err(e) = handle(&host, &ctx, &link, &name, m) {
+				link.shutdown();
+				return Err(e);
+			}
 		}
-		if let Some(e) = m["error"]
-			.as_str()
-			.filter(|_| m["reply"].as_u64().is_none())
-		{
+		Ok::<(), Error>(())
+	})
+	.await;
+	match ready {
+		Ok(Ok(())) => {}
+		Ok(Err(error)) => {
 			link.shutdown();
-			return Err(Error::Apply(e.to_owned()));
+			return Err(error);
 		}
-		if let Err(e) = handle(&host, &ctx, &link, &name, m) {
+		Err(_) => {
 			link.shutdown();
-			return Err(e);
+			return Err(Error::Apply(format!("{name} timed out before ready")));
 		}
 	}
+	let mut lines = startup.lines();
 	let stopping = Arc::new(AtomicBool::new(false));
-	tokio::spawn({
+	child.tasks.spawn({
 		let (host, ctx, link, name, stopping) = (
 			host.clone(),
 			ctx.clone(),
@@ -417,8 +446,7 @@ async fn start(
 			link.shutdown();
 			link.leave_subs(host.runtime().stream());
 			if !stopping.load(Ordering::SeqCst) {
-				ctx
-					.runtime()
+				ctx.runtime()
 					.fail(ctx.fiber(), Error::Apply("exited".into()));
 			}
 		}
@@ -454,8 +482,7 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) ->
 		let listener: Listener = Arc::new(move |payload| {
 			let (link, event, data) = (link.clone(), event.clone(), host.json_of(&payload));
 			Box::pin(async move {
-				link
-					.request(json!({ "event": event, "data": data }))
+				link.request(json!({ "event": event, "data": data }))
 					.await
 					.map(|d| (!d.is_null()).then(|| Arc::new(d) as Value))
 					.map_err(Error::Apply)
@@ -475,10 +502,12 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) ->
 	if let Some(channel) = m["publish"].as_str() {
 		// Publishing knows nothing of its audience and asks nothing about it: the
 		// stream takes the envelope, and an empty channel costs one append.
-		host
-			.runtime()
-			.stream()
-			.publish(channel, name, crate::stream::Kind::Data, m["data"].clone());
+		host.runtime().stream().publish(
+			channel,
+			name,
+			crate::stream::Kind::Data,
+			m["data"].clone(),
+		);
 		return Ok(());
 	}
 	if let Some(channel) = m["subscribe"].as_str() {
@@ -520,6 +549,10 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) ->
 		link.reply(id, Ok(host.bridge_status()));
 		return Ok(());
 	}
+	if m["landscape"] == true {
+		link.reply(id, Ok(host.landscape()));
+		return Ok(());
+	}
 	if m["cartridges"] == true {
 		link.reply(id, Ok(host.cartridges()));
 		return Ok(());
@@ -541,8 +574,7 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) ->
 				call["key"].as_str(),
 			) {
 				(Some(owner), Some(generation), Some(key)) => {
-					host
-						.bridge_call(owner, generation, key, call["args"].clone())
+					host.bridge_call(owner, generation, key, call["args"].clone())
 						.await
 				}
 				_ => Err("invalid bridge service call".into()),

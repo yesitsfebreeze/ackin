@@ -218,8 +218,8 @@ impl Cartridge {
 	/// `ui` file is not looked for — because a cartridge declares what it
 	/// declares whether or not the files it points at are in place.
 	pub fn document(manifest: &Path) -> Result<Cartridge, String> {
-		let source =
-			std::fs::read_to_string(manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
+		let source = std::fs::read_to_string(manifest)
+			.map_err(|e| format!("{}: {e}", manifest.display()))?;
 		let cartridge: Cartridge =
 			serde_json::from_str(&source).map_err(|e| format!("{}: {e}", manifest.display()))?;
 		if let Some(binary) = &cartridge.binary {
@@ -350,14 +350,19 @@ impl Cartridge {
 				)));
 			}
 		}
-		for (field, keys) in [("selftest", &self.selftest), ("integration", &self.integration)] {
+		for (field, keys) in [
+			("selftest", &self.selftest),
+			("integration", &self.integration),
+		] {
 			if let Some(k) = keys {
 				// The guard on an empty `provide` is required, not forgotten: `harness`
 				// in ~/dev/sys/builtin declares `selftest: "harness.selftest"` with no
 				// document-level `provide`, because its Lua entry is what provides.
 				// Dropping the guard would refuse a manifest that is already written.
 				if !self.provide.is_empty() && !self.provide.contains(k) {
-					return Err(at(&format!("`{field}` names `{k}`, which this cartridge does not provide")));
+					return Err(at(&format!(
+						"`{field}` names `{k}`, which this cartridge does not provide"
+					)));
 				}
 			}
 		}
@@ -453,7 +458,8 @@ impl Grant {
 			}
 		}
 		for host in &self.net {
-			if host.trim().is_empty() || host.contains('\0') || (host.contains('*') && host != "*") {
+			if host.trim().is_empty() || host.contains('\0') || (host.contains('*') && host != "*")
+			{
 				return Err(at(&format!(
 					"`grant.net` entry `{host}` must be a host name or `*`"
 				)));
@@ -472,9 +478,7 @@ impl Grant {
 /// folder (or the manifest itself). One rule, so watching and loading agree.
 fn classify(path: &Path) -> PathBuf {
 	if path.extension().is_some_and(|ext| ext == "lua")
-		|| path
-			.file_name()
-			.is_some_and(|name| name == MANIFEST)
+		|| path.file_name().is_some_and(|name| name == MANIFEST)
 	{
 		return path.to_path_buf();
 	}
@@ -511,9 +515,9 @@ pub(crate) fn document(path: &Path) -> Result<(Vec<String>, Grant), String> {
 		return Ok((Vec::new(), Grant::default()));
 	}
 	let cartridge = Cartridge::document(&path)?;
-	let root = path.parent().ok_or_else(|| {
-		format!("{}: no cartridge folder", path.display())
-	})?;
+	let root = path
+		.parent()
+		.ok_or_else(|| format!("{}: no cartridge folder", path.display()))?;
 	cartridge.passed_on(root, &path)?;
 	Ok((cartridge.export, cartridge.grant))
 }
@@ -543,8 +547,7 @@ pub(crate) fn resolve(path: &Path) -> mlua::Result<Declared> {
 	let mut sources = vec![path.clone(), entry.clone()];
 	if let Some(ui) = &manifest.ui {
 		sources.push(
-			path
-				.parent()
+			path.parent()
 				.unwrap()
 				.join(ui)
 				.canonicalize()
@@ -573,7 +576,7 @@ fn validate(entry: &Entry) -> mlua::Result<()> {
 /// Resolve a profile name under the project configuration directory.
 /// An absolute name selects that exact directory.
 pub fn profile(name: &str) -> PathBuf {
-	Path::new(".zirkle").join(name)
+	Path::new(".cartridge").join(name)
 }
 
 /// Cartridges are loaded from the working directory unless `--dir` is supplied.
@@ -617,8 +620,7 @@ impl Host {
 				return Err("cartridge has no client module".into());
 			}
 			let reg = self.rt.reg.lock();
-			reg
-				.owns(generation, key)
+			reg.owns(generation, key)
 				.and_then(|realm| reg.value(realm))
 				.ok_or("a bridge client may only call services provided by its own cartridge")?
 		};
@@ -653,7 +655,7 @@ impl Host {
 		)
 	}
 
-	/// Folders of enabled cartridges, for records they ship (`.zirkle/memos`).
+	/// Folders of enabled cartridges, for records they ship (`.cartridge/memos`).
 	/// Disabled entries have no fiber and are absent.
 	pub fn cartridges(&self) -> serde_json::Value {
 		let loaded = self.loaded.lock();
@@ -756,7 +758,9 @@ impl Host {
 					continue;
 				};
 				match (&mut entry.config, over) {
-					(serde_json::Value::Object(base), serde_json::Value::Object(over)) => base.extend(over),
+					(serde_json::Value::Object(base), serde_json::Value::Object(over)) => {
+						base.extend(over)
+					}
 					(base, over) => *base = over,
 				}
 			}
@@ -852,7 +856,10 @@ impl Host {
 	/// needs bind to, so the thing just written is tested against its own
 	/// contract without a system assembled around it. Returns the same pair
 	/// [`Host::verify`] does, over the target's contracts alone.
-	pub async fn verify_one(self: &Arc<Self>, target: &str) -> Result<(usize, Vec<String>), String> {
+	pub async fn verify_one(
+		self: &Arc<Self>,
+		target: &str,
+	) -> Result<(usize, Vec<String>), String> {
 		let (entries, contracts) = self.solo(target)?;
 		*self.solo.lock() = Some(entries);
 		let result = self.run_contracts(contracts).await;
@@ -864,10 +871,7 @@ impl Host {
 	/// the target's alone. Providers pulled in for the target's needs are
 	/// enabled and nothing else: they are loaded to be reached, not to be
 	/// graded, so their own contracts are not this run's business.
-	fn solo(
-		self: &Arc<Self>,
-		target: &str,
-	) -> Result<Solo, String> {
+	fn solo(self: &Arc<Self>, target: &str) -> Result<Solo, String> {
 		let ledger = Ledger::scan(&self.dir);
 		let at = match ledger.get(target) {
 			Some(e) => e.path.clone(),
@@ -879,7 +883,9 @@ impl Host {
 				let found = ledger
 					.entries()
 					.find(|e| normalize(&e.dir) == asked)
-					.ok_or_else(|| format!("`{target}` is not a cartridge under {}", self.dir.display()))?;
+					.ok_or_else(|| {
+						format!("`{target}` is not a cartridge under {}", self.dir.display())
+					})?;
 				found.path.clone()
 			}
 		};
@@ -896,14 +902,16 @@ impl Host {
 			for key in &e.needs {
 				match ledger.resolve(&e.path, key) {
 					Bound::None => {
-						return Err(format!(
-							"{path}: need `{key}` binds to nothing in the tree"
-						))
+						return Err(format!("{path}: need `{key}` binds to nothing in the tree"))
 					}
 					Bound::Clashed(offered) => {
 						return Err(format!(
 							"{path}: need `{key}` is ambiguous ({})",
-							offered.iter().map(|p| p.path.as_str()).collect::<Vec<_>>().join(", ")
+							offered
+								.iter()
+								.map(|p| p.path.as_str())
+								.collect::<Vec<_>>()
+								.join(", ")
 						))
 					}
 					Bound::One(provider) => {
@@ -1091,10 +1099,10 @@ impl Host {
 			tokio::time::timeout(Duration::from_secs(30), async {
 				loop {
 					let fibers = self.rt.fibers();
-					if fibers
-						.iter()
-						.any(|f| f.state == crate::runtime::State::Active && f.provide.iter().any(|p| p == key))
-					{
+					if fibers.iter().any(|f| {
+						f.state == crate::runtime::State::Active
+							&& f.provide.iter().any(|p| p == key)
+					}) {
 						return Ok(());
 					}
 					if !fibers
@@ -1144,57 +1152,64 @@ impl Host {
 		Ok((component, files))
 	}
 
+	async fn load_entry_async(
+		self: &Arc<Self>,
+		entry: Entry,
+	) -> mlua::Result<(Component, Vec<PathBuf>)> {
+		let host = self.clone();
+		tokio::task::spawn_blocking(move || host.load_entry(&entry))
+			.await
+			.map_err(mlua::Error::external)?
+	}
+
 	/// Effective declarations. Enabled process wrappers run hello, never apply.
 	/// Disabled entries are not evaluated and never spawn even a hello process.
 	pub fn manifest(self: &Arc<Self>) -> Result<Vec<CartridgeInfo>, mlua::Error> {
-		Ok(
-			self
-				.entries()?
-				.into_iter()
-				.map(|entry| {
-					// The document is data, so the request is readable whether or not the
-					// entry is evaluated — a disabled cartridge still declares what it asks for.
-					// A document that cannot be read declares nothing *knowable*, which is
-					// not the same as declaring nothing: the error is carried, and the
-					// grant is absent rather than empty, so the two never read alike.
-					// Absent, never empty: an empty grant is the tightest policy, so a
-					// document that would not read must not be able to produce one. A
-					// disabled cartridge has still declared, so this is read either way.
-					let (export, grant, unread) = match document(&self.dir.join(&entry.path)) {
-						Ok((export, grant)) => (export, Some(grant), None),
-						Err(e) => (Vec::new(), None, Some(e)),
-					};
-					let (inject, provide, error) = if entry.disabled {
-						(Vec::new(), Vec::new(), None)
-					} else {
-						match self.component_of(&entry) {
-							Ok(c) => (c.inject, c.provide, None),
-							// The document's own failure is already carried by `unread`, so
-							// it is not repeated here: one fact, printed once.
-							Err(e) => {
-								let e = (unread.is_none()).then(|| e.to_string());
-								(Vec::new(), Vec::new(), e)
-							}
+		Ok(self
+			.entries()?
+			.into_iter()
+			.map(|entry| {
+				// The document is data, so the request is readable whether or not the
+				// entry is evaluated — a disabled cartridge still declares what it asks for.
+				// A document that cannot be read declares nothing *knowable*, which is
+				// not the same as declaring nothing: the error is carried, and the
+				// grant is absent rather than empty, so the two never read alike.
+				// Absent, never empty: an empty grant is the tightest policy, so a
+				// document that would not read must not be able to produce one. A
+				// disabled cartridge has still declared, so this is read either way.
+				let (export, grant, unread) = match document(&self.dir.join(&entry.path)) {
+					Ok((export, grant)) => (export, Some(grant), None),
+					Err(e) => (Vec::new(), None, Some(e)),
+				};
+				let (inject, provide, error) = if entry.disabled {
+					(Vec::new(), Vec::new(), None)
+				} else {
+					match self.component_of(&entry) {
+						Ok(c) => (c.inject, c.provide, None),
+						// The document's own failure is already carried by `unread`, so
+						// it is not repeated here: one fact, printed once.
+						Err(e) => {
+							let e = (unread.is_none()).then(|| e.to_string());
+							(Vec::new(), Vec::new(), e)
 						}
-					};
-					CartridgeInfo {
-						entry,
-						inject,
-						provide,
-						export,
-						grant,
-						unread,
-						error,
 					}
-				})
-				.collect(),
-		)
+				};
+				CartridgeInfo {
+					entry,
+					inject,
+					provide,
+					export,
+					grant,
+					unread,
+					error,
+				}
+			})
+			.collect())
 	}
 
 	/// The loaded slot for `id`, under the lock.
 	fn slot<R>(&self, id: &str, f: impl FnOnce(&mut Loaded) -> R) -> Option<R> {
-		self
-			.loaded
+		self.loaded
 			.lock()
 			.iter_mut()
 			.find(|l| l.entry.id == id)
@@ -1209,7 +1224,7 @@ impl Host {
 			.cartridge(component)
 	}
 
-	fn instantiate(self: &Arc<Self>, entry: Entry) -> Loaded {
+	async fn instantiate(self: &Arc<Self>, entry: Entry) -> Loaded {
 		let sources = vec![Source::new(entry.file(&self.dir))];
 		let mut loaded = Loaded {
 			entry,
@@ -1221,7 +1236,7 @@ impl Host {
 		if loaded.entry.disabled {
 			return loaded;
 		}
-		match self.load_entry(&loaded.entry) {
+		match self.load_entry_async(loaded.entry.clone()).await {
 			Ok((mut component, files)) => {
 				component.reload = loaded.reload.clone();
 				loaded.sources = files.into_iter().map(Source::new).collect();
@@ -1236,6 +1251,21 @@ impl Host {
 	}
 
 	pub async fn reconcile(self: &Arc<Self>) -> Result<(), mlua::Error> {
+		self.start_reconcile()
+			.await
+			.map_err(mlua::Error::external)?
+	}
+
+	pub(crate) fn start_reconcile(
+		self: &Arc<Self>,
+	) -> tokio::task::JoinHandle<Result<(), mlua::Error>> {
+		// Start at acceptance, not when a reply waiter is first polled.
+		// Disconnection never cancels a transaction between begin and finish.
+		let host = self.clone();
+		tokio::spawn(async move { host.reconcile_inner().await })
+	}
+
+	async fn reconcile_inner(self: &Arc<Self>) -> Result<(), mlua::Error> {
 		let _reload = self.reload_lock.lock().await;
 		let wanted = self.entries()?;
 		let removed: Vec<_> = {
@@ -1243,10 +1273,9 @@ impl Host {
 			let mut removed = Vec::new();
 			let mut index = 0;
 			while index < loaded.len() {
-				if wanted
-					.iter()
-					.any(|e| e.id == loaded[index].entry.id && !e.disabled && !loaded[index].entry.disabled)
-				{
+				if wanted.iter().any(|e| {
+					e.id == loaded[index].entry.id && !e.disabled && !loaded[index].entry.disabled
+				}) {
 					index += 1;
 				} else {
 					removed.push(loaded.remove(index));
@@ -1266,7 +1295,7 @@ impl Host {
 				Some(old) if old != entry => self.replace_entry(entry).await,
 				Some(_) => {}
 				None => {
-					let loaded = self.instantiate(entry);
+					let loaded = self.instantiate(entry).await;
 					self.loaded.lock().push(loaded);
 				}
 			}
@@ -1288,14 +1317,11 @@ impl Host {
 				!l.entry.disabled
 					&& l.sources.iter().any(|source| {
 						(paths.contains(&source.path) && source.changed())
-							|| (source
-								.path
-								.extension()
-								.is_some_and(|e| e == "tsx" || e == "ts" || e == "js" || e == "jsx")
-								&& source
-									.path
-									.parent()
-									.is_some_and(|parent| paths.iter().any(|path| path.starts_with(parent))))
+							|| (source.path.extension().is_some_and(|e| {
+								e == "tsx" || e == "ts" || e == "js" || e == "jsx"
+							}) && source.path.parent().is_some_and(|parent| {
+								paths.iter().any(|path| path.starts_with(parent))
+							}))
 					})
 			})
 			.map(|l| l.entry.clone())
@@ -1322,7 +1348,7 @@ impl Host {
 			);
 			return;
 		}
-		let (mut component, files) = match self.load_entry(&entry) {
+		let (mut component, files) = match self.load_entry_async(entry.clone()).await {
 			Ok(c) => c,
 			Err(e) => {
 				self.report_entry(&entry.id, e);
@@ -1330,7 +1356,8 @@ impl Host {
 			}
 		};
 		let sources = files.into_iter().map(Source::new).collect();
-		let Some((old, reload)) = self.slot(&entry.id, |l| (l.fiber.clone(), l.reload.clone())) else {
+		let Some((old, reload)) = self.slot(&entry.id, |l| (l.fiber.clone(), l.reload.clone()))
+		else {
 			return;
 		};
 		let Some(old) = old else {
@@ -1364,8 +1391,7 @@ impl Host {
 		}
 		let mut values = {
 			let reg = self.rt.reg.lock();
-			reg
-				.provided(old.uid())
+			reg.provided(old.uid())
 				.into_iter()
 				.filter_map(|(_, realm)| reg.value(realm))
 				.collect::<Vec<_>>()
@@ -1406,8 +1432,7 @@ impl Host {
 		let result = if let Some(error) = candidate.error() {
 			Err(error)
 		} else {
-			self
-				.rt
+			self.rt
 				.switch(old.uid(), candidate.uid())
 				.map_err(|e| e.to_string())
 		};
@@ -1566,8 +1591,7 @@ impl Host {
 		component.rebuild = Some(rebuild.clone());
 		let mut values = {
 			let reg = self.rt.reg.lock();
-			reg
-				.provided(uid)
+			reg.provided(uid)
 				.into_iter()
 				.filter_map(|(_, realm)| reg.value(realm))
 				.collect::<Vec<_>>()
@@ -1607,7 +1631,9 @@ impl Host {
 		let result = if let Some(error) = candidate.error() {
 			Err(error)
 		} else {
-			self.rt.switch(uid, candidate.uid()).map_err(|e| e.to_string())
+			self.rt
+				.switch(uid, candidate.uid())
+				.map_err(|e| e.to_string())
 		};
 		match result {
 			Ok(()) => {
@@ -1654,27 +1680,27 @@ impl Host {
 		Ok(())
 	}
 
-
 	pub fn watch(self: &Arc<Self>) -> notify::Result<()> {
 		self.watch_mode().map(|_| ())
 	}
 
 	fn watch_mode(self: &Arc<Self>) -> notify::Result<tokio::task::JoinHandle<()>> {
 		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<PathBuf>();
-		let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-			if let Ok(event) = event {
-				if matches!(event.kind, notify::EventKind::Access(_)) {
-					return;
+		let mut watcher =
+			notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+				if let Ok(event) = event {
+					if matches!(event.kind, notify::EventKind::Access(_)) {
+						return;
+					}
+					for path in event.paths {
+						let _ = tx.send(normalize(&path));
+					}
 				}
-				for path in event.paths {
-					let _ = tx.send(normalize(&path));
-				}
-			}
-		})?;
+			})?;
 		watcher.watch(&self.dir, RecursiveMode::Recursive)?;
 		// A source tree beside the host rebuilds on edit; a bundle has none.
 		for path in [
-			std::path::Path::new("core"),
+			std::path::Path::new("src"),
 			std::path::Path::new("Cargo.toml"),
 		] {
 			if path.exists() {

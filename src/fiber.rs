@@ -8,7 +8,12 @@ use crate::runtime::{
 };
 
 impl Runtime {
-	pub(crate) fn notify(self: &Arc<Self>, reg: &mut Registry, key: &str, realm: Realm) -> Vec<Uid> {
+	pub(crate) fn notify(
+		self: &Arc<Self>,
+		reg: &mut Registry,
+		key: &str,
+		realm: Realm,
+	) -> Vec<Uid> {
 		let affected: Vec<Uid> = reg
 			.fibers
 			.iter()
@@ -49,6 +54,7 @@ impl Runtime {
 		}
 		let loading = target.is_some();
 		f.target = target;
+		f.changed.send_modify(|version| *version += 1);
 		if f.inertia {
 			return;
 		}
@@ -77,7 +83,7 @@ impl Runtime {
 	}
 
 	async fn reload(self: Arc<Self>, uid: Uid) {
-		let (apply, ctx, target0) = {
+		let (apply, ctx, target0, mut changed) = {
 			let mut reg = self.reg.lock();
 			let Some(f) = reg.fibers.get_mut(&uid) else {
 				return;
@@ -85,19 +91,32 @@ impl Runtime {
 			f.committed = f.target.clone();
 			let target0 = f.target.clone();
 			let apply = f.apply.clone();
-			(apply, self.ctx_of(&reg, uid), target0)
+			let changed = f.changed.subscribe();
+			(apply, self.ctx_of(&reg, uid), target0, changed)
 		};
 		let result = execute(
 			apply(ctx).boxed(),
 			|| {
-				self
-					.reg
+				self.reg
 					.lock()
 					.fibers
 					.get(&uid)
 					.is_some_and(|f| f.target == target0)
 			},
 			|d| self.reg.lock().push_disposer(uid, d),
+			async {
+				while changed.changed().await.is_ok() {
+					if !self
+						.reg
+						.lock()
+						.fibers
+						.get(&uid)
+						.is_some_and(|f| f.target == target0)
+					{
+						break;
+					}
+				}
+			},
 		)
 		.await;
 		let mut reg = self.reg.lock();
@@ -131,8 +150,7 @@ impl Runtime {
 		futures::future::join_all(dependents.into_iter().map(|d| self.wait_released(d, uid))).await;
 		let disposers = {
 			let mut reg = self.reg.lock();
-			reg
-				.fibers
+			reg.fibers
 				.get_mut(&uid)
 				.map(|f| std::mem::take(&mut f.disposers))
 				.unwrap_or_default()
@@ -183,11 +201,10 @@ impl Runtime {
 	}
 
 	async fn wait_released(&self, dependent: Uid, provider: Uid) {
-		self
-			.wait_until(dependent, |f| {
-				!f.committed.iter().flatten().any(|(_, _, p)| *p == provider)
-			})
-			.await;
+		self.wait_until(dependent, |f| {
+			!f.committed.iter().flatten().any(|(_, _, p)| *p == provider)
+		})
+		.await;
 	}
 
 	async fn wait_settled(&self, uid: Uid) {
@@ -216,8 +233,7 @@ impl FiberHandle {
 	}
 
 	pub fn error(&self) -> Option<String> {
-		self
-			.rt
+		self.rt
 			.reg
 			.lock()
 			.fibers
@@ -242,7 +258,10 @@ impl FiberHandle {
 impl Runtime {
 	/// A handle onto a node of the tree that no profile slot owns.
 	pub(crate) fn handle(self: &Arc<Self>, uid: Uid) -> FiberHandle {
-		FiberHandle { rt: self.clone(), uid }
+		FiberHandle {
+			rt: self.clone(),
+			uid,
+		}
 	}
 
 	/// The context a replacement is composed under: the old generation's
@@ -338,8 +357,7 @@ impl Runtime {
 					.downcast_ref::<crate::service::Service>()
 					.unwrap()
 					.switch(
-						next
-							.downcast_ref::<crate::service::Service>()
+						next.downcast_ref::<crate::service::Service>()
 							.unwrap()
 							.value(),
 					),

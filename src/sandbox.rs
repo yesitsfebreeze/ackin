@@ -120,7 +120,7 @@ fn interpreters(binary: &Path) -> Vec<PathBuf> {
 		return Vec::new();
 	};
 	let mut all = vec![first.clone()];
-	if first == PathBuf::from("/bin/sh") {
+	if first == Path::new("/bin/sh") {
 		for variant in ["/bin/bash", "/bin/zsh"] {
 			let variant = PathBuf::from(variant);
 			if variant.is_file() {
@@ -133,7 +133,7 @@ fn interpreters(binary: &Path) -> Vec<PathBuf> {
 
 /// The executable basename or path a grant names, resolved the way the host
 /// resolves a cartridge's own binary: the cartridge's `bin/`, then beside the
-/// running zirkle, then PATH. Unresolvable entries build no line — the OS
+/// running cartridge, then PATH. Unresolvable entries build no line — the OS
 /// denies what was never allowed.
 fn granted_exec(program: &str, root: &Path) -> Option<PathBuf> {
 	let path = Path::new(program);
@@ -156,14 +156,23 @@ fn granted_exec(program: &str, root: &Path) -> Option<PathBuf> {
 			}))
 			.collect()
 	};
-	candidates.into_iter().find(|p| p.is_file()).and_then(|p| p.canonicalize().ok())
+	candidates
+		.into_iter()
+		.find(|p| p.is_file())
+		.and_then(|p| p.canonicalize().ok())
 }
 
 /// One `literal` clause, escaped the way the profile language needs it: a
 /// path is data here, and a quote or backslash inside a declared name must
 /// not end the string the profile reads.
 fn literal(path: &Path) -> String {
-	format!("\"{}\"", path.display().to_string().replace('\\', "\\\\").replace('"', "\\\""))
+	format!(
+		"\"{}\"",
+		path.display()
+			.to_string()
+			.replace('\\', "\\\\")
+			.replace('"', "\\\"")
+	)
 }
 
 /// The profile text for one cartridge: what it declared, plus the plumbing a
@@ -173,7 +182,9 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path) -> String {
 	let mut profile = String::from("(version 1)\n(deny default)\n");
 	// Paths the OS resolves through symlinks must be named canonically: a
 	// grant written through `/tmp` would never match the file it names.
-	let binary = binary.canonicalize().unwrap_or_else(|_| binary.to_path_buf());
+	let binary = binary
+		.canonicalize()
+		.unwrap_or_else(|_| binary.to_path_buf());
 	let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 	// Exec: the child's own entry, its interpreter when it is a script, and
 	// what the grant named. Nothing else is executable.
@@ -187,14 +198,22 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path) -> String {
 	exec.sort();
 	exec.dedup();
 	if !exec.is_empty() {
-		let lines: Vec<String> = exec.iter().map(|p| format!("(literal {})", literal(p))).collect();
+		let lines: Vec<String> = exec
+			.iter()
+			.map(|p| format!("(literal {})", literal(p)))
+			.collect();
 		profile.push_str(&format!("(allow process-exec {})\n", lines.join(" ")));
 	}
 	// Read: the runtime a child needs to exist, the cartridge folder it was
 	// declared in, and the paths it asked to read — a write is also a read.
 	// The root itself is a literal, not a subpath: dyld reads the root
 	// directory on the way up, and a subpath of `/` would be everything.
-	let mut read = vec![PathBuf::from("/usr/lib"), PathBuf::from("/System/Library"), PathBuf::from("/dev"), PathBuf::from("/etc")];
+	let mut read = vec![
+		PathBuf::from("/usr/lib"),
+		PathBuf::from("/System/Library"),
+		PathBuf::from("/dev"),
+		PathBuf::from("/etc"),
+	];
 	read.push(root.to_path_buf());
 	read.push(binary.to_path_buf());
 	for path in grant.read.iter().chain(grant.write.iter()) {
@@ -246,10 +265,7 @@ pub fn command(
 		// file has to outlive the spawn. `ps` shows the policy; that is a
 		// property of `sandbox-exec`, not a leak of what the cartridge declared.
 		let mut command = std::process::Command::new(SBIN);
-		command
-			.arg("-p")
-			.arg(&text)
-			.args(cmd);
+		command.arg("-p").arg(&text).args(cmd);
 		Ok(command)
 	}
 	#[cfg(target_os = "linux")]
@@ -268,11 +284,7 @@ pub fn command(
 }
 
 /// Spawn a confined child with the stdio wire and ownership used by the host.
-pub fn spawn(
-	cmd: &[String],
-	grant: &Grant,
-	root: &Path,
-) -> std::io::Result<tokio::process::Child> {
+pub fn spawn(cmd: &[String], grant: &Grant, root: &Path) -> std::io::Result<tokio::process::Child> {
 	let mut command = tokio::process::Command::from(command(cmd, grant, root)?);
 	command
 		.stdin(std::process::Stdio::piped())
@@ -301,10 +313,14 @@ mod tests {
 		let root = directory.join("cartridge");
 		std::fs::create_dir(&root).unwrap();
 		let script = root.join("child.sh");
-		std::fs::write(&script, format!(
+		std::fs::write(
+			&script,
+			format!(
 			"#!/bin/sh\nif echo escaped > '{}/outside'; then echo allowed; else echo denied; fi\n",
 			directory.display(),
-		)).unwrap();
+		),
+		)
+		.unwrap();
 		std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 		let cmd = vec![script.display().to_string()];
 		(temporary, root, cmd)
@@ -314,7 +330,10 @@ mod tests {
 	#[test]
 	fn the_synchronous_command_enforces_the_empty_grant() {
 		let (fixture, root, cmd) = wall_fixture();
-		let output = command(&cmd, &Grant::default(), &root).unwrap().output().unwrap();
+		let output = command(&cmd, &Grant::default(), &root)
+			.unwrap()
+			.output()
+			.unwrap();
 		assert!(output.status.success(), "{:?}", output);
 		assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "denied");
 		assert!(!fixture.path().join("outside").exists());
@@ -324,14 +343,18 @@ mod tests {
 	#[tokio::test]
 	async fn the_asynchronous_spawn_enforces_the_same_empty_grant() {
 		let (fixture, root, cmd) = wall_fixture();
-		let output = spawn(&cmd, &Grant::default(), &root).unwrap().wait_with_output().await.unwrap();
+		let output = spawn(&cmd, &Grant::default(), &root)
+			.unwrap()
+			.wait_with_output()
+			.await
+			.unwrap();
 		assert!(output.status.success(), "{:?}", output);
 		assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "denied");
 		assert!(!fixture.path().join("outside").exists());
 	}
 
 	fn root() -> PathBuf {
-		std::env::temp_dir().join("zirkle-sandbox-tests")
+		std::env::temp_dir().join("cartridge-sandbox-tests")
 	}
 
 	#[test]
@@ -340,7 +363,10 @@ mod tests {
 		assert!(text.contains("(deny default)"), "{text}");
 		assert!(!text.contains("file-write*"), "{text}");
 		assert!(!text.contains("network"), "{text}");
-		assert!(text.contains("(allow process-exec (literal \"/bin/tool\"))"), "{text}");
+		assert!(
+			text.contains("(allow process-exec (literal \"/bin/tool\"))"),
+			"{text}"
+		);
 		assert!(text.contains("(allow file-read*"), "{text}");
 	}
 
@@ -396,6 +422,12 @@ mod tests {
 		std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
 		let text = profile(&Grant::default(), dir.path(), &script);
 		assert!(text.contains("(literal \"/bin/sh\")"), "{text}");
-		assert!(text.contains(&format!("(literal \"{}\")", script.canonicalize().unwrap().display())), "{text}");
+		assert!(
+			text.contains(&format!(
+				"(literal \"{}\")",
+				script.canonicalize().unwrap().display()
+			)),
+			"{text}"
+		);
 	}
 }

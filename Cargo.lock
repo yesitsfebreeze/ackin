@@ -81,6 +81,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "cartridge"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "futures",
+ "mlua",
+ "notify",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "cc"
 version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -855,22 +871,6 @@ name = "xxhash-rust"
 version = "0.8.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aee1b19627c7c60102ab80d3a9cbe18de90bfe03bfa6c3715447681f0e8c8af6"
-
-[[package]]
-name = "zirkle"
-version = "0.1.0"
-dependencies = [
- "clap",
- "futures",
- "mlua",
- "notify",
- "parking_lot",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
-]
 
 [[package]]
 name = "zmij"

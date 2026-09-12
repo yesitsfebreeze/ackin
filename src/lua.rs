@@ -41,7 +41,11 @@ pub struct Host {
 
 impl Host {
 	/// A host with automatic execution off.
-	pub fn new(rt: Arc<Runtime>, dir: impl Into<PathBuf>, profile: impl Into<PathBuf>) -> Arc<Self> {
+	pub fn new(
+		rt: Arc<Runtime>,
+		dir: impl Into<PathBuf>,
+		profile: impl Into<PathBuf>,
+	) -> Arc<Self> {
 		Self::with_yolo(rt, dir, profile, false)
 	}
 
@@ -57,42 +61,42 @@ impl Host {
 		let dir: PathBuf = dir.into();
 		let profile: PathBuf = profile.into();
 		let lua = Lua::new();
-		let zirkle = lua.create_table().expect("zirkle table");
-		zirkle
+		let cartridge = lua.create_table().expect("cartridge table");
+		cartridge
 			.set(
 				"process",
-				lua
-					.create_function(|lua, (command, options): (mlua::Value, Option<Table>)| {
-						let command = match command {
-							mlua::Value::String(s) => crate::cartridge::split(s.to_str()?.as_ref()),
+				lua.create_function(|lua, (command, options): (mlua::Value, Option<Table>)| {
+					let command = match command {
+						mlua::Value::String(s) => crate::cartridge::split(s.to_str()?.as_ref()),
+						value => lua.from_value::<Vec<String>>(value)?,
+					};
+					if command.is_empty() || command[0].is_empty() {
+						return Err(mlua::Error::RuntimeError(
+							"cartridge.process needs a nonempty command".into(),
+						));
+					}
+					let inject = match options {
+						Some(options) => match options.get::<mlua::Value>("inject")? {
+							mlua::Value::Nil => Vec::new(),
 							value => lua.from_value::<Vec<String>>(value)?,
-						};
-						if command.is_empty() || command[0].is_empty() {
-							return Err(mlua::Error::RuntimeError(
-								"zirkle.process needs a nonempty command".into(),
-							));
-						}
-						let inject = match options {
-							Some(options) => match options.get::<mlua::Value>("inject")? {
-								mlua::Value::Nil => Vec::new(),
-								value => lua.from_value::<Vec<String>>(value)?,
-							},
-							None => Vec::new(),
-						};
-						Ok(Process { command, inject })
-					})
-					.expect("process helper"),
+						},
+						None => Vec::new(),
+					};
+					Ok(Process { command, inject })
+				})
+				.expect("process helper"),
 			)
-			.expect("zirkle.process");
-		zirkle
+			.expect("cartridge.process");
+		cartridge
 			.set(
 				"turn",
-				lua
-					.create_function(|_, ()| Ok(crate::turn::current().map(|id| id.to_string())))
+				lua.create_function(|_, ()| Ok(crate::turn::current().map(|id| id.to_string())))
 					.expect("turn helper"),
 			)
-			.expect("zirkle.turn");
-		lua.globals().set("zirkle", zirkle).expect("zirkle global");
+			.expect("cartridge.turn");
+		lua.globals()
+			.set("cartridge", cartridge)
+			.expect("cartridge global");
 		Arc::new(Self {
 			yolo,
 			lua,
@@ -110,8 +114,7 @@ impl Host {
 
 	/// Where debug mode writes, beside the profile that composed this host.
 	pub fn debug_log(&self) -> PathBuf {
-		self
-			.profile
+		self.profile
 			.parent()
 			.unwrap_or(&self.profile)
 			.join("logs/debug.log")
@@ -119,7 +122,7 @@ impl Host {
 
 	/// Debug mode is one diagnostic setting: while it is on, every message the
 	/// host puts on its socket is also appended to [`Host::debug_log`], so a
-	/// shell can read the evidence after the fact instead of holding `zirkle tail`
+	/// shell can read the evidence after the fact instead of holding `cartridge tail`
 	/// open. `on` selects; `None` only reports. Leaving drops the tap, which is
 	/// the whole setting, so the host is back to normal.
 	pub fn debug(self: &Arc<Self>, on: Option<bool>) -> serde_json::Value {
@@ -237,8 +240,7 @@ impl Host {
 		path: &Path,
 		config: serde_json::Value,
 	) -> Result<Component, mlua::Error> {
-		self
-			.load_component(path, config, &[])
+		self.load_component(path, config, &[])
 			.map(|(component, _)| component)
 	}
 
@@ -265,7 +267,9 @@ impl Host {
 			}
 			config
 				.as_object_mut()
-				.ok_or_else(|| mlua::Error::RuntimeError("yolo requires object cartridge config".into()))?
+				.ok_or_else(|| {
+					mlua::Error::RuntimeError("yolo requires object cartridge config".into())
+				})?
 				.insert("yolo".into(), true.into());
 		}
 		let source = std::fs::read_to_string(&path).map_err(mlua::Error::external)?;
@@ -295,7 +299,8 @@ impl Host {
 			mlua::Value::Table(module) => module,
 			_ => {
 				return Err(mlua::Error::RuntimeError(
-					"cartridge must return a component table or zirkle.process descriptor".into(),
+					"cartridge must return a component table or cartridge.process descriptor"
+						.into(),
 				))
 			}
 		};
@@ -317,7 +322,10 @@ impl Host {
 				let thread = match host.lua.create_thread(apply.clone()) {
 					Ok(t) => t,
 					Err(e) => {
-						return futures::stream::once(async move { Err(Error::Apply(e.to_string())) }).boxed()
+						return futures::stream::once(
+							async move { Err(Error::Apply(e.to_string())) },
+						)
+						.boxed()
 					}
 				};
 				let host = host.clone();
@@ -374,17 +382,17 @@ impl Host {
 					.lua
 					.create_function(move |_, args: mlua::Value| {
 						let service = value.downcast_ref::<crate::service::Service>().unwrap();
-						let guard = service
-							.reload
-							.gate()
-							.try_read_owned()
-							.map_err(|_| mlua::Error::RuntimeError("service is being replaced".into()))?;
+						let guard = service.reload.gate().try_read_owned().map_err(|_| {
+							mlua::Error::RuntimeError("service is being replaced".into())
+						})?;
 						let current = service.value();
 						let result = if let Some(remote) = current.downcast_ref::<Remote>() {
 							block_on(remote.call(lua.from_value(args)?))
 								.map_err(mlua::Error::RuntimeError)
 								.and_then(|out| lua.to_value(&out))
-						} else if let Some(mlua::Value::Function(f)) = current.downcast_ref::<mlua::Value>() {
+						} else if let Some(mlua::Value::Function(f)) =
+							current.downcast_ref::<mlua::Value>()
+						{
 							f.call(args)
 						} else {
 							Err(mlua::Error::RuntimeError(

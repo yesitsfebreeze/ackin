@@ -22,7 +22,7 @@ async fn fixture(language: &str) -> (tempfile::TempDir, std::sync::Arc<crate::lu
 		dir.path(),
 		"peer.lua",
 		&format!(
-			"return zirkle.process({{{}}})",
+			"return cartridge.process({{{}}})",
 			command
 				.iter()
 				.map(|s| json!(s).to_string())
@@ -47,8 +47,7 @@ async fn fixture(language: &str) -> (tempfile::TempDir, std::sync::Arc<crate::lu
 		host.fiber_of("peer").unwrap().state(),
 		Some(crate::runtime::State::Active),
 		"{language}: {}",
-		host
-			.manifest()
+		host.manifest()
 			.unwrap()
 			.iter()
 			.map(|entry| entry.entry.id.as_str())
@@ -107,7 +106,6 @@ async fn rust_sdk_and_lua_share_json_and_bidirectional_contracts() {
 	roundtrips("rust").await;
 }
 
-
 async fn replacement(language: &str) {
 	let (dir, host) = fixture(language).await;
 	write(dir.path(), "config.lua", r#"return {peer={generation=1}}"#);
@@ -143,7 +141,6 @@ async fn rust_sdk_failed_apply_retains_generation_then_reload_and_dispose_work()
 	replacement("rust").await;
 }
 
-
 async fn eof(language: &str) {
 	let (_dir, host) = fixture(language).await;
 	let mut events = host.outbox();
@@ -163,4 +160,3 @@ async fn eof(language: &str) {
 async fn rust_sdk_eof_rejects_another_inflight_call() {
 	eof("rust").await;
 }
-

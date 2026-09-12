@@ -187,20 +187,27 @@ async fn a_repeat_subscribe_spawns_no_second_pump() {
 	let (host, _) = boot(dir.path()).await;
 	let (server, path) = serve(host.clone());
 	let mut client = connect_retry(&path).await;
-	client.send(json!({ "subscribe": "build", "since": 0 })).await.unwrap();
-	client.send(json!({ "subscribe": "build", "since": 0 })).await.unwrap();
+	client
+		.send(json!({ "subscribe": "build", "since": 0 }))
+		.await
+		.unwrap();
+	client
+		.send(json!({ "subscribe": "build", "since": 0 }))
+		.await
+		.unwrap();
 	let join = next_envelope(&mut client, "build").await;
 	assert_eq!(join["kind"], json!("subscribe"));
 	// The second ask appended nothing: one join, one pump.
 	assert_eq!(host.runtime().stream().replay("build", 0).len(), 1);
-	client.send(json!({ "publish": "build", "data": { "n": 1 } })).await.unwrap();
+	client
+		.send(json!({ "publish": "build", "data": { "n": 1 } }))
+		.await
+		.unwrap();
 	let event = next_envelope(&mut client, "build").await;
 	assert_eq!(event["kind"], json!("data"));
 	// One copy, not two: nothing further arrives for the same publish.
 	let mut extra = 0;
-	while let Ok(Some(m)) =
-		tokio::time::timeout(Duration::from_millis(100), client.next()).await
-	{
+	while let Ok(Some(m)) = tokio::time::timeout(Duration::from_millis(100), client.next()).await {
 		if m["channel"] == "build" && m["event"]["kind"] == json!("data") {
 			extra += 1;
 		}
@@ -220,7 +227,11 @@ async fn a_failing_listener_publishes_an_error_event_on_its_channel() {
 		"failing.lua",
 		r#"return { apply = function(ctx) ctx:on("boom", function() error("nope") end) end }"#,
 	);
-	write(dir.path(), "init.lua", r#"return { { id = "failing", path = "failing.lua" } }"#);
+	write(
+		dir.path(),
+		"init.lua",
+		r#"return { { id = "failing", path = "failing.lua" } }"#,
+	);
 	let (host, _) = boot(dir.path()).await;
 	// `reconcile` spawns the cartridge fiber and returns without awaiting
 	// `apply`; wait for the listener's `ctx:on` to be registered before the
@@ -228,8 +239,14 @@ async fn a_failing_listener_publishes_an_error_event_on_its_channel() {
 	host.fiber_of("failing").unwrap().settled().await;
 	let (server, path) = serve(host.clone());
 	let mut client = connect_retry(&path).await;
-	client.send(json!({ "subscribe": "failing", "since": 0 })).await.unwrap();
-	client.send(json!({ "emit": "boom", "data": null })).await.unwrap();
+	client
+		.send(json!({ "subscribe": "failing", "since": 0 }))
+		.await
+		.unwrap();
+	client
+		.send(json!({ "emit": "boom", "data": null }))
+		.await
+		.unwrap();
 	// The join comes first, then the failure as an event on the same channel.
 	let join = next_envelope(&mut client, "failing").await;
 	assert_eq!(join["kind"], json!("subscribe"));
@@ -253,7 +270,11 @@ async fn a_lua_cartridge_publishes_and_a_late_watcher_replays_the_log() {
 			ctx:on("build", function(d) ctx:publish("build", { step = d }) end)
 		end }"#,
 	);
-	write(dir.path(), "init.lua", r#"return { { id = "builder", path = "builder.lua" } }"#);
+	write(
+		dir.path(),
+		"init.lua",
+		r#"return { { id = "builder", path = "builder.lua" } }"#,
+	);
 	let (host, _) = boot(dir.path()).await;
 	// `reconcile` spawns the cartridge fiber and returns without awaiting
 	// `apply`; wait for the listener's `ctx:on` to be registered before the
@@ -261,8 +282,12 @@ async fn a_lua_cartridge_publishes_and_a_late_watcher_replays_the_log() {
 	host.fiber_of("builder").unwrap().settled().await;
 	let (_server, path) = serve(host.clone());
 	let mut late = connect_retry(&path).await;
-	late.send(json!({ "subscribe": "build", "since": 0 })).await.unwrap();
-	late.send(json!({ "emit": "build", "data": 1 })).await.unwrap();
+	late.send(json!({ "subscribe": "build", "since": 0 }))
+		.await
+		.unwrap();
+	late.send(json!({ "emit": "build", "data": 1 }))
+		.await
+		.unwrap();
 	// The subscriber's own join arrives first, then the published event.
 	let join = next_envelope(&mut late, "build").await;
 	assert_eq!(join["kind"], json!("subscribe"));
@@ -287,15 +312,25 @@ async fn a_lua_cartridge_watches_a_channel_a_socket_client_publishes_to() {
 			ctx:subscribe("build", function(envelope) ctx:send("observed", envelope) end)
 		end }"#,
 	);
-	write(dir.path(), "init.lua", r#"return { { id = "watcher", path = "watcher.lua" } }"#);
+	write(
+		dir.path(),
+		"init.lua",
+		r#"return { { id = "watcher", path = "watcher.lua" } }"#,
+	);
 	let (host, mut rx) = boot(dir.path()).await;
 	let (server, path) = serve(host.clone());
 	let mut client = connect_retry(&path).await;
 	// The watcher's join echo is the proof its subscription is live before the
 	// publishes are sent, so no publish can land before it.
 	super::next_event(&mut rx, "observed").await;
-	client.send(json!({ "publish": "build", "data": {"n": 7} })).await.unwrap();
-	client.send(json!({ "publish": "build", "data": {"n": 8} })).await.unwrap();
+	client
+		.send(json!({ "publish": "build", "data": {"n": 7} }))
+		.await
+		.unwrap();
+	client
+		.send(json!({ "publish": "build", "data": {"n": 8} }))
+		.await
+		.unwrap();
 	// The watcher echoes both, in arrival order, after its own join.
 	let second = super::next_event(&mut rx, "observed").await;
 	assert_eq!(second["kind"], json!("data"));
@@ -324,7 +359,7 @@ async fn a_process_cartridge_publishes_and_watches_over_the_wire() {
 		dir.path(),
 		"child.lua",
 		&format!(
-			"return zirkle.process({})",
+			"return cartridge.process({})",
 			json!(super::process::sdk_fixture())
 		),
 	);
@@ -338,7 +373,10 @@ async fn a_process_cartridge_publishes_and_watches_over_the_wire() {
 	let (server, path) = serve(host.clone());
 	let mut client = connect_retry(&path).await;
 	// The watcher joined first; a late socket subscriber replays from the start.
-	client.send(json!({ "subscribe": "build", "since": 0 })).await.unwrap();
+	client
+		.send(json!({ "subscribe": "build", "since": 0 }))
+		.await
+		.unwrap();
 	let child_join = next_envelope(&mut client, "build").await;
 	assert_eq!(child_join["kind"], json!("subscribe"));
 	assert_eq!(child_join["from"], json!("child"));
@@ -356,7 +394,10 @@ async fn a_process_cartridge_publishes_and_watches_over_the_wire() {
 			.unwrap();
 	}
 	// The socket client publishes as itself; the cartridge watcher echoes it.
-	client.send(json!({ "publish": "build", "data": { "n": "socket" } })).await.unwrap();
+	client
+		.send(json!({ "publish": "build", "data": { "n": "socket" } }))
+		.await
+		.unwrap();
 
 	// The watcher echoed the three publishes in sequence order (its own join
 	// went to the outbox before this client connected, so it is not here). The
@@ -388,7 +429,10 @@ async fn a_process_cartridge_publishes_and_watches_over_the_wire() {
 	assert!(echo_seqs.contains(&socket_event["seq"].as_u64().unwrap()));
 
 	// Unsubscribing is an event on the channel, and the watcher echoes it.
-	client.send(json!({ "unsubscribe": "build" })).await.unwrap();
+	client
+		.send(json!({ "unsubscribe": "build" }))
+		.await
+		.unwrap();
 	let leave = loop {
 		let echo = next_outbox(&mut client, "watched").await;
 		if echo["kind"] == "unsubscribe" {
@@ -400,7 +444,9 @@ async fn a_process_cartridge_publishes_and_watches_over_the_wire() {
 	// A late subscriber replays the log and finds every join, event and leave —
 	// the replay first, then its own join on the live feed.
 	let mut late = connect_retry(&path).await;
-	late.send(json!({ "subscribe": "build", "since": 0 })).await.unwrap();
+	late.send(json!({ "subscribe": "build", "since": 0 }))
+		.await
+		.unwrap();
 	let mut kinds = Vec::new();
 	loop {
 		let envelope = next_envelope(&mut late, "build").await;
@@ -414,7 +460,12 @@ async fn a_process_cartridge_publishes_and_watches_over_the_wire() {
 	assert_eq!(
 		kinds,
 		vec![
-			"subscribe", "subscribe", "data", "data", "data", "unsubscribe"
+			"subscribe",
+			"subscribe",
+			"data",
+			"data",
+			"data",
+			"unsubscribe"
 		]
 	);
 	server.abort();

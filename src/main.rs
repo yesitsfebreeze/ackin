@@ -1,23 +1,23 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use cartridge::loader::{self, CartridgeInfo};
+use cartridge::lua::Host;
+use cartridge::runtime::Runtime;
+use cartridge::socket::{self, Client};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
-use zirkle::loader::{self, CartridgeInfo};
-use zirkle::lua::Host;
-use zirkle::runtime::Runtime;
-use zirkle::socket::{self, Client};
 
 #[derive(Parser)]
 #[command(
-	name = "zirkle",
+	name = "cartridge",
 	about = "cartridges on a socket: run in the back, handle the events"
 )]
 struct Cli {
 	/// Directory containing bundled cartridges (each with cartridge.json)
 	#[arg(long, global = true)]
 	dir: Option<PathBuf>,
-	/// Profile name under `.zirkle/`, or an absolute profile directory
+	/// Profile name under `.cartridge/`, or an absolute profile directory
 	/// (default `default`; `proxy` for launch)
 	#[arg(long, global = true)]
 	profile: Option<String>,
@@ -31,7 +31,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
 	Daemon,
-	/// Start the harness proxy and run an agent against it: `zirkle launch claude -- -p hi`
+	/// Start the harness proxy and run an agent against it: `cartridge launch claude -- -p hi`
 	Launch {
 		agent: String,
 		#[arg(long, default_value = "auto:code")]
@@ -40,7 +40,7 @@ enum Command {
 		args: Vec<String>,
 	},
 	/// Serve the profile's tools to an MCP client over this terminal's stdio:
-	/// `claude mcp add zirkle -- zirkle mcp`
+	/// `claude mcp add cartridge -- cartridge mcp`
 	Mcp,
 	/// Load a profile, call one service in the foreground, and dispose it
 	Run {
@@ -60,7 +60,9 @@ enum Command {
 		data: String,
 	},
 	/// Subscribe to a stream channel and print every event on it as it arrives
-	Follow { channel: String },
+	Follow {
+		channel: String,
+	},
 	Tail,
 	/// Call a provided key with one JSON argument and print the reply
 	Call {
@@ -73,7 +75,7 @@ enum Command {
 	},
 	Reload,
 	Status,
-	/// Enter, leave or report debug mode on the running host: `zirkle debug on`
+	/// Enter, leave or report debug mode on the running host: `cartridge debug on`
 	Debug {
 		#[arg(default_value = "status", value_parser = ["on", "off", "status"])]
 		state: String,
@@ -167,7 +169,7 @@ fn exe() -> PathBuf {
 
 /// What a chain node runs. A document that declares a `binary` names its own
 /// program, resolved the way every process component resolves its command —
-/// the cartridge's own `bin/`, then beside the running zirkle, then `PATH`.
+/// the cartridge's own `bin/`, then beside the running cartridge, then `PATH`.
 /// A document that declares none is **hosted**: the binary itself is the
 /// program, and the node mode runs the cartridge's Lua component in-host.
 enum Route {
@@ -180,20 +182,18 @@ enum Route {
 /// program. A document that would not read, and a `binary` that does not
 /// exist, refuse naming the node; the ask checks every node before the first
 /// one spawns.
-fn node_route(
-	node: &zirkle::ledger::Installed,
-) -> Result<Route, String> {
-	let manifest = node.dir.join(zirkle::loader::MANIFEST);
-	let document = zirkle::loader::Cartridge::document(&manifest)
+fn node_route(node: &cartridge::ledger::Installed) -> Result<Route, String> {
+	let manifest = node.dir.join(cartridge::loader::MANIFEST);
+	let document = cartridge::loader::Cartridge::document(&manifest)
 		.map_err(|e| format!("`{}`: {e}", node.path))?;
 	match document.binary {
-		Some(binary) => zirkle::cartridge::executable(&binary, &node.dir)
+		Some(binary) => cartridge::cartridge::executable(&binary, &node.dir)
 			.map(Route::Program)
 			.map_err(|e| format!("`{}`: {e}", node.path)),
 		// The cartridge has no program of its own, so the host is it: the
 		// entry is resolved now, not evaluated — a missing Lua file is a
 		// refusal of the ask, an entry that fails to apply is the node's.
-		None => zirkle::loader::Cartridge::read(&manifest)
+		None => cartridge::loader::Cartridge::read(&manifest)
 			.map(|_| Route::Hosted)
 			.map_err(|e| format!("`{}`: {e}", node.path)),
 	}
@@ -208,22 +208,21 @@ fn node_route(
 /// when the dependency that launched it goes away, and EOF is the second
 /// half of that cascade.
 ///
-/// The pid it writes under `ZIRKLE_NODES` is the probe's observation handle,
+/// The pid it writes under `CARTRIDGE_NODES` is the probe's observation handle,
 /// not part of the mechanism: a test reads it to name the process it is
 /// asserting about, exactly as the program fixture does.
 async fn hosted_node() {
 	use tokio::io::AsyncReadExt;
 
-	let node = std::env::var("ZIRKLE_NODE").unwrap_or_default();
-	let chain: Vec<String> = serde_json::from_str(
-		&std::env::var("ZIRKLE_CHAIN").unwrap_or_default(),
-	)
-	.unwrap_or_default();
-	let (zirkle, root) = match (
-		std::env::var("ZIRKLE_ZIRKLE"),
-		std::env::var("ZIRKLE_ROOT"),
+	let node = std::env::var("CARTRIDGE_NODE").unwrap_or_default();
+	let chain: Vec<String> =
+		serde_json::from_str(&std::env::var("CARTRIDGE_CHAIN").unwrap_or_default())
+			.unwrap_or_default();
+	let (cartridge, root) = match (
+		std::env::var("CARTRIDGE_CARTRIDGE"),
+		std::env::var("CARTRIDGE_ROOT"),
 	) {
-		(Ok(zirkle), Ok(root)) => (zirkle, root),
+		(Ok(cartridge), Ok(root)) => (cartridge, root),
 		_ => {
 			eprintln!("node mode is entered, not asked: the ledger's env protocol is missing");
 			std::process::exit(2);
@@ -231,7 +230,7 @@ async fn hosted_node() {
 	};
 	let root = PathBuf::from(root);
 
-	if let Some(nodes) = std::env::var_os("ZIRKLE_NODES") {
+	if let Some(nodes) = std::env::var_os("CARTRIDGE_NODES") {
 		let _ = std::fs::write(
 			Path::new(&nodes).join(node.replace('/', "_")),
 			std::process::id().to_string(),
@@ -252,12 +251,12 @@ async fn hosted_node() {
 	// provided key, and the frames cross the socket. An unbound need (the
 	// dependency link is down, the key was never the document's) keeps the
 	// store's own refusal.
-	let host = zirkle::lua::Host::new(zirkle::runtime::Runtime::new(), &root, &root);
-	let needs = zirkle::ledger::Ledger::scan(&root)
+	let host = cartridge::lua::Host::new(cartridge::runtime::Runtime::new(), &root, &root);
+	let needs = cartridge::ledger::Ledger::scan(&root)
 		.get(&node)
 		.map(|e| e.needs.clone())
 		.unwrap_or_default();
-	let dep = std::env::var("ZIRKLE_DEP").unwrap_or_default();
+	let dep = std::env::var("CARTRIDGE_DEP").unwrap_or_default();
 	let dep = dep.trim();
 	if !dep.is_empty() {
 		if let Err(e) = bind_dependency(&host, &root, dep, &needs).await {
@@ -280,11 +279,11 @@ async fn hosted_node() {
 	// tool reaches the top of the tree. The socket is up before the
 	// re-entry, so a dependent that binds at startup never finds the door
 	// closed.
-	let serve_path = zirkle::socket::node_path(&root, &node);
+	let serve_path = cartridge::socket::node_path(&root, &node);
 	tokio::spawn({
 		let host = host.clone();
 		async move {
-			if let Err(e) = zirkle::socket::serve(host, &serve_path).await {
+			if let Err(e) = cartridge::socket::serve(host, &serve_path).await {
 				eprintln!("node socket: {e}");
 			}
 		}
@@ -296,17 +295,24 @@ async fn hosted_node() {
 	// The pipe stays the kill channel and carries no frames; the calls cross
 	// the sockets, so the cascade needs nothing from the wire and the wire
 	// needs nothing from the pipe. This node names itself in the
-	// dependency's seat: the dependent reads `ZIRKLE_DEP` and derives the
+	// dependency's seat: the dependent reads `CARTRIDGE_DEP` and derives the
 	// socket to call its needs over.
 	let mut dependent: Option<tokio::process::Child> = None;
 	if let Some(next) = chain.first() {
 		let rest = serde_json::to_string(&chain[1..]).expect("node paths serialize");
-		let mut reentry = tokio::process::Command::new(&zirkle);
+		let mut reentry = tokio::process::Command::new(&cartridge);
 		reentry
-			.args(["enter", next, "--rest", &rest, "--dir", root.to_string_lossy().as_ref()])
-			.env("ZIRKLE_ZIRKLE", &zirkle)
-			.env("ZIRKLE_ROOT", &root)
-			.env("ZIRKLE_DEP", &node)
+			.args([
+				"enter",
+				next,
+				"--rest",
+				&rest,
+				"--dir",
+				root.to_string_lossy().as_ref(),
+			])
+			.env("CARTRIDGE_CARTRIDGE", &cartridge)
+			.env("CARTRIDGE_ROOT", &root)
+			.env("CARTRIDGE_DEP", &node)
 			.stdin(Stdio::piped())
 			.kill_on_drop(true);
 		dependent = Some(reentry.spawn().expect("re-enter the resolver"));
@@ -316,7 +322,7 @@ async fn hosted_node() {
 	// exit. The far end of the chain is different: nothing launched it that
 	// owns it, so it has no pipe to watch and dies only when it is killed.
 	// The held child goes with this node: the drop is what kills it.
-	if std::env::var_os("ZIRKLE_BOTTOM").is_none() {
+	if std::env::var_os("CARTRIDGE_BOTTOM").is_none() {
 		let mut stdin = tokio::io::stdin();
 		let mut buffer = [0u8; 64];
 		while stdin.read(&mut buffer).await.unwrap_or(0) > 0 {}
@@ -339,7 +345,7 @@ async fn bind_dependency(
 	needs: &[String],
 ) -> Result<(), String> {
 	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-	let path = zirkle::socket::node_path(root, dep);
+	let path = cartridge::socket::node_path(root, dep);
 	let mut stream = None;
 	for _ in 0..40 {
 		match tokio::net::UnixStream::connect(&path).await {
@@ -350,11 +356,15 @@ async fn bind_dependency(
 			Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
 		}
 	}
-	let stream = stream
-		.ok_or_else(|| format!("the dependency `{dep}` serves no socket at {}", path.display()))?;
+	let stream = stream.ok_or_else(|| {
+		format!(
+			"the dependency `{dep}` serves no socket at {}",
+			path.display()
+		)
+	})?;
 	let (read, mut write) = stream.into_split();
 	let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Option<serde_json::Value>>();
-	let link = zirkle::cartridge::Link::new(tx, "the dependency is gone");
+	let link = cartridge::cartridge::Link::new(tx, "the dependency is gone");
 	// Every line the dependency writes is a reply to a call this node made;
 	// the socket protocol and the wire's reply envelope are the same shape,
 	// so the link decodes both ends of the conversation itself.
@@ -384,7 +394,7 @@ async fn bind_dependency(
 	for key in needs {
 		host.bind_dependency(
 			key,
-			zirkle::cartridge::Remote::over(link.clone(), key.to_owned()),
+			cartridge::cartridge::Remote::over(link.clone(), key.to_owned()),
 		);
 	}
 	Ok(())
@@ -396,13 +406,13 @@ async fn bind_dependency(
 /// resolved it, and each node hands its remainder to its dependent.
 fn node_env(command: &mut std::process::Command, node: &str, rest: &[String], dir: &Path) {
 	command
-		.env("ZIRKLE_NODE", node)
+		.env("CARTRIDGE_NODE", node)
 		.env(
-			"ZIRKLE_CHAIN",
+			"CARTRIDGE_CHAIN",
 			serde_json::to_string(rest).expect("node paths serialize"),
 		)
-		.env("ZIRKLE_ZIRKLE", exe())
-		.env("ZIRKLE_ROOT", dir);
+		.env("CARTRIDGE_CARTRIDGE", exe())
+		.env("CARTRIDGE_ROOT", dir);
 }
 
 /// Start one node of the chain, detached. The invocation's job is to resolve
@@ -410,8 +420,8 @@ fn node_env(command: &mut std::process::Command, node: &str, rest: &[String], di
 /// while the tree keeps running, and the node's own death is what the rest
 /// of the tree watches for.
 fn launch_node(
-	node: &zirkle::ledger::Installed,
-	rest: &[&zirkle::ledger::Installed],
+	node: &cartridge::ledger::Installed,
+	rest: &[&cartridge::ledger::Installed],
 	dir: &Path,
 ) {
 	let paths: Vec<String> = rest.iter().map(|e| e.path.clone()).collect();
@@ -438,7 +448,7 @@ fn launch_node(
 	// is detached too — a node holding the asker's stdout would hold the
 	// ask open forever.
 	command
-		.env("ZIRKLE_BOTTOM", "1")
+		.env("CARTRIDGE_BOTTOM", "1")
 		.stdin(Stdio::null())
 		.stdout(Stdio::null())
 		.stderr(Stdio::null());
@@ -534,7 +544,9 @@ fn deps(all: &[CartridgeInfo], cartridge: &CartridgeInfo, depth: usize, stack: &
 			.find(|p| !p.entry.disabled && p.provide.iter().any(|k| k == key));
 		match provider {
 			None => println!("{pad}{key} <- ?"),
-			Some(p) if stack.contains(&p.entry.id) => println!("{pad}{key} <- {} (cycle)", p.entry.id),
+			Some(p) if stack.contains(&p.entry.id) => {
+				println!("{pad}{key} <- {} (cycle)", p.entry.id)
+			}
 			Some(p) => {
 				println!("{pad}{key} <- {}", p.entry.id);
 				stack.push(p.entry.id.clone());
@@ -580,7 +592,10 @@ fn list(cartridges: &[CartridgeInfo]) -> usize {
 		// At most one of the two is ever set: `unread` is the document's own
 		// failure and `error` is what evaluating the entry hit, and `manifest`
 		// does not report the first twice.
-		for note in [p.unread.as_deref(), p.error.as_deref()].into_iter().flatten() {
+		for note in [p.unread.as_deref(), p.error.as_deref()]
+			.into_iter()
+			.flatten()
+		{
 			line.push_str(&format!("  error: {note}"));
 		}
 		println!("{line}");
@@ -597,7 +612,7 @@ fn list(cartridges: &[CartridgeInfo]) -> usize {
 /// absent and never printed as a cartridge that declared nothing, and a need
 /// two entries of one scope offer is counted too, so a clash found at install
 /// time is a non-zero exit rather than odd behaviour later.
-fn ledger_lines(ledger: &zirkle::ledger::Ledger) -> usize {
+fn ledger_lines(ledger: &cartridge::ledger::Ledger) -> usize {
 	for e in ledger.entries() {
 		let mut line = e.path.clone();
 		if !e.name.is_empty() && e.name != e.path.rsplit('/').next().unwrap_or("") {
@@ -615,19 +630,20 @@ fn ledger_lines(ledger: &zirkle::ledger::Ledger) -> usize {
 		println!("{line}");
 		for key in &e.needs {
 			match ledger.resolve(&e.path, key) {
-				zirkle::ledger::Bound::One(p) => println!("  {key} <- {}", p.path),
-				zirkle::ledger::Bound::None => println!("  {key} <- ?"),
-				zirkle::ledger::Bound::Clashed(offered) => println!(
+				cartridge::ledger::Bound::One(p) => println!("  {key} <- {}", p.path),
+				cartridge::ledger::Bound::None => println!("  {key} <- ?"),
+				cartridge::ledger::Bound::Clashed(offered) => println!(
 					"  {key} <- ambiguous ({})",
-					offered.iter().map(|p| p.path.as_str()).collect::<Vec<_>>().join(", ")
+					offered
+						.iter()
+						.map(|p| p.path.as_str())
+						.collect::<Vec<_>>()
+						.join(", ")
 				),
 			}
 		}
 	}
-	ledger
-		.entries()
-		.filter(|e| e.unread.is_some())
-		.count()
+	ledger.entries().filter(|e| e.unread.is_some()).count()
 		+ ledger
 			.bindings()
 			.iter()
@@ -653,7 +669,7 @@ async fn main() {
 			// Foreground process cartridges receive terminal interrupts directly.
 			let signals = tokio::spawn(async { while tokio::signal::ctrl_c().await.is_ok() {} });
 			let host = Host::with_yolo(Runtime::new(), &dir, &profile, cli.yolo);
-			// The live host also answers on its socket, so `zirkle call`, `status`
+			// The live host also answers on its socket, so `cartridge call`, `status`
 			// and `tail` from the wrapped shell reach *this* process instead of
 			// loading a second copy of the profile. A second `run` on the same
 			// profile keeps working; only its socket is refused.
@@ -675,15 +691,15 @@ async fn main() {
 				Ok(value) if !value.is_null() => println!("{value}"),
 				Ok(_) => {}
 				Err(error) => {
-					zirkle::turn::diagnostic("zirkle", error, Value::Null);
+					cartridge::turn::diagnostic("cartridge", error, Value::Null);
 					std::process::exit(1);
 				}
 			}
 		}
 		Command::Launch { agent, model, args } => {
 			// The proxy listener needs a key; the launched agent gets the same one.
-			if std::env::var("ZIRKLE_PROXY_KEY").map_or(true, |k| k.is_empty()) {
-				std::env::set_var("ZIRKLE_PROXY_KEY", random_hex(32));
+			if std::env::var("CARTRIDGE_PROXY_KEY").map_or(true, |k| k.is_empty()) {
+				std::env::set_var("CARTRIDGE_PROXY_KEY", random_hex(32));
 			}
 			let signals = tokio::spawn(async { while tokio::signal::ctrl_c().await.is_ok() {} });
 			let host = Host::new(Runtime::new(), &dir, &profile);
@@ -693,7 +709,7 @@ async fn main() {
 			match result {
 				Ok(status) => std::process::exit(status.as_i64().unwrap_or(1) as i32),
 				Err(error) => {
-					zirkle::turn::diagnostic("zirkle", error, Value::Null);
+					cartridge::turn::diagnostic("cartridge", error, Value::Null);
 					std::process::exit(1);
 				}
 			}
@@ -714,19 +730,19 @@ async fn main() {
 		Command::Daemon => {
 			let host = Host::with_yolo(Runtime::new(), &dir, &profile, cli.yolo);
 			if let Err(e) = host.reconcile().await {
-				zirkle::turn::diagnostic("init.lua", e, Value::Null);
+				cartridge::turn::diagnostic("init.lua", e, Value::Null);
 			}
 			if let Err(e) = host.watch() {
-				zirkle::turn::diagnostic("watch", e, Value::Null);
+				cartridge::turn::diagnostic("watch", e, Value::Null);
 			}
 			let path = socket::path(&profile);
-			zirkle::turn::diagnostic(
-				"zirkle",
+			cartridge::turn::diagnostic(
+				"cartridge",
 				"serving",
 				json!({ "dir": dir.display().to_string(), "profile": profile.display().to_string(), "socket": path.display().to_string() }),
 			);
 			if let Err(e) = socket::serve(host, &path).await {
-				zirkle::turn::diagnostic("zirkle", e, Value::Null);
+				cartridge::turn::diagnostic("cartridge", e, Value::Null);
 				std::process::exit(1);
 			}
 		}
@@ -746,7 +762,10 @@ async fn main() {
 		}
 		Command::Follow { channel } => {
 			let mut client = connect(&profile).await;
-			client.send(json!({ "subscribe": channel })).await.expect("send");
+			client
+				.send(json!({ "subscribe": channel }))
+				.await
+				.expect("send");
 			while let Some(m) = client.next().await {
 				if m.get("channel").is_some() || m.get("error").is_some() {
 					println!("{m}");
@@ -760,7 +779,7 @@ async fn main() {
 			}
 		}
 		Command::Call { key, args, turn } => {
-			let turn = turn.unwrap_or_else(|| zirkle::turn::mint().to_string());
+			let turn = turn.unwrap_or_else(|| cartridge::turn::mint().to_string());
 			ask(
 				&profile,
 				json!({ "call": key, "args": json_arg(args), "id": 1, "turn": turn }),
@@ -793,18 +812,18 @@ async fn main() {
 			}
 		}
 		Command::Ledger => {
-			let ledger = zirkle::ledger::Ledger::scan(&dir);
+			let ledger = cartridge::ledger::Ledger::scan(&dir);
 			if ledger_lines(&ledger) > 0 {
 				std::process::exit(1);
 			}
 		}
 		Command::Up { key } => {
-			let ledger = zirkle::ledger::Ledger::scan(&dir);
+			let ledger = cartridge::ledger::Ledger::scan(&dir);
 			// One ask, one resolution: the walk runs to the far end here, and
 			// every link after it is a re-entry that re-reads the ledger. A
 			// refusal is a refusal of the launch: nothing spawns, and the exit
 			// says so.
-			match zirkle::resolver::chain(&ledger, "", &key) {
+			match cartridge::resolver::chain(&ledger, "", &key) {
 				Err(refusal) => {
 					eprintln!("{refusal}");
 					std::process::exit(1);
@@ -819,7 +838,9 @@ async fn main() {
 							std::process::exit(1);
 						}
 					}
-					let (bottom, rest) = chain.split_first().expect("a resolved chain is never empty");
+					let (bottom, rest) = chain
+						.split_first()
+						.expect("a resolved chain is never empty");
 					launch_node(bottom, rest, &dir);
 					// The tree answers at the top: the socket the named tool's
 					// node serves is where its keys are called, derived by
@@ -827,13 +848,13 @@ async fn main() {
 					let top = chain.last().expect("a resolved chain is never empty");
 					println!(
 						"{}",
-						json!({ "up": key, "nodes": chain.iter().map(|n| n.path.clone()).collect::<Vec<_>>(), "socket": zirkle::socket::node_path(&dir, &top.path) })
+						json!({ "up": key, "nodes": chain.iter().map(|n| n.path.clone()).collect::<Vec<_>>(), "socket": cartridge::socket::node_path(&dir, &top.path) })
 					);
 				}
 			}
 		}
 		Command::Enter { node, rest } => {
-			let ledger = zirkle::ledger::Ledger::scan(&dir);
+			let ledger = cartridge::ledger::Ledger::scan(&dir);
 			// The step re-reads the ledger: a node that is no longer installed
 			// has no launch, however recently the chain held it.
 			let Some(entry) = ledger.get(&node) else {
@@ -856,13 +877,13 @@ async fn main() {
 			};
 			use std::os::unix::process::CommandExt;
 			command
-				.env("ZIRKLE_NODE", &node)
-				.env("ZIRKLE_CHAIN", rest)
-				.env("ZIRKLE_ZIRKLE", exe())
-				.env("ZIRKLE_ROOT", &dir)
+				.env("CARTRIDGE_NODE", &node)
+				.env("CARTRIDGE_CHAIN", rest)
+				.env("CARTRIDGE_CARTRIDGE", exe())
+				.env("CARTRIDGE_ROOT", &dir)
 				// The far end was the only node nothing launched; a node
 				// re-entered into has a dependency above it and loses the flag.
-				.env_remove("ZIRKLE_BOTTOM")
+				.env_remove("CARTRIDGE_BOTTOM")
 				// The node's stdin is the dependency's pipe, inherited: when
 				// the dependency that launched it goes away, the pipe closes
 				// and EOF is the signal to take the rest of the tree along.

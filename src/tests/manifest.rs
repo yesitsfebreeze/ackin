@@ -212,7 +212,10 @@ async fn an_export_that_names_nothing_inside_is_refused() {
 		.err()
 		.unwrap()
 		.to_string();
-	assert!(error.contains("nothing inside this cartridge offers it"), "{error}");
+	assert!(
+		error.contains("nothing inside this cartridge offers it"),
+		"{error}"
+	);
 }
 
 /// A grandchild's keys are hidden from the grandparent unless the child passes
@@ -244,7 +247,10 @@ async fn a_grandchild_key_reaches_the_top_only_through_every_level() {
 		.err()
 		.unwrap()
 		.to_string();
-	assert!(error.contains("nothing inside this cartridge offers it"), "{error}");
+	assert!(
+		error.contains("nothing inside this cartridge offers it"),
+		"{error}"
+	);
 
 	// `inner` passes it on, and now `outer` may too.
 	write(
@@ -276,7 +282,11 @@ async fn probe_nesting_is_not_discovered() {
 		json!({"name": "inner", "entry": "init.lua", "provide": ["inner.store"]}),
 		r#"return {apply=function(ctx) ctx:provide("inner.store", function() return 1 end) end}"#,
 	);
-	write(dir.path(), "init.lua", r#"return {{id="outer",path="outer"}}"#);
+	write(
+		dir.path(),
+		"init.lua",
+		r#"return {{id="outer",path="outer"}}"#,
+	);
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
 	let listed = host.manifest().unwrap();
 	let outer = listed.iter().find(|c| c.entry.id == "outer").unwrap();
@@ -351,7 +361,10 @@ async fn a_cartridge_two_levels_down_is_not_offered() {
 		.err()
 		.unwrap()
 		.to_string();
-	assert!(error.contains("nothing inside this cartridge offers it"), "{error}");
+	assert!(
+		error.contains("nothing inside this cartridge offers it"),
+		"{error}"
+	);
 }
 
 /// The document is data, so a disabled cartridge has still declared what it
@@ -421,7 +434,10 @@ async fn an_unreadable_document_asks_for_nothing_knowable_not_for_nothing() {
 		let bad = listed.iter().find(|c| c.entry.id == id).unwrap();
 		// Absent, not empty: an empty grant is the tightest policy, and a document
 		// nobody could read has not asked for nothing — it has not been read.
-		assert!(bad.grant.is_none(), "{id}: an unreadable document declared a grant");
+		assert!(
+			bad.grant.is_none(),
+			"{id}: an unreadable document declared a grant"
+		);
 		assert!(bad.export.is_empty(), "{id}");
 		// Why it would not read is said, and said for the disabled entry too: the
 		// document is data, so nothing had to try to load it for this to be known.

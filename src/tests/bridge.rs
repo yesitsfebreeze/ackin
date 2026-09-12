@@ -33,8 +33,7 @@ async fn bridge_status_tracks_active_generations_and_scopes_backend_calls() {
 	assert_eq!(first[0]["id"], "p");
 	let generation = first[0]["generation"].as_u64().unwrap();
 	assert_eq!(
-		host
-			.bridge_call("p", generation, "counter", json!(3))
+		host.bridge_call("p", generation, "counter", json!(3))
 			.await
 			.unwrap(),
 		json!(3)

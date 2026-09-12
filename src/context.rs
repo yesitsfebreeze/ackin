@@ -140,15 +140,19 @@ impl UserData for LuaCtx {
 			this.host.send_event(&name, data);
 			Ok(())
 		});
-		methods.add_method("publish", |_, this, (channel, payload): (String, mlua::Value)| {
-			let data = this.host.to_json(payload);
-			this
-				.host
-				.runtime()
-				.stream()
-				.publish(&channel, &this.cartridge, crate::stream::Kind::Data, data);
-			Ok(())
-		});
+		methods.add_method(
+			"publish",
+			|_, this, (channel, payload): (String, mlua::Value)| {
+				let data = this.host.to_json(payload);
+				this.host.runtime().stream().publish(
+					&channel,
+					&this.cartridge,
+					crate::stream::Kind::Data,
+					data,
+				);
+				Ok(())
+			},
+		);
 		methods.add_method("subscribe", |_, this, (channel, f): (String, Function)| {
 			let stream = this.host.runtime().stream().clone();
 			let sub = stream.subscribe(&channel, &this.cartridge, None);
@@ -185,7 +189,8 @@ impl UserData for LuaCtx {
 			|_, this, (path, config): (String, mlua::Value)| {
 				let config = this.host.to_json(config);
 				let file = this.host.dir().join(&path);
-				let (mut component, _sources) = this.host.load_component(&file, config.clone(), &[])?;
+				let (mut component, _sources) =
+					this.host.load_component(&file, config.clone(), &[])?;
 				// A composed node is a long-lived participant of the tree, like a
 				// profile entry: its services are stable across a swap and it
 				// carries the rebuild that re-reads its source for the next one.
@@ -197,12 +202,18 @@ impl UserData for LuaCtx {
 						(rebuild_host.clone(), rebuild_path.clone(), config.clone());
 					host.load_component(&path, config, &[])
 						.map(|(component, _)| component)
-						.map_err(|e| crate::runtime::Error::Apply(format!("rebuild of {path:?}: {e}")))
+						.map_err(|e| {
+							crate::runtime::Error::Apply(format!("rebuild of {path:?}: {e}"))
+						})
 				}));
 				// The handle keeps the node's transaction, so a reload fired
 				// after a swap re-finds the live generation through it.
 				let reload = component.reload.clone();
-				Ok(LuaFiber(this.host.clone(), this.ctx.cartridge(component), reload))
+				Ok(LuaFiber(
+					this.host.clone(),
+					this.ctx.cartridge(component),
+					reload,
+				))
 			},
 		);
 		methods.add_method("name", |_, this, ()| Ok(this.cartridge.clone()));

@@ -141,8 +141,7 @@ impl Ledger {
 	/// This is the unit of visibility: a key is a candidate for a lookup in
 	/// `scope` exactly when one of these entries offers it.
 	pub fn children(&self, scope: &str) -> Vec<&Installed> {
-		self
-			.entries
+		self.entries
 			.values()
 			.filter(|e| e.parent().unwrap_or("") == scope)
 			.collect()
@@ -205,8 +204,7 @@ impl Ledger {
 	/// it twice. The registry the resolver reads, in the one shape a report and
 	/// a launch both want.
 	pub fn bindings(&self) -> Vec<(&Installed, &String, Bound<'_>)> {
-		self
-			.entries()
+		self.entries()
 			.flat_map(|e| {
 				e.needs
 					.iter()

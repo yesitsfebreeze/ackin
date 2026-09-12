@@ -8,7 +8,7 @@ use serde_json::json;
 fn nested_fixture() -> std::path::PathBuf {
 	static BINARY: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 	BINARY
-		.get_or_init(|| super::built(&["-p", "zirkle", "--example", "nested_fixture"]))
+		.get_or_init(|| super::built(&["-p", "cartridge", "--example", "nested_fixture"]))
 		.clone()
 }
 
@@ -95,7 +95,11 @@ fn lua_composition(dir: &std::path::Path) {
 		end)
 	end }"#,
 	);
-	write(dir, "init.lua", r#"return {{ id = "lua", path = "lua.lua" }}"#);
+	write(
+		dir,
+		"init.lua",
+		r#"return {{ id = "lua", path = "lua.lua" }}"#,
+	);
 }
 
 /// Apply the parent fixture over the shared `lua` composition and return its
@@ -160,14 +164,17 @@ done
 	) -> Result<serde_json::Value, String> {
 		tokio::time::timeout(
 			std::time::Duration::from_secs(5),
-			host.call(&key.to_owned(), json!(null)),
+			host.call(key, json!(null)),
 		)
 		.await
 		.unwrap()
 	}
 	// The declared key is fronted: the daemon's call crosses the nest and the
 	// child serves it.
-	assert_eq!(call(&host, "roundtrip").await.unwrap(), json!({"served": "roundtrip"}));
+	assert_eq!(
+		call(&host, "roundtrip").await.unwrap(),
+		json!({"served": "roundtrip"})
+	);
 	// The undeclared key never reached the store above: the daemon does not
 	// know it, and a call of it errs there, above the sub-host.
 	let error = call(&host, "secret").await.unwrap_err();
@@ -184,7 +191,7 @@ fn wrapper(dir: &std::path::Path, parent: &std::path::Path, child: &std::path::P
 		dir,
 		"parent.lua",
 		&format!(
-			"return zirkle.process({{{}}})",
+			"return cartridge.process({{{}}})",
 			json!(parent.to_string_lossy())
 		),
 	);

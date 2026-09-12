@@ -1,4 +1,4 @@
-//! The identifier one terminal turn carries across the runtimes zirkle spans.
+//! The identifier one terminal turn carries across the runtimes cartridge spans.
 //!
 //! A turn is ambient, not a parameter: it is set once where work enters the
 //! host (a socket `call`, a cartridge frame that already carries one) and read
@@ -11,12 +11,12 @@
 //!
 //! [`diagnostic`] is the channel the turn exists for: one JSON line per event on
 //! a stream the protocol never uses, redacted by field name and bounded by a
-//! byte cap with one rotated generation. `ZIRKLE_DIAGNOSTICS` names the file (the
-//! default is stderr) and `ZIRKLE_DIAGNOSTICS_MAX_BYTES` the cap.
+//! byte cap with one rotated generation. `CARTRIDGE_DIAGNOSTICS` names the file (the
+//! default is stderr) and `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` the cap.
 
 use serde_json::Value as Json;
 use std::future::Future;
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -31,7 +31,7 @@ pub fn current() -> Option<Arc<str>> {
 }
 
 /// A fresh turn id, unique for the life of this process and unlikely to
-/// collide with another zirkle's.
+/// collide with another cartridge's.
 pub fn mint() -> Arc<str> {
 	static NEXT: AtomicU64 = AtomicU64::new(1);
 	static ORIGIN: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
@@ -107,6 +107,12 @@ fn sensitive(name: &str) -> bool {
 
 /// Replace every sensitive value in `v` with `"<omitted>"`, naming what went.
 fn redact(v: &mut Json, omitted: &mut Vec<String>) {
+	if let Json::Array(values) = v {
+		for value in values {
+			redact(value, omitted);
+		}
+		return;
+	}
 	let Json::Object(o) = v else { return };
 	for (k, value) in o.iter_mut() {
 		if sensitive(k) {
@@ -128,6 +134,7 @@ struct Sink {
 }
 
 enum Out {
+	Disabled,
 	Stderr,
 	File(PathBuf, std::fs::File),
 }
@@ -147,11 +154,11 @@ impl Sink {
 	}
 
 	fn from_env() -> Self {
-		let cap = std::env::var("ZIRKLE_DIAGNOSTICS_MAX_BYTES")
+		let cap = std::env::var("CARTRIDGE_DIAGNOSTICS_MAX_BYTES")
 			.ok()
 			.and_then(|v| v.parse().ok())
 			.unwrap_or(8 << 20);
-		match std::env::var("ZIRKLE_DIAGNOSTICS") {
+		match std::env::var("CARTRIDGE_DIAGNOSTICS") {
 			Ok(p) if !p.is_empty() => Sink::file(PathBuf::from(p), cap).unwrap_or(Sink {
 				out: Out::Stderr,
 				cap,
@@ -166,8 +173,28 @@ impl Sink {
 	}
 
 	fn write(&mut self, line: &str) {
+		// Never split encoded JSON or a multibyte character. An oversized
+		// record is replaced by a small valid record naming the omission.
+		let replacement;
+		let line = if line.len() as u64 > self.cap {
+			replacement = format!(
+				"{}\n",
+				serde_json::json!({"omitted":"oversized diagnostic", "bytes":line.len()})
+			);
+			if replacement.len() as u64 <= self.cap {
+				replacement.as_str()
+			} else if self.cap >= 17 {
+				"{\"omitted\":true}\n"
+			} else {
+				// A cap smaller than the minimal marker admits no record.
+				return;
+			}
+		} else {
+			line
+		};
 		let bytes = line.as_bytes();
 		match &mut self.out {
+			Out::Disabled => {}
 			Out::Stderr => {
 				let _ = std::io::stderr().write_all(bytes);
 			}
@@ -182,8 +209,17 @@ impl Sink {
 					}
 					self.written = 0;
 				}
-				let _ = file.write_all(bytes);
-				self.written += bytes.len() as u64;
+				if file.write_all(bytes).is_ok() {
+					self.written += bytes.len() as u64;
+				} else if file
+					.set_len(self.written)
+					.and_then(|()| file.seek(SeekFrom::End(0)).map(|_| ()))
+					.is_err()
+				{
+					// Roll back a partial JSON record. If storage cannot be
+					// repaired, stop this sink rather than append corrupt JSON.
+					self.out = Out::Disabled;
+				}
 			}
 		}
 	}
@@ -276,19 +312,67 @@ mod tests {
 
 	#[test]
 	fn the_sink_stays_bounded_by_rotating_one_generation() {
-		let dir = std::env::temp_dir().join(format!("zirkle-diag-{}", mint()));
+		let dir = std::env::temp_dir().join(format!("cartridge-diag-{}", mint()));
 		std::fs::create_dir_all(&dir).unwrap();
-		let path = dir.join("zirkle.jsonl");
+		let path = dir.join("cartridge.jsonl");
 		let mut sink = Sink::file(path.clone(), 64).unwrap();
 		for i in 0..50 {
 			sink.write(&format!("{{\"n\":{i},\"pad\":\"xxxxxxxxxxxxxxxx\"}}\n"));
 		}
 		let live = std::fs::metadata(&path).unwrap().len();
 		assert!(live <= 64, "live generation is {live} bytes, cap is 64");
-		assert!(dir.join("zirkle.jsonl.1").exists(), "no rotated generation");
+		assert!(
+			dir.join("cartridge.jsonl.1").exists(),
+			"no rotated generation"
+		);
 		// Reopening keeps what is there; nothing truncates at startup.
 		let reopened = Sink::file(path.clone(), 64).unwrap();
 		assert_eq!(reopened.written, live);
 		std::fs::remove_dir_all(&dir).unwrap();
+	}
+	#[test]
+	fn redaction_reaches_objects_inside_nested_arrays() {
+		let mut fields = serde_json::json!({"events":[[{"api_key":"synthetic-token", "safe":"kept"}]], "count":1});
+		let mut omitted = Vec::new();
+		redact(&mut fields, &mut omitted);
+		assert_eq!(fields["events"][0][0]["api_key"], "<omitted>");
+		assert_eq!(fields["events"][0][0]["safe"], "kept");
+		assert_eq!(omitted, ["api_key"]);
+		assert!(!fields.to_string().contains("synthetic-token"));
+	}
+
+	#[test]
+	fn oversized_records_are_valid_json_and_bounded_before_and_after_rotation() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("diagnostic.jsonl");
+		let mut sink = Sink::file(path.clone(), 64).unwrap();
+		let huge = format!("{}\n", serde_json::json!({"text":"é🙂".repeat(100)}));
+		sink.write(&huge);
+		sink.write("{\"ordinary\":true}\n");
+		sink.write(&huge);
+		for file in [path, dir.path().join("diagnostic.jsonl.1")] {
+			let data = std::fs::read_to_string(file).unwrap();
+			assert!(data.len() <= 64);
+			for line in data.lines() {
+				let value: Json = serde_json::from_str(line).unwrap();
+				assert!(value.get("omitted").is_some() || value["ordinary"] == true);
+			}
+		}
+	}
+
+	#[test]
+	fn a_sink_that_cannot_repair_a_failed_write_stops_accepting_records() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("diagnostic.jsonl");
+		std::fs::write(&path, "{\"ordinary\":true}\n").unwrap();
+		let mut sink = Sink::file(path.clone(), 64).unwrap();
+		sink.out = Out::File(path.clone(), std::fs::File::open(&path).unwrap());
+		sink.write("{\"next\":1}\n");
+		assert!(matches!(sink.out, Out::Disabled));
+		sink.write("{\"next\":2}\n");
+		assert_eq!(
+			std::fs::read_to_string(path).unwrap(),
+			"{\"ordinary\":true}\n"
+		);
 	}
 }

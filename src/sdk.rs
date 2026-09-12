@@ -1,4 +1,4 @@
-//! The cartridge side of zirkle's process wire (see [`crate::cartridge`]). A cartridge
+//! The cartridge side of cartridge's process wire (see [`crate::cartridge`]). A cartridge
 //! declares what it injects and provides, then runs an `apply` that registers
 //! listeners and services on the [`Host`]; when `apply` returns the fiber is
 //! active. `argv[1] == "hello"` prints the declaration and exits.
@@ -63,6 +63,20 @@ where
 }
 
 impl Host {
+	/// Read-only committed composition, without configuration values.
+	pub async fn landscape(&self) -> Result<Value> {
+		self.link.request(json!({"landscape":true})).await
+	}
+
+	/// Cooperatively prepare or cancel a generation replacement.
+	pub fn on_reload<F, Fut>(&self, f: F)
+	where
+		F: Fn(Value) -> Fut + Send + Sync + 'static,
+		Fut: Future<Output = Result<Value>> + Send + 'static,
+	{
+		self.reload.lock().insert("reload".into(), boxed(f));
+	}
+
 	/// Client modules of active cartridge generations, via the bridge.
 	pub async fn bridge_status(&self) -> Result<Value> {
 		self.link.request(json!({"bridge":"status"})).await
@@ -96,7 +110,7 @@ impl Host {
 	/// Explicitly resume a service call after a generation switch. Ordinary
 	/// replies and errors are never replayed by the core.
 	pub fn resume(args: Value) -> Value {
-		json!({"$zirkle_resume":args})
+		json!({"$cartridge_resume":args})
 	}
 	fn write(&self, m: Value) {
 		self.link.send(m);
@@ -160,8 +174,7 @@ impl Host {
 
 	/// Call a key this cartridge injects.
 	pub async fn call(&self, key: &str, args: Value) -> Result<Value> {
-		self
-			.link
+		self.link
 			.request(json!({ "call": key, "args": args }))
 			.await
 	}
@@ -205,25 +218,25 @@ impl Host {
 	/// the host above sees nothing but this cartridge's own declaration.
 	/// Disposing this cartridge disposes the child.
 	pub async fn spawn(&self, name: &str, cmd: &[String], config: Value) -> Result<()> {
-		let program = cmd
-			.first()
-			.ok_or_else(|| "empty cmd".to_owned())?
-			.clone();
-		let manifest = crate::cartridge::manifest(cmd)
+		let program = cmd.first().ok_or_else(|| "empty cmd".to_owned())?.clone();
+		let manifest = crate::cartridge::manifest_async(cmd)
+			.await
 			.map_err(|e| format!("{program} hello: {e}"))?;
-		let mut child = tokio::process::Command::new(&cmd[0])
-			.args(&cmd[1..])
-			.stdin(Stdio::piped())
-			.stdout(Stdio::piped())
-			.stderr(Stdio::piped())
-			.kill_on_drop(true)
-			.spawn()
-			.map_err(|e| format!("{program}: {e}"))?;
+		let mut child = crate::process::Child::new(
+			tokio::process::Command::new(&cmd[0])
+				.args(&cmd[1..])
+				.stdin(Stdio::piped())
+				.stdout(Stdio::piped())
+				.stderr(Stdio::piped())
+				.kill_on_drop(true)
+				.spawn()
+				.map_err(|e| format!("{program}: {e}"))?,
+		);
 		let mut stdin = child.stdin.take().expect("piped stdin");
 		let stdout = child.stdout.take().expect("piped stdout");
 		let stderr = child.stderr.take().expect("piped stderr");
 		let label = name.to_owned();
-		tokio::spawn(async move {
+		child.tasks.spawn(async move {
 			let mut lines = BufReader::new(stderr).lines();
 			while let Ok(Some(line)) = lines.next_line().await {
 				crate::turn::diagnostic_line(&label, &line);
@@ -232,7 +245,7 @@ impl Host {
 		let (tx, mut rx) = mpsc::unbounded_channel::<Option<Value>>();
 		let link = Link::new(tx, "child is gone");
 		let writer_link = link.clone();
-		tokio::spawn(async move {
+		child.tasks.spawn(async move {
 			while let Some(Some(m)) = rx.recv().await {
 				let mut line = m.to_string();
 				line.push('\n');
@@ -243,40 +256,63 @@ impl Host {
 			}
 		});
 		link.send(json!({ "apply": { "name": name, "config": config } }));
-		let mut lines = BufReader::new(stdout).lines();
-		loop {
-			let Ok(Some(line)) = lines.next_line().await else {
-				link.shutdown();
-				let status = child
-					.try_wait()
-					.ok()
-					.flatten()
-					.map(|s| s.to_string())
-					.unwrap_or_else(|| "closed stdout".into());
-				return Err(format!("{name} exited before ready: {status}"));
-			};
-			let Ok(m) = serde_json::from_str::<Value>(&line) else {
-				link.shutdown();
-				return Err(format!("{name} sent an unreadable line: {line}"));
-			};
-			if m["ready"] == true {
-				break;
+		let mut startup = BufReader::new(stdout);
+		let mut remaining = 64 * 1024;
+		let ready = tokio::time::timeout(crate::process::STARTUP_TIMEOUT, async {
+			loop {
+				let Some(line) = crate::process::startup_line(&mut startup, &mut remaining)
+					.await
+					.map_err(|error| {
+						link.shutdown();
+						error.to_string()
+					})?
+				else {
+					link.shutdown();
+					let status = child
+						.try_wait()
+						.ok()
+						.flatten()
+						.map(|s| s.to_string())
+						.unwrap_or_else(|| "closed stdout".into());
+					return Err(format!("{name} exited before ready: {status}"));
+				};
+				let Ok(m) = serde_json::from_str::<Value>(&line) else {
+					link.shutdown();
+					return Err(format!("{name} sent an unreadable line: {line}"));
+				};
+				if m["ready"] == true {
+					break;
+				}
+				if let Some(e) = m["error"]
+					.as_str()
+					.filter(|_| m["reply"].as_u64().is_none())
+				{
+					link.shutdown();
+					return Err(format!("{name}: {e}"));
+				}
+				self.relay(&link, m).await;
 			}
-			if let Some(e) = m["error"]
-				.as_str()
-				.filter(|_| m["reply"].as_u64().is_none())
-			{
+			Ok::<(), String>(())
+		})
+		.await;
+		match ready {
+			Ok(Ok(())) => {}
+			Ok(Err(error)) => {
 				link.shutdown();
-				return Err(format!("{name}: {e}"));
+				return Err(error);
 			}
-			self.relay(&link, m).await;
+			Err(_) => {
+				link.shutdown();
+				return Err(format!("{name} timed out before ready"));
+			}
 		}
+		let mut lines = startup.lines();
 		let stopping = Arc::new(AtomicBool::new(false));
 		let host = self.clone();
 		let reader_link = link.clone();
 		let reader_name = name.to_owned();
 		let reader_stopping = stopping.clone();
-		tokio::spawn(async move {
+		child.tasks.spawn(async move {
 			while let Ok(Some(line)) = lines.next_line().await {
 				if let Ok(m) = serde_json::from_str::<Value>(&line) {
 					if let Some(e) = m["error"]
@@ -290,8 +326,7 @@ impl Host {
 				}
 			}
 			reader_link.shutdown();
-			host
-				.children
+			host.children
 				.lock()
 				.retain(|child| !Arc::ptr_eq(&child.link, &reader_link));
 			// A child that dies while it is still wanted is a fault of the
@@ -382,12 +417,11 @@ impl Host {
 			}));
 		} else if m["injections"] == true {
 			tokio::spawn(crate::turn::scope(turn, async move {
-				link.reply(
-					id,
-					host.injections()
-						.await
-						.map(|keys| json!(keys)),
-				);
+				link.reply(id, host.injections().await.map(|keys| json!(keys)));
+			}));
+		} else if m["landscape"] == true {
+			tokio::spawn(crate::turn::scope(turn, async move {
+				link.reply(id, host.landscape().await);
 			}));
 		} else if m["cartridges"] == true {
 			tokio::spawn(crate::turn::scope(turn, async move {
@@ -416,7 +450,13 @@ impl Host {
 		}
 	}
 
-	fn dispatch(&self, table: &Mutex<HashMap<String, Handler>>, m: &Value, name: &str, data: Value) {
+	fn dispatch(
+		&self,
+		table: &Mutex<HashMap<String, Handler>>,
+		m: &Value,
+		name: &str,
+		data: Value,
+	) {
 		let id = m["id"].as_u64().unwrap_or(0);
 		let handler = table.lock().get(name).cloned();
 		let link = self.link.clone();
@@ -570,5 +610,77 @@ impl Cartridge {
 		}
 		host.finish().await;
 		let _ = writer.await;
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	fn host() -> (Host, mpsc::UnboundedReceiver<Option<Value>>) {
+		let (tx, rx) = mpsc::unbounded_channel();
+		(
+			Host {
+				reload: Arc::default(),
+				link: Link::new(tx, "gone"),
+				events: Arc::default(),
+				services: Arc::default(),
+				streams: Arc::default(),
+				finalizers: Arc::default(),
+				declared: vec![],
+				children: Arc::default(),
+			},
+			rx,
+		)
+	}
+	#[tokio::test]
+	async fn reload_registration_dispatches_boolean_values_for_prepare_and_cancel() {
+		let (host, mut rx) = host();
+		host.on_reload(|value: Value| async move {
+			Ok(json!({"prepare":value.as_bool().expect("boolean Value")}))
+		});
+		for prepare in [true, false] {
+			let request = json!({"id":7,"reload":prepare});
+			host.dispatch(&host.reload, &request, "reload", request["reload"].clone());
+			let reply = rx.recv().await.unwrap().unwrap();
+			assert_eq!(reply["reply"], 7);
+			assert_eq!(reply["data"]["prepare"], prepare);
+		}
+	}
+	#[tokio::test]
+	async fn cancelling_nested_startup_kills_and_reaps_its_child() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("child.sh");
+		let pid = dir.path().join("pid");
+		std::fs::write(&path,format!("#!/bin/sh\nif [ \"$1\" = hello ]; then echo '{{}}'; exit 0; fi\necho $$ > '{}'\nwhile read line; do :; done\n",pid.display())).unwrap();
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+		let (host, _rx) = host();
+		let task = tokio::spawn(async move {
+			host.spawn("nested", &[path.display().to_string()], Value::Null)
+				.await
+		});
+		tokio::time::timeout(std::time::Duration::from_secs(1), async {
+			while !pid.exists() {
+				tokio::task::yield_now().await;
+			}
+		})
+		.await
+		.unwrap();
+		task.abort();
+		assert!(task.await.unwrap_err().is_cancelled());
+		let pid = std::fs::read_to_string(pid).unwrap();
+		tokio::time::timeout(std::time::Duration::from_secs(1), async {
+			while std::process::Command::new("/bin/kill")
+				.args(["-0", pid.trim()])
+				.stderr(std::process::Stdio::null())
+				.status()
+				.unwrap()
+				.success()
+			{
+				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+			}
+		})
+		.await
+		.unwrap();
 	}
 }

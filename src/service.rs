@@ -30,7 +30,7 @@ impl Service {
 			let result = host.invoke_raw(self.value(), args).await;
 			drop(guard);
 			let result = result?;
-			let Some(resume) = result.get("$zirkle_resume") else {
+			let Some(resume) = result.get("$cartridge_resume") else {
 				return Ok(result);
 			};
 			args = resume.clone();
@@ -49,8 +49,7 @@ impl Service {
 		Ok(())
 	}
 	pub(crate) fn process_id(&self) -> Option<usize> {
-		self
-			.value()
+		self.value()
 			.downcast_ref::<crate::cartridge::Remote>()
 			.map(|remote| remote.process_id())
 	}

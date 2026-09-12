@@ -92,11 +92,11 @@ impl Stream {
 			// The log is in sequence order, so the resume point is one binary
 			// search; `None` starts from now and replays nothing.
 			let past = match after {
-				Some(seen) => &ch
-					.log
-					[ch
+				Some(seen) => {
+					&ch.log[ch
 						.log
-						.partition_point(|e| e["seq"].as_u64().is_none_or(|s| s <= seen))..],
+						.partition_point(|e| e["seq"].as_u64().is_none_or(|s| s <= seen))..]
+				}
 				None => &ch.log[ch.log.len()..],
 			};
 			for envelope in past {
@@ -110,7 +110,13 @@ impl Stream {
 		}
 		// Same lock as the registration, so no envelope can land between the
 		// replay and the announcement of the join.
-		Self::append(&mut st, channel, owner, Kind::Subscribe, json!({ "id": id }));
+		Self::append(
+			&mut st,
+			channel,
+			owner,
+			Kind::Subscribe,
+			json!({ "id": id }),
+		);
 		Subscription { id, rx }
 	}
 
@@ -125,14 +131,19 @@ impl Stream {
 			return;
 		};
 		let owner = ch.subs.remove(index).owner;
-		Self::append(&mut st, channel, &owner, Kind::Unsubscribe, json!({ "id": id }));
+		Self::append(
+			&mut st,
+			channel,
+			&owner,
+			Kind::Unsubscribe,
+			json!({ "id": id }),
+		);
 	}
 
 	/// The envelopes after `after`, for a reader that wants the log without
 	/// holding a subscription.
 	pub fn replay(&self, channel: &str, after: u64) -> Vec<Json> {
-		self
-			.0
+		self.0
 			.lock()
 			.channels
 			.get(channel)

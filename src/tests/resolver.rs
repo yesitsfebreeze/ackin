@@ -139,7 +139,10 @@ fn a_cycle_is_refused_not_walked() {
 				}
 			)
 		}
-		Ok(launched) => panic!("a cycle resolved: {:?}", launched.iter().map(|e| e.path.clone()).collect::<Vec<_>>()),
+		Ok(launched) => panic!(
+			"a cycle resolved: {:?}",
+			launched.iter().map(|e| e.path.clone()).collect::<Vec<_>>()
+		),
 	}
 }
 
@@ -174,7 +177,10 @@ fn a_clash_is_refused_naming_every_offer() {
 				}
 			)
 		}
-		Ok(launched) => panic!("a clash resolved: {:?}", launched.iter().map(|e| e.path.clone()).collect::<Vec<_>>()),
+		Ok(launched) => panic!(
+			"a clash resolved: {:?}",
+			launched.iter().map(|e| e.path.clone()).collect::<Vec<_>>()
+		),
 	}
 }
 
@@ -200,7 +206,10 @@ fn an_unbound_key_refuses_the_launch() {
 				}
 			)
 		}
-		Ok(launched) => panic!("an unbound ask resolved: {:?}", launched.iter().map(|e| e.path.clone()).collect::<Vec<_>>()),
+		Ok(launched) => panic!(
+			"an unbound ask resolved: {:?}",
+			launched.iter().map(|e| e.path.clone()).collect::<Vec<_>>()
+		),
 	}
 }
 
@@ -288,13 +297,15 @@ fn store_chain(dir: &Path) {
 fn fixture_path() -> std::path::PathBuf {
 	static FIXTURE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 	FIXTURE
-		.get_or_init(|| built(&["-p", "zirkle", "--example", "chain_fixture"]))
+		.get_or_init(|| built(&["-p", "cartridge", "--example", "chain_fixture"]))
 		.clone()
 }
 
-pub fn zirkle_path() -> std::path::PathBuf {
-	static ZIRKLE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-	ZIRKLE.get_or_init(|| built(&["-p", "zirkle"])).clone()
+pub fn cartridge_path() -> std::path::PathBuf {
+	static CARTRIDGE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+	CARTRIDGE
+		.get_or_init(|| built(&["-p", "cartridge"]))
+		.clone()
 }
 
 /// The pids the probe's nodes wrote, keyed by the node path they stood for.
@@ -307,11 +318,7 @@ pub fn try_pids(dir: &Path, nodes: &[&str]) -> Option<Vec<u32>> {
 		.iter()
 		.map(|node| {
 			let marker = dir.join(".nodes").join(node.replace('/', "_"));
-			std::fs::read_to_string(&marker)
-				.ok()?
-				.trim()
-				.parse()
-				.ok()
+			std::fs::read_to_string(&marker).ok()?.trim().parse().ok()
 		})
 		.collect()
 }
@@ -381,9 +388,9 @@ async fn a_chain_node_whose_binary_does_not_exist_refuses_the_ask() {
 	);
 	let nodes_dir = dir.path().join(".nodes");
 	std::fs::create_dir_all(&nodes_dir).unwrap();
-	let ask = std::process::Command::new(zirkle_path())
+	let ask = std::process::Command::new(cartridge_path())
 		.args(["up", "store.get", "--dir", &dir.path().to_string_lossy()])
-		.env("ZIRKLE_NODES", &nodes_dir)
+		.env("CARTRIDGE_NODES", &nodes_dir)
 		.output()
 		.unwrap();
 	assert!(!ask.status.success());
@@ -414,10 +421,17 @@ async fn a_reentry_into_an_uninstalled_node_launches_nothing() {
 	);
 	// Uninstalled after the ask resolved it, before the re-entry reads.
 	std::fs::remove_dir_all(root.join("db")).unwrap();
-	let enter = std::process::Command::new(zirkle_path())
-		.args(["enter", "db", "--rest", "[]", "--dir", &root.to_string_lossy()])
-		.env("ZIRKLE_ZIRKLE", zirkle_path())
-		.env("ZIRKLE_ROOT", &root)
+	let enter = std::process::Command::new(cartridge_path())
+		.args([
+			"enter",
+			"db",
+			"--rest",
+			"[]",
+			"--dir",
+			&root.to_string_lossy(),
+		])
+		.env("CARTRIDGE_CARTRIDGE", cartridge_path())
+		.env("CARTRIDGE_ROOT", &root)
 		.output()
 		.unwrap();
 	assert!(!enter.status.success());
@@ -454,9 +468,9 @@ async fn a_chain_of_lua_cartridges_is_hosted_and_the_cascade_follows_the_depende
 	let nodes_dir = root.join(".nodes");
 	std::fs::create_dir_all(&nodes_dir).unwrap();
 
-	let ask = tokio::process::Command::new(zirkle_path())
+	let ask = tokio::process::Command::new(cartridge_path())
 		.args(["up", "tool.run", "--dir", &root.to_string_lossy()])
-		.env("ZIRKLE_NODES", &nodes_dir)
+		.env("CARTRIDGE_NODES", &nodes_dir)
 		.spawn()
 		.unwrap()
 		.wait()
@@ -496,7 +510,7 @@ async fn a_chain_of_lua_cartridges_is_hosted_and_the_cascade_follows_the_depende
 	// Uninstalling is the absence of a launch, on the hosted route as on the
 	// fixture's: with the far end gone, the fresh ledger binds nothing.
 	std::fs::remove_dir_all(root.join("db")).unwrap();
-	let ask = std::process::Command::new(zirkle_path())
+	let ask = std::process::Command::new(cartridge_path())
 		.args(["up", "tool.run", "--dir", &root.to_string_lossy()])
 		.output()
 		.unwrap();
@@ -521,16 +535,19 @@ async fn a_chain_comes_up_from_the_bottom_and_teardown_follows_the_dependency() 
 	let nodes_dir = root.join(".nodes");
 	std::fs::create_dir_all(&nodes_dir).unwrap();
 
-	let ask = tokio::process::Command::new(zirkle_path())
+	let ask = tokio::process::Command::new(cartridge_path())
 		.args(["up", "tool.run", "--dir", &root.to_string_lossy()])
-		.env("ZIRKLE_NODES", &nodes_dir)
+		.env("CARTRIDGE_NODES", &nodes_dir)
 		.output()
 		.await
 		.unwrap();
 	// The ask's stdout is captured here, so this returning at all is the
 	// hand-off's proof: a detached node holding the asker's pipe would hold
 	// this test open forever.
-	assert!(ask.status.success(), "the ask resolves and hands off: {ask:?}");
+	assert!(
+		ask.status.success(),
+		"the ask resolves and hands off: {ask:?}"
+	);
 
 	// One process per node, up from the bottom, and each node's parent in
 	// the process tree is the dependency that launched it.
@@ -542,7 +559,10 @@ async fn a_chain_comes_up_from_the_bottom_and_teardown_follows_the_dependency() 
 		"the chain came up: {:?} {:?}",
 		try_pids(&root, &["db", "store", "tool"]),
 		std::fs::read_dir(&nodes_dir)
-			.map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>())
+			.map(|d| d
+				.flatten()
+				.map(|e| e.file_name().to_string_lossy().into_owned())
+				.collect::<Vec<_>>())
 			.unwrap_or_default()
 	);
 	let (db, store, tool) = {
@@ -566,7 +586,7 @@ async fn a_chain_comes_up_from_the_bottom_and_teardown_follows_the_dependency() 
 	// Uninstalling is the absence of a launch: with the far end gone, the
 	// fresh ledger binds nothing, and the ask refuses rather than spawning.
 	std::fs::remove_dir_all(root.join("db")).unwrap();
-	let ask = std::process::Command::new(zirkle_path())
+	let ask = std::process::Command::new(cartridge_path())
 		.args(["up", "tool.run", "--dir", &root.to_string_lossy()])
 		.output()
 		.unwrap();
@@ -596,7 +616,7 @@ async fn the_launch_refuses_a_cycle_the_ledger_holds() {
 			),
 		],
 	);
-	let ask = std::process::Command::new(zirkle_path())
+	let ask = std::process::Command::new(cartridge_path())
 		.args(["up", "a.key", "--dir", &dir.path().to_string_lossy()])
 		.output()
 		.unwrap();
@@ -605,5 +625,43 @@ async fn the_launch_refuses_a_cycle_the_ledger_holds() {
 		String::from_utf8_lossy(&ask.stderr).contains("cycle"),
 		"{}",
 		String::from_utf8_lossy(&ask.stderr)
+	);
+}
+#[test]
+fn layered_shared_dependencies_are_completed_once_in_bottom_up_order() {
+	let dir = tempfile::tempdir().unwrap();
+	for layer in 0..24 {
+		for side in ["a", "b"] {
+			let name = format!("{side}{layer}");
+			let needs = if layer == 0 {
+				vec![]
+			} else {
+				vec![format!("a{}", layer - 1), format!("b{}", layer - 1)]
+			};
+			cartridge(
+				dir.path(),
+				&name,
+				json!({"name":name,"entry":"init.lua","provide":[name],"needs":needs}),
+			);
+		}
+	}
+	let ledger = Ledger::scan(dir.path());
+	let started = std::time::Instant::now();
+	let resolved = chain(&ledger, "", "a23").unwrap();
+	assert_eq!(resolved.len(), 47);
+	assert_eq!(resolved.last().unwrap().path, "a23");
+	let positions: std::collections::HashMap<_, _> = resolved
+		.iter()
+		.enumerate()
+		.map(|(index, node)| (node.path.as_str(), index))
+		.collect();
+	for node in &resolved {
+		for dependency in &node.needs {
+			assert!(positions[dependency.as_str()] < positions[node.path.as_str()]);
+		}
+	}
+	assert!(
+		started.elapsed() < std::time::Duration::from_secs(2),
+		"shared DAG re-expanded"
 	);
 }

@@ -76,10 +76,14 @@ async fn a_nested_node_is_swapped_and_its_dependent_follows() {
 		ctx:send("outer", "started")
 	end}"#,
 	);
-	write(dir.path(), "other.lua", r#"return {provide={"mark"},apply=function(ctx)
+	write(
+		dir.path(),
+		"other.lua",
+		r#"return {provide={"mark"},apply=function(ctx)
 		ctx:provide("mark", function() return "mark" end)
 		ctx:send("other", "started")
-	end}"#);
+	end}"#,
+	);
 	write(
 		dir.path(),
 		"init.lua",
@@ -108,7 +112,10 @@ async fn a_nested_node_is_swapped_and_its_dependent_follows() {
 	let sibling = host.fiber_of("x").unwrap().uid();
 	// The inner source changes on disk; the nested rebuild re-reads it.
 	write(dir.path(), "inner.lua", &provider(2, false));
-	let generation = host.replace_node(inner).await.unwrap_or_else(|e| panic!("swap failed: {e}"));
+	let generation = host
+		.replace_node(inner)
+		.await
+		.unwrap_or_else(|e| panic!("swap failed: {e}"));
 	assert_ne!(generation, inner);
 	assert_eq!(host.call("read", json!(null)).await.unwrap()["version"], 2);
 	// The dependent kept its generation; the sibling beside it never noticed.
@@ -133,7 +140,10 @@ async fn a_nested_node_is_swapped_and_its_dependent_follows() {
 	end}"#,
 	);
 	host.replace_node(sibling).await.unwrap();
-	assert_eq!(host.call("mark", json!(null)).await.unwrap(), json!("mark2"));
+	assert_eq!(
+		host.call("mark", json!(null)).await.unwrap(),
+		json!("mark2")
+	);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -244,7 +254,11 @@ async fn a_composed_handle_reloads_its_node_again_after_the_first_swap() {
 		ctx:send("outer", "started")
 	end}"#,
 	);
-	write(dir.path(), "init.lua", r#"return {{id="o",path="outer.lua"}}"#);
+	write(
+		dir.path(),
+		"init.lua",
+		r#"return {{id="o",path="outer.lua"}}"#,
+	);
 	let (host, mut events) = boot(dir.path()).await;
 	next_event(&mut events, "outer").await;
 	version_of(&host, 1).await;
@@ -278,7 +292,11 @@ async fn an_ask_at_a_retired_uid_is_refused_and_the_node_still_reloads() {
 		ctx:send("outer", "started")
 	end}"#,
 	);
-	write(dir.path(), "init.lua", r#"return {{id="o",path="outer.lua"}}"#);
+	write(
+		dir.path(),
+		"init.lua",
+		r#"return {{id="o",path="outer.lua"}}"#,
+	);
 	let (host, mut events) = boot(dir.path()).await;
 	let mut inner = None;
 	let mut started = false;
@@ -331,10 +349,13 @@ async fn an_uncomposed_node_and_an_unknown_uid_refuse_the_ask() {
 	let dir = tempfile::tempdir().unwrap();
 	write(dir.path(), "init.lua", r#"return {}"#);
 	let (host, _events) = boot(dir.path()).await;
-	let plain = host.runtime().ctx().cartridge(crate::runtime::Component::new(
-		"plain",
-		Arc::new(|_| futures::stream::empty().boxed()),
-	));
+	let plain = host
+		.runtime()
+		.ctx()
+		.cartridge(crate::runtime::Component::new(
+			"plain",
+			Arc::new(|_| futures::stream::empty().boxed()),
+		));
 	plain.settled().await;
 	let refused = host.replace_node(plain.uid()).await.unwrap_err();
 	assert_eq!(refused, "this node was not composed to be replaceable");

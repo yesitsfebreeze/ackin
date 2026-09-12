@@ -52,8 +52,7 @@ fn watcher<T: Copy + Send + Sync + 'static>(
 	seen: Log<T>,
 ) -> Component {
 	sync(name, move |ctx| {
-		seen
-			.lock()
+		seen.lock()
 			.push(*ctx.get(key)?.downcast_ref::<T>().unwrap());
 		Ok(vec![])
 	})
@@ -382,4 +381,36 @@ async fn user_values_and_callbacks_are_dropped_outside_the_registry_lock() {
 	.await
 	.unwrap();
 	assert_eq!(*observed.lock(), vec![false, false, false]);
+}
+
+#[tokio::test]
+async fn disposing_an_apply_that_never_yields_finishes_and_runs_prior_inverses() {
+	let rt = Runtime::new();
+	let log = log();
+	let held = log.clone();
+	let (started, mut seen) = tokio::sync::mpsc::unbounded_channel();
+	let fiber = rt.ctx().cartridge(Component::new(
+		"stalled",
+		Arc::new(move |ctx| {
+			let held = held.clone();
+			ctx.effect_sync(move || record(&held, "released"));
+			let _ = started.send(());
+			futures::stream::pending().boxed()
+		}),
+	));
+	seen.recv().await.unwrap();
+	tokio::time::timeout(Duration::from_secs(1), fiber.dispose())
+		.await
+		.unwrap();
+	assert_eq!(*log.lock(), ["released"]);
+	assert!(fiber.state().is_none());
+}
+
+#[tokio::test]
+async fn disposing_an_effect_that_never_yields_finishes() {
+	let rt = Runtime::new();
+	let effect = rt.ctx().effect(futures::stream::pending());
+	tokio::time::timeout(Duration::from_secs(1), effect.dispose())
+		.await
+		.unwrap();
 }

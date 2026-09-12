@@ -1,6 +1,6 @@
 //! Offline SDK child used by the process transport regression tests.
+use cartridge::sdk::Cartridge;
 use serde_json::json;
-use zirkle::sdk::Cartridge;
 
 #[tokio::main]
 async fn main() {
@@ -24,7 +24,8 @@ async fn main() {
 			}
 			if config["shutdown"] == true {
 				let caller = host.clone();
-				let pending = tokio::spawn(async move { caller.call("lua", json!("pending")).await });
+				let pending =
+					tokio::spawn(async move { caller.call("lua", json!("pending")).await });
 				let finalizer = host.clone();
 				host.on_dispose(move || async move {
 					let pending = pending.await.unwrap().unwrap_err();
@@ -57,7 +58,7 @@ async fn main() {
 					// this cartridge calls on into the host inside the same turn.
 					if args == "turn" {
 						let lua = host.call("lua", json!("turn")).await?;
-						return Ok(json!({"cartridge": zirkle::sdk::Host::turn(), "lua": lua}));
+						return Ok(json!({"cartridge": cartridge::sdk::Host::turn(), "lua": lua}));
 					}
 					let key = args
 						.get("key")

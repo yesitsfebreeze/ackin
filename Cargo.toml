@@ -1,18 +1,18 @@
 [package]
-name = "zirkle"
+name = "cartridge"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 publish = false
 rust-version = "1.89"
 autotests = false
-default-run = "zirkle"
+default-run = "cartridge"
 
 [lib]
 path = "src/lib.rs"
 
 [[bin]]
-name = "zirkle"
+name = "cartridge"
 path = "src/main.rs"
 
 # Built by process tests as a real SDK child, not a public usage example.

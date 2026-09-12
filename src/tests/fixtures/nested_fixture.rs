@@ -1,8 +1,8 @@
 //! Offline SDK sub-host used by the wire recursion regression tests: a
 //! cartridge that hosts the cartridge `config.child` names over the same wire
 //! it is itself hosted on.
+use cartridge::sdk::Cartridge;
 use serde_json::json;
-use zirkle::sdk::Cartridge;
 
 #[tokio::main]
 async fn main() {

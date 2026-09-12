@@ -151,10 +151,7 @@ async fn one_cartridge_is_verified_without_a_profile() {
 	let dir = tempfile::tempdir().unwrap();
 	tree(dir.path(), SOLO_CONTRACTS());
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
-	assert_eq!(
-		host.verify_one("consumer").await.unwrap(),
-		(2, Vec::new())
-	);
+	assert_eq!(host.verify_one("consumer").await.unwrap(), (2, Vec::new()));
 }
 
 /// The cartridges a need binds to are loaded to be reached, not graded: the
@@ -187,7 +184,10 @@ async fn the_providers_a_need_binds_to_are_reached_but_never_graded() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_need_that_binds_to_nothing_is_named_instead_of_run() {
 	let dir = tempfile::tempdir().unwrap();
-	tree(dir.path(), json!({"selftest": "consumer.selftest", "needs": ["absent"]}));
+	tree(
+		dir.path(),
+		json!({"selftest": "consumer.selftest", "needs": ["absent"]}),
+	);
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
 	assert_eq!(
 		host.verify_one("consumer").await.unwrap_err(),
@@ -246,7 +246,8 @@ async fn a_nested_cartridge_is_verified_by_its_path_from_the_root() {
 		dir.path(),
 		"outer/inner/cartridge.json",
 		&json!({"name": "inner", "entry": "init.lua", "needs": ["helper"],
-			"selftest": "inner.check"}).to_string(),
+			"selftest": "inner.check"})
+		.to_string(),
 	);
 	write(
 		dir.path(),
@@ -256,7 +257,10 @@ async fn a_nested_cartridge_is_verified_by_its_path_from_the_root() {
 		end }"#,
 	);
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
-	assert_eq!(host.verify_one("outer/inner").await.unwrap(), (1, Vec::new()));
+	assert_eq!(
+		host.verify_one("outer/inner").await.unwrap(),
+		(1, Vec::new())
+	);
 }
 
 /// A failing contract is the run's whole answer: the line names the cartridge
@@ -279,7 +283,10 @@ async fn a_failing_contract_names_the_path_the_obligation_and_the_key() {
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
 	assert_eq!(
 		host.verify_one("consumer").await.unwrap(),
-		(2, vec!["consumer selftest `consumer.selftest` returned false".to_owned()])
+		(
+			2,
+			vec!["consumer selftest `consumer.selftest` returned false".to_owned()]
+		)
 	);
 }
 

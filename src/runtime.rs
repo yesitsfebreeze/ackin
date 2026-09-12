@@ -218,8 +218,7 @@ impl Registry {
 			return None;
 		}
 		let realm = self.realm(&f.isolate, key)?;
-		self
-			.store
+		self.store
 			.get(&realm)
 			.filter(|b| b.provider == uid)
 			.map(|_| realm)
@@ -363,7 +362,12 @@ impl Runtime {
 		// The failure is published on the cartridge's own channel, so whoever
 		// watches that channel learns of it even if nobody called into it.
 		self.revise(uid, |f| f.error = Some(error.to_string()));
-		stream.publish(&name, &name, crate::stream::Kind::Error, json!(error.to_string()));
+		stream.publish(
+			&name,
+			&name,
+			crate::stream::Kind::Error,
+			json!(error.to_string()),
+		);
 	}
 }
 
@@ -372,11 +376,13 @@ pub struct Effect {
 	armed: Arc<AtomicBool>,
 	inverses: Arc<Mutex<Vec<Disposer>>>,
 	done: watch::Receiver<bool>,
+	cancel: watch::Sender<bool>,
 }
 
 impl Effect {
 	pub async fn dispose(&self) {
 		if self.armed.swap(false, Ordering::SeqCst) {
+			let _ = self.cancel.send(true);
 			let _ = self.done.clone().wait_for(|done| *done).await;
 			let inverses = std::mem::take(&mut *self.inverses.lock());
 			for inverse in inverses.into_iter().rev() {
@@ -386,17 +392,38 @@ impl Effect {
 	}
 }
 
-pub(crate) async fn execute<S, G, K>(mut stream: S, guard: G, mut sink: K) -> Result<(), Error>
+pub(crate) async fn execute<S, G, K, C>(
+	mut stream: S,
+	guard: G,
+	mut sink: K,
+	cancelled: C,
+) -> Result<(), Error>
 where
 	S: futures::Stream<Item = Result<Disposer, Error>> + Unpin,
 	G: Fn() -> bool,
 	K: FnMut(Disposer),
+	C: std::future::Future<Output = ()>,
 {
+	tokio::pin!(cancelled);
 	while guard() {
-		match stream.next().await {
+		let next = stream.next();
+		tokio::pin!(next);
+		let (item, stopping) = tokio::select! {
+			biased;
+			_ = &mut cancelled => {
+				// Give an in-flight effect a brief chance to yield its inverse.
+				// A stream that never yields cannot hold retirement indefinitely.
+				(tokio::time::timeout(std::time::Duration::from_millis(100), &mut next).await.ok().flatten(), true)
+			},
+			item = &mut next => (item, false),
+		};
+		match item {
 			Some(Ok(d)) => sink(d),
 			Some(Err(e)) => return Err(e),
 			None => break,
+		}
+		if stopping {
+			break;
 		}
 	}
 	Ok(())
@@ -424,8 +451,7 @@ impl Ctx {
 	/// what the profile actually handed it, instead of restating the list in
 	/// its config.
 	pub fn injections(&self) -> Vec<String> {
-		self
-			.rt
+		self.rt
 			.reg
 			.lock()
 			.fibers
@@ -451,10 +477,12 @@ impl Ctx {
 		let armed = Arc::new(AtomicBool::new(true));
 		let inverses = Arc::new(Mutex::new(Vec::new()));
 		let (done_tx, done_rx) = watch::channel(false);
+		let (cancel, mut cancelled) = watch::channel(false);
 		let effect = Effect {
 			armed: armed.clone(),
 			inverses: inverses.clone(),
 			done: done_rx,
+			cancel,
 		};
 		let rt = self.rt.clone();
 		let fiber = self.fiber;
@@ -463,6 +491,9 @@ impl Ctx {
 				stream.boxed(),
 				|| armed.load(Ordering::SeqCst),
 				|d| inverses.lock().push(d),
+				async move {
+					let _ = cancelled.wait_for(|stopped| *stopped).await;
+				},
 			)
 			.await;
 			let _ = done_tx.send(true);
@@ -481,6 +512,7 @@ impl Ctx {
 			armed: Arc::new(AtomicBool::new(true)),
 			inverses: Arc::new(Mutex::new(vec![f()])),
 			done: watch::channel(true).1,
+			cancel: watch::channel(false).0,
 		})
 	}
 
@@ -591,30 +623,29 @@ impl Ctx {
 
 	pub fn on(&self, name: &str, f: Listener) {
 		let mut reg = self.rt.reg.lock();
-		let (f, route) = if let Some(fiber) = reg.fibers.get(&self.fiber).filter(|fiber| fiber.resident)
-		{
-			let reload = fiber.reload.clone();
-			let route = Arc::new(Mutex::new(Some(f)));
-			let current = route.clone();
-			let wrapped: Listener = Arc::new(move |value| {
-				let gate = reload.gate();
-				let current = current.clone();
-				Box::pin(async move {
-					let _guard = gate.read_owned().await;
-					let listener = current.lock().clone();
-					match listener {
-						Some(listener) => listener(value).await,
-						None => Ok(None),
-					}
-				})
-			});
-			(wrapped, Some(route))
-		} else {
-			(f, None)
-		};
+		let (f, route) =
+			if let Some(fiber) = reg.fibers.get(&self.fiber).filter(|fiber| fiber.resident) {
+				let reload = fiber.reload.clone();
+				let route = Arc::new(Mutex::new(Some(f)));
+				let current = route.clone();
+				let wrapped: Listener = Arc::new(move |value| {
+					let gate = reload.gate();
+					let current = current.clone();
+					Box::pin(async move {
+						let _guard = gate.read_owned().await;
+						let listener = current.lock().clone();
+						match listener {
+							Some(listener) => listener(value).await,
+							None => Ok(None),
+						}
+					})
+				});
+				(wrapped, Some(route))
+			} else {
+				(f, None)
+			};
 		let id = reg.fresh();
-		reg
-			.listeners
+		reg.listeners
 			.entry(name.into())
 			.or_default()
 			.push(Registered {
@@ -645,8 +676,7 @@ impl Ctx {
 
 	fn listeners(&self, name: &str) -> Vec<(Uid, Listener)> {
 		let reg = self.rt.reg.lock();
-		reg
-			.listeners
+		reg.listeners
 			.get(name)
 			.map(|l| {
 				l.iter()
