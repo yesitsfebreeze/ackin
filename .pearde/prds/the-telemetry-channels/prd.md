@@ -1,12 +1,15 @@
 ---
-state: open
+state: done
 origin: requested
 priority: 72
-complexity: 0
-blast-radius:
+complexity: 36
+blast-radius: mid
 needs:
   - the-wire
+actual: 0h
 ---
+
+
 
 # The telemetry channels
 
@@ -76,3 +79,95 @@ A word on names: on this board **ledger** already means the registry of every
 cartridge installed on this machine — see [[the-ledger]]. The JSON ledger of
 events asked for above is called the **stream** here, so the two never collide.
 [[the-wire]] is what carries it.
+
+## History
+
+**failed, retried 2026-09-12 20:27**
+
+**2026-09-12 20:27 — the lane will not rebase**
+
+`lane/the-telemetry-channels` does not land on `session/s25699`; 1 file(s) disagree:
+
+- `src/tests/mod.rs`
+
+Nothing is lost: the worker's commits are on `lane/the-telemetry-channels` and the checkout never moved. `pearde retry the-telemetry-channels` puts a worker back on that lane to rebase it onto `session/s25699` and resolve.
+
+**failed, retried 2026-09-12 20:28**
+
+**2026-09-12 20:27 — the lane will not rebase**
+
+`lane/the-telemetry-channels` does not land on `session/s25699`; 1 file(s) disagree:
+
+- `src/tests/mod.rs`
+
+Nothing is lost: the worker's commits are on `lane/the-telemetry-channels` and the checkout never moved. `pearde retry the-telemetry-channels` puts a worker back on that lane to rebase it onto `session/s25699` and resolve.
+
+## Report
+
+spec01: exit 0
+
+running 11 tests
+test tests::stream::leaving_is_an_event_everyone_still_on_the_channel_sees ... ok
+test tests::stream::a_subscriber_receives_everything_published_to_its_channel_in_order ... ok
+test tests::stream::a_queue_nobody_reads_ends_at_the_next_publish ... ok
+test tests::stream::publishing_without_a_listener_costs_one_append_and_keeps_the_log ... ok
+test tests::stream::concurrent_publishers_leave_a_gapless_ordered_log ... ok
+test tests::stream::a_lua_cartridge_publishes_and_a_late_watcher_replays_the_log ... ok
+test tests::stream::a_failing_listener_publishes_an_error_event_on_its_channel ... ok
+test tests::stream::a_lua_cartridge_watches_a_channel_a_socket_client_publishes_to ... ok
+test tests::stream::a_subscriber_that_crashed_and_came_back_ends_up_where_it_was ... ok
+test tests::stream::a_repeat_subscribe_spawns_no_second_pump ... ok
+test tests::stream::a_process_cartridge_publishes_and_watches_over_the_wire ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.40s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running unittests src/lib.rs (target/debug/deps/zirkle-9dda9247c73c08cf)
+
+spec02: exit 0
+
+running 1 test
+test tests::stream::a_failing_listener_publishes_an_error_event_on_its_channel ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 107 filtered out; finished in 0.00s
+
+
+running 1 test
+test tests::stream::a_process_cartridge_publishes_and_watches_over_the_wire ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 107 filtered out; finished in 0.31s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (target/debug/deps/zirkle-9dda9247c73c08cf)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (target/debug/deps/zirkle-9dda9247c73c08cf)
+
+spec03: exit 0
+
+running 1 test
+test tests::stream::a_process_cartridge_publishes_and_watches_over_the_wire ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 107 filtered out; finished in 0.31s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (target/debug/deps/zirkle-9dda9247c73c08cf)
+
+spec04: exit 0
+
+running 11 tests
+test tests::stream::a_queue_nobody_reads_ends_at_the_next_publish ... ok
+test tests::stream::a_subscriber_receives_everything_published_to_its_channel_in_order ... ok
+test tests::stream::leaving_is_an_event_everyone_still_on_the_channel_sees ... ok
+test tests::stream::publishing_without_a_listener_costs_one_append_and_keeps_the_log ... ok
+test tests::stream::concurrent_publishers_leave_a_gapless_ordered_log ... ok
+test tests::stream::a_lua_cartridge_publishes_and_a_late_watcher_replays_the_log ... ok
+test tests::stream::a_lua_cartridge_watches_a_channel_a_socket_client_publishes_to ... ok
+test tests::stream::a_failing_listener_publishes_an_error_event_on_its_channel ... ok
+test tests::stream::a_subscriber_that_crashed_and_came_back_ends_up_where_it_was ... ok
+test tests::stream::a_repeat_subscribe_spawns_no_second_pump ... ok
+test tests::stream::a_process_cartridge_publishes_and_watches_over_the_wire ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 97 filtered out; finished in 0.30s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (target/debug/deps/zirkle-9dda9247c73c08cf)
