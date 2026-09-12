@@ -2,7 +2,8 @@
 atomic: read-the-contract
 subject: pass one's report holds the call-site census this pass edits from, and the answer under `## Answers` closes the only fork left
 date: 2026-09-12
-runs: 0
+updated: 2026-09-12
+runs: 1
 tags:
   - atomic
 ---
@@ -18,3 +19,5 @@ tags:
 - The answered fork is stated in one sentence, and the prior pass's call-site census has been checked against the tree with `grep` rather than trusted.
 
 ## Fails when
+
+- A census or a count from an earlier pass is carried forward untested. The contract is re-read against the tree, not against the last report.

@@ -2,7 +2,8 @@
 atomic: apply-the-answered-fork
 subject: the answer is a sentence until the module is actually split; the split is what shows which callers die with the cut part
 date: 2026-09-12
-runs: 0
+updated: 2026-09-12
+runs: 1
 tags:
   - atomic
 ---
@@ -19,3 +20,6 @@ tags:
 - No symbol of the cut half survives anywhere in the tree, and the kept half compiles as a module that stores nothing the cut half stored.
 
 ## Fails when
+
+- The answer is restated in prose and the module is left whole. Until the split exists, which callers die with the cut part is a guess.
+- A caller of the cut part is left standing. The split is finished when a grep for the cut vocabulary returns nothing.

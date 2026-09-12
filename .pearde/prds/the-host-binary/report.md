@@ -1,290 +1,297 @@
-# the-host-binary — analyst report (pass two)
+# the-host-binary — implementer report (pass three)
 
-Verdict: SPECCED
+Verdict: BLOCKED
 
-Q1 is answered *separate them*, and the separation is applied in the tree. The
-crate is whole: a manifest, eleven modules, a test tree where `mod tests;` can
-reach it, and no memory bank. Three specs, all three describing work that is
-written and unverified — the machine still cannot run a newly created binary,
-so no compile signal exists. `cargo build` is the first acceptance box of
-every spec for that reason.
+The machine still has no compile signal. `probe/dyld-hang.sh` prints `exit=142`
+and `syspolicyd` pid 498 is at 100.0% CPU with 129 minutes of CPU time — the
+same pid, unbroken, across all three passes. The remedy is still the one the
+user holds and has not run: `sudo killall syspolicyd` (with `sudo killall
+amfid`).
 
-## What this pass built
+Every box that a grep, a diff or a file-structure fact can close is closed and
+ticked: **7 of 15**. The remaining 8 are all compile boxes or run boxes and
+they are open, untouched, and honestly unticked. Nothing in this report claims
+a build, a test or a measurement that was not run.
 
-`src/memory.rs` held two mechanisms under one name. The answer keeps the swap
-guard and cuts the stored data, so:
+This pass did not merely re-confirm the wall. It found the mechanism, ruled out
+the one workaround that looked most promising, and left both on the record so
+the next worker does not pay for either again.
 
-- **`src/reload.rs` is new** (47 lines) and holds the reload transaction
-  alone: `gate`, `epoch`, `pending`, and `begin`/`pending`/`finish`. Type
-  `Reload`, `Clone` derived, `Default` hand-written, no `serde` — it stores
-  nothing.
-- **The bank is gone**: `Snapshot`, `Inner`, `read`, `update`, `fork`, `thaw`,
-  plus `Sdk::memory`/`Sdk::checkpoint`, the `{"memory":…}` RPC arm in
-  `cartridge.rs`, `ctx:memory`/`ctx:checkpoint` in `context.rs`, and
-  `Ctx::memory` in `runtime.rs`.
-- **The field `memory` is renamed `reload`** on `Component`, `Fiber`,
-  `Loaded` and `Service`, and the three guard sites follow it: the resident
-  wrapping in `Ctx::on` and `Ctx::provide`, and the `service is being
-  replaced` guard in `lua.rs::to_lua`.
+## The one question for the user
 
-`src/runtime.rs` differs from `~/dev/sys/core/runtime.rs` in exactly eight
-renamed lines and the ten-line `Ctx::memory` deletion. `src/fiber.rs` is
-byte-identical. The PRD's "must not change" holds.
+**Run `sudo killall syspolicyd && sudo killall amfid`.** launchd respawns both
+immediately; no reboot, no lost session. Then `sh
+.pearde/prds/the-host-binary/probe/dyld-hang.sh` must print `exit=0`. Every
+open box below is a single `cargo build --all-targets` and `cargo test` away
+once it does. There is no other route — see "Why there is no way around it".
 
-### The one place the cut was more than a rename
+## Box status
 
-With no private snapshot left to copy, `fork()` is `Clone` and `thaw()` is a
-no-op. So in `loader.rs::replace_entry` the pair
+| spec | ticked | open | what is open |
+|---|---|---|---|
+| spec01 | 2 / 4 | 2 | `cargo build --all-targets` finishes; build emits no warning |
+| spec02 | 5 / 6 | 1 | `cargo build --all-targets` exits 0 |
+| spec03 | 0 / 5 | 5 | `cargo test`; `reload.rs` passes; `--help` exits 0; the 3ms/16MB measurement; the binary is inert |
+
+### spec01 — ticked
+
+- **`src/lib.rs` names no module that has no file, and no file under `src/` is
+  unreachable from it.** 11 modules listed, 11 files present. The only files
+  under `src/` that are not modules are `lib.rs` (the lib root) and `main.rs`
+  (the `[[bin]]`).
+- **`Cargo.toml` differs from `~/dev/sys/core/Cargo.toml` only in the four
+  `path =` values.** The normalised diff is empty; the raw diff is exactly
+  lines 12, 16, 21 and 26.
+
+### spec02 — ticked
+
+- **No symbol of the cut half survives.** `grep -rn
+  "Snapshot\|checkpoint\|\.thaw()\|\.fork()" src` is empty, and so is `grep
+  -rni "\bmemory\b\|development\|landscape" src`.
+- **`src/reload.rs` stores nothing.** Fields are `gate`, `epoch`, `pending` at
+  lines 12-14. 47 lines, no `serde`.
+- **`src/loader.rs` keeps the transaction step for step.** `begin()` L821,
+  `gate().write_owned()` L854, `finish()` at L849 (prepare-failure arm), L881
+  (success arm) and L896 (switch-failure fallthrough). Read the body at
+  L818-896 to confirm it, rather than trusting the grep.
+- **`src/fiber.rs` is byte-identical** to `~/dev/sys/core/fiber.rs` — `diff`
+  empty.
+- **`src/runtime.rs` differs only in renames plus the `Ctx::memory`
+  deletion** — see the correction below.
+
+### spec03 — nothing ticked
+
+The grep half of box 2 passes (`grep -rni "bank\|snapshot\|checkpoint\|memory"
+src/tests` is empty, 2,325 lines over 11 files as specced), but the box also
+requires `src/tests/reload.rs` to *pass*, which needs a test run. A compound
+box cannot be half-ticked, so it stays open.
+
+## A spec claim that is off by one
+
+`spec02` acceptance box 6 read *"differs … in exactly 8 renamed lines"*. It is
+**7**, not 8: lines 59, 71, 122, 150, 477, 579, 583, plus the 10-line
+`Ctx::memory` deletion at L387-396, and nothing else. The substance of the box
+holds exactly — only renames and that one deletion — so the box is ticked with
+the count corrected in place. The PRD's "must not change" on `runtime.rs` and
+`fiber.rs` holds.
+
+## The build could not be run, and this is why
+
+`probe/dyld-hang.sh`, run at the start of this pass:
 
 ```
-let _calls = memory.gate().write_owned().await;
-let next_memory = memory.fork();
-component.memory = next_memory.clone();
+exit=142  (0 healthy, 142 = hung in dyld)
 ```
 
-became `component.reload = reload.clone()` under the same write gate, the
-`l.memory = next_memory` line in the success arm is dropped (the generations
-now share one transaction, which is the point of it), and `memory.thaw()` on
-the failure arm is deleted rather than ported. `begin` → write gate → stage →
-`switch` → `finish` is unchanged step for step, on both arms.
+```
+root  498  100.0  /usr/libexec/syspolicyd    129:49.75
+```
 
-## The test tree moved, and why
+### The mechanism, which was not known before this pass
 
-In `~/dev/sys/core` the tests sat beside `lib.rs` and were reached as a
-private module — that is what `autotests = false` encodes, and it is why the
-copy did not build: `mod tests;` under `src/lib.rs` looks for `src/tests/`.
-The tree is now at `src/tests/`, the two `[[example]] path` values follow it,
-and `Cargo.toml` differs from the original in those four `path =` values and
-nothing else. A root `tests/` would have read as integration tests, which
-these are not — they reach `crate::lua::Host`.
+The rule on record was "every newly *linked* Mach-O hangs". That is not quite
+it, and the sharper version explains everything the previous passes saw. **The
+dyld code-signing verdict is cached per inode, not per path.** New probe,
+`probe/dyld-inode.sh`, on a known-good pre-peg binary:
 
-`tests/memory.rs` had no test that did not assert through the bank, so it is
-replaced by `src/tests/reload.rs`, which asserts the same guarantees through
-the generation instead: a consumer's captured service reference reaching the
-new generation while keeping its own fiber uid, a raising candidate never
-publishing, the failed transaction still finishing so the next swap works, the
-inactive-entry recovery arm, and two entries of one file switching
-independently. `fixtures/rpc_fixture.rs` no longer checkpoints — its `reject`
-config stands alone — and `rpc_contract.rs::replacement` was updated to match.
+```
+original path+inode : exit=0
+hardlink same inode: exit=0
+copy    new inode  : exit=142
+```
 
-`src/` is 4,396 lines over 13 files; `src/tests/` 2,325 over 11.
+A hardlink of a working binary runs. A copy of the same binary does not. It is
+the new inode that has no verdict, not the linker.
 
-## Still no compile signal, and three workarounds that do not help
+This also explains a stall that looks like something else entirely. `sample(1)`
+on the stalled `rustc` shows it is **not** hung at process start — it reaches
+`main`, loads `librustc_driver`, enters `run_compiler`, and blocks here:
 
-`syspolicyd` has been at ~100% CPU across both passes. Every newly created
-Mach-O hangs in `_dyld_start`, so `cargo build` stalls after four to ten
-crates with every process at 0% CPU — build scripts are newly created binaries
-that have to run. Re-tested this pass and still hanging:
+```
+run_compiler -> dlopen_from -> Loader::getLoader -> makeJustInTimeLoaderDisk
+  -> Loader::mapSegments -> SyscallDelegate::fcntl -> __fcntl
+```
 
-- `codesign --force --sign -` on the linked binary — exit 142. Not a
-  signature check.
-- `cp /bin/echo` and run the copy — also hangs. It is the new inode, not the
-  compiler.
-- Killing every stalled `cargo` and `build-script-build` on the machine to
-  release their XPC requests — the daemon stayed pegged with nothing left
-  waiting on it, so the pile-up is a symptom, not the cause.
+That `fcntl` is the signature check on a **proc-macro dylib being dlopen'd**.
+So a live `rustc` sitting at 0% CPU is this, not a jobserver deadlock. Worth
+knowing before anyone spends an afternoon on the wrong hypothesis.
 
-Restarting the daemon needs a privilege this worker does not have. The
-consequence is unchanged from pass one and is now stated inside each spec:
-**the tree is reasoned from every call site and compiler-verified nowhere.**
-The rename was applied by exact-string match across eight files, so a missed
-site is the expected failure, and `cargo build --all-targets` is the box that
-finds it. Recorded: `sources/260912-fb23.md`; the separation itself as
-`sources/260912-6b69.md`.
+### Why there is no way around it
 
-The PRD's closing measurement — `--help` in 0.9ms at 8.9MB RSS — could not be
-re-taken for the same reason, and is spec03's last two boxes.
+The obvious workaround is to point `CARGO_TARGET_DIR` at a target directory
+built before the peg, so cargo reuses cached artifacts and executes nothing
+new. Tested this pass against `~/dev/sys/target`, and it is the closest anyone
+has got:
 
-## Specs
+- It **works, partially.** The build ran well past the ~10-crate wall the
+  previous passes hit and reached the heavy leaf crates — `tokio`, `mlua`,
+  `rustix`, `tempfile`. Build-script *outputs* are reused without re-executing
+  the scripts, so that entire class of stall disappears.
+- It **still dies**, at the first `dlopen` of a proc-macro dylib.
+- Hardlinking the cached dylibs in so they carry their verdicts (96 of them,
+  inodes confirmed matching) **does not help**, because every proc-macro dylib
+  in that warm tree was itself created during the peg and so never had a
+  verdict to cache:
 
-| spec | goal | complexity |
+```
+dylibs in ~/dev/sys/target/debug/deps created during the peg: 31
+dylibs predating the peg (would carry a verdict):              0
+```
+
+`probe/warm-cache-check.sh` answers that in one command. Run it before
+attempting this route; if it reports zero pre-peg dylibs, the route is closed
+before you start.
+
+Also ruled out: **removing the `RUSTC_WRAPPER`**. `~/.cargo/config.toml` sets
+`rustc-wrapper = "kache"`, and a wrapper in front of every `rustc` was a
+plausible suspect. It is not — `kache` is an old binary with a cached verdict,
+and with it disabled the build stalls at the identical point.
+
+Together with the three the previous pass killed (`codesign --force --sign -`,
+`cp` of a working binary, killing stalled `cargo` processes), **every non-root
+avenue is now closed with evidence.** There is no compile signal on this
+machine without restarting the daemon.
+
+### Left clean
+
+The 83 GB clone used for the experiment was copy-on-write and cost no disk; it
+and every process this pass started have been removed. Free space is where it
+started and the lane tree is clean — `git status --short` is empty, so the
+probe's work is intact as committed.
+
+## On the record
+
+Both findings are written to the knowledge base, cited rather than left
+standing only here:
+
+- `[[260912-7adb]]` — the hang is keyed by inode, so a hardlink runs and a copy
+  does not; includes the trap that a binary *created* during the peg hangs from
+  its own inode and looks like a counter-example. That trap cost one wrong
+  conclusion in this pass before it was caught.
+- `[[260912-9edf]]` — a warm cargo target dir does not restore a compile
+  signal; how far it gets, the `dlopen` stack where it dies, the one-command
+  pre-check, and the `RUSTC_WRAPPER` dead end.
+
+Both refine `[[260912-7a41]]` and `[[260912-ebde]]`, which the record already
+held and which were read first. No research outside the repo was done — step 2
+returned three strong hits and they covered the question, so the only new work
+was measurement.
+
+## The standing direction: `pub` items nothing in this tree reaches
+
+Swept `src/` for `pub fn`s with no caller anywhere in the tree, tests included.
+Exactly one:
+
+- **`sdk::on_reload`** (`src/sdk.rs:58`) — *"Cooperatively yield long-running
+  calls before this cartridge is replaced."* No caller in `src/` or
+  `src/tests/`. It is public SDK surface a cartridge process would call, not
+  dead host code, so it is **reported and not deleted** — which is what the
+  board note asks for `pub` items the compiler will never flag.
+
+Worth a look when it is next touched: `Sdk` has a field named `reload` holding
+a map of handlers, while `crate::reload::Reload` is the transaction type. The
+two are unrelated and now share a word. Not a defect, and not in scope here.
+
+The private unreachable items are the compiler's job — `warnings = "deny"` will
+name them the moment a build runs, and that is one of the open boxes.
+
+## Health
+
+No health record existed; `pearde health score` wrote one. In footprint, worst
+first:
+
+| file | score | flags |
 |---|---|---|
-| `spec01.md` | the copy becomes a crate cargo can see — manifest, module list, test tree placed | 8 |
-| `spec02.md` | the swap guard survives the cut of the memory banks | 14 |
-| `spec03.md` | the suite that came with the copy runs here, and the binary is inert | 10 |
+| `src/loader.rs` | 30 | branching, lines |
+| `src/main.rs` | 58 | longest, lines |
+| `src/cartridge.rs` | 66 | lines, branching |
+| `src/tests/process.rs` | 68 | lines, longest |
+| `src/lua.rs` | 69 | lines, branching |
+| `src/runtime.rs` | 72 | lines, longest |
 
-Footprint union: `Cargo.toml`, `src/lib.rs`, `src/main.rs`, `src/reload.rs`,
-`src/cartridge.rs`, `src/context.rs`, `src/loader.rs`, `src/lua.rs`,
-`src/runtime.rs`, `src/sdk.rs`, `src/service.rs`, `src/tests`.
+**Nothing moved, and nothing could.** Every one of these is flagged for size
+and branching, so the only improvement is a split — which the contract names a
+defect outside scope, to be reported and not done. Beyond that: `runtime.rs` is
+under the PRD's explicit "must not change", and with no compiler on the machine
+any edit to the other five would be unverifiable, which is precisely what this
+report refuses to do. `src/reload.rs`, the file this PRD actually created,
+scores 100.
 
-`src` itself is deliberately not in the footprint — it would clash with every
-other PRD on this board. `src/fiber.rs`, `src/socket.rs` and `src/turn.rs` are
-untouched and are not claimed.
+## Workflow probe-then-spec
 
-**complexity 30** — the trim is decided and written; what remains is one
-compile, the diagnostics it prints across 4,396 lines under
-`warnings = "deny"`, and a suite that has never run. Nothing here is a design
-question any more, which is why it is not higher.
+| # | step | outcome |
+|---|---|---|
+| 1 | read-the-contract | done — PRD, `## Answers`, pass-two report and `probe/README.md` read; the census re-checked with `grep` rather than trusted |
+| 2 | query-the-record-first | done — 3 strong hits, all used, no outside research |
+| 3 | apply-the-answered-fork | already standing from pass one; verified empty on every cut symbol |
+| 4 | port-the-tests-the-cut-orphaned | already standing; `grep` for the cut vocabulary across `src/tests` returns nothing |
+| 5 | attempt-the-build | **blocked** — the build does not fail, it hangs; one probe run is the whole test and it printed 142 |
+| 6 | separate-the-machine-failure-from-the-crate | done — mechanism found, reproduction runnable from `probe/`, two workarounds newly ruled out |
+| 7 | record-what-the-build-learned | done — `[[260912-7adb]]`, `[[260912-9edf]]`, both negatives included |
+| 8 | write-the-specs | not re-entered; specs stood from pass two and were ticked, not rewritten |
 
-**blast-radius high** — this is the crate every other PRD on the board builds
-inside. If the reload transaction was cut wrong, hot-reload and the in-flight
-call guard fail silently under load rather than at compile time, and
-`hot-reload`, `the-wire`, `lua-interface` and `verify-one-cartridge` all
-inherit it.
+The answered fork in one sentence: **Q1 is *separate them* — `src/memory.rs`
+split into `src/reload.rs` (gate, epoch, pending) and a deletion of the bank,
+with the swap guard kept and the stored data cut.**
 
-## Findings outside this PRD's scope
+No back-edge was taken. Step 5 is a machine wall, not a step failure, so it
+routes to step 6 by its own text rather than back to step 3.
 
-- `python3 resources/workflows.py list .` against this board still returns
-  nothing — the board's own workflow library is empty, so `probe-then-spec`
-  is named here for the first time and `## Route` below is its file, written
-  from the eight steps this pass actually took.
-- `python3 resources/questions.py check .` still reports two rows against
-  `the-manifest`: its question 1 carries one prepared answer instead of three,
-  and that answer quotes code in backticks. Not touched.
-- `.pearde/settings.md` carries no spec-count or complexity ceiling, so the
-  brief's defaults (6 specs, 40 summed) were used. The set is 3 and 32.
-- `python3 resources/knowledge.py query` returned 2 hits, 1 strong, for this
-  pass's question, so no new gap was enqueued; pass one's
-  `pending/260912-6709.md` is still open.
-- The crate, the binary and the profile directory are all still named
-  `zirkle`. The PRD asks for no rename and the build does not need one.
-- `~/.cargo/config.toml` sets `build.rustc-wrapper = "kache"`, whose daemon is
-  resident. It is not the stall (pass one disabled it and nothing changed),
-  but it will show in `ps`.
-- `src/main.rs` (387 lines) is not on the PRD's keep list, but a binary needs
-  a `main`. Every subcommand is a thin `host.call("<key>", …)` into a service
-  only a cartridge provides, so with no cartridges the binary does nothing —
-  which is what the PRD closes on. Kept unchanged.
-- Two stalled `cargo` trees under `/Users/feb/dev/sys` were killed this pass
-  along with this repo's own, since they were parked at 0% CPU and holding the
-  artifact lock. They were another repo's build, already dead; nothing under
-  `/Users/feb/dev/sys` was edited.
+### Edits
 
-## Scores
+Replacement text for the places the atomics misled this run.
 
-complexity: 30
-blast-radius: high
-workflow: probe-then-spec
+**1. Step 5 `attempt-the-build`, item 2.** Reads *"Clear any stale lock holder
+first if the build reports one."* The build never reports one — under this
+failure it reports nothing at all, and the actual hazard is the opposite:
+prior runs leave parked processes that the next run inherits and that never
+appear in any message. 22 stale `build-script-build` processes from earlier
+passes were still resident when this pass started. Replace with:
 
-## Route
+> 2. Clear any stale lock holder the build reports. If the build reports
+>    nothing at all, check for parked processes from previous attempts
+>    (`ps -eo pid,stat,time,comm | grep -E 'rustc|cargo'`) and kill them before
+>    re-running — a hung toolchain leaves children that no message names.
 
-## Use when
+**2. Step 5 `attempt-the-build`, "Done when".** Reads *"The build prints its
+success line and exits 0, or it has produced a diagnostic that names a file and
+a line."* Neither disjunct can be satisfied by a build that hangs, so the step
+has no exit and the worker cannot tell "keep waiting" from "stop". Replace
+with:
 
-- A PRD came back from a question with its `## Answers` filled and pass one's probe already standing uncommitted in the tree, and the answer has to be turned into specs.
-- Not when the PRD has never been probed and has no answers — that is the first pass of this same route, which stops at the question instead of continuing past it.
+> - The build prints its success line and exits 0, or it has produced a
+>   diagnostic that names a file and a line, or it has been shown to hang
+>   rather than fail — in which case go to step 6 and do not re-run it.
 
-## Steps
+**3. Every atomic's `## Fails when` is empty.** All eight in this workflow have
+the heading and no entries. The contract says a report must carry *"the
+replacement text for every failure the atomic caused — … a shape `## Fails
+when` does not list"*, but a section that lists nothing cannot not-list a
+shape, so the check cannot fail and the instruction is unrunnable as written.
+Either populate the sections or drop the heading; as it stands it reads as an
+omission at every step and a worker cannot tell which.
 
-| # | atomic | why | on failure |
-|---|--------|-----|------------|
-| 1 | `read-the-contract` | pass one's report holds the call-site census this pass edits from, and the answer under `## Answers` closes the only fork left | `stop` |
-| 2 | `query-the-record-first` | the machine stall this run hits was already on record from pass one, so no time was spent rediscovering it | `→ 1` |
-| 3 | `apply-the-answered-fork` | the answer is a sentence until the module is actually split; the split is what shows which callers die with the cut part | `→ 1` |
-| 4 | `port-the-tests-the-cut-orphaned` | every test of the cut part asserted through it, so deleting the file silently drops coverage of the part that was kept | `→ 3` |
-| 5 | `attempt-the-build` | a rename applied by string match across eight files is a guess until a compiler reads it | `→ 3` |
-| 6 | `separate-the-machine-failure-from-the-crate` | a build that produces no output looks identical to a build that failed, and specs written on that confusion blame the wrong thing | `→ 5` |
-| 7 | `record-what-the-build-learned` | the split and the dead workarounds are one worker's head until they are written to the record | `→ 3` |
-| 8 | `write-the-specs` | the next worker gets the file, not the head, and every unverified claim has to arrive as a box that can fail | `→ 3` |
+**4. Step 6 item 3, "Re-test the workarounds a previous pass left untried".**
+This one earned its keep — it is what produced both knowledge notes — but it
+has no stopping rule, and workaround space is unbounded. Suggest appending:
 
-### atomic read-the-contract
+> …and stop when the remaining candidates all require a privilege you do not
+> have; say so and name the privilege rather than continuing.
 
-## Do
+## What is left for the next worker
 
-1. Run `pearde brief <prd> --worker <you>` and read nothing it does not name.
-2. Read `.pearde/prds/<prd>/prd.md` including `## Questions` and `## Answers`.
-3. Read `.pearde/prds/<prd>/report.md` and `.pearde/prds/<prd>/probe/README.md` from the prior pass, and inspect the uncommitted tree they describe.
+Nothing but the compile. The tree is written, the specs are ticked to the
+limit of what can be checked without a compiler, and the two knowledge notes
+mean none of this pass's diagnosis has to be repeated. After `sudo killall
+syspolicyd && sudo killall amfid`:
 
-## Done when
+```sh
+sh .pearde/prds/the-host-binary/probe/dyld-hang.sh    # must print exit=0
+cargo build --all-targets 2>&1 | tail -20             # spec01, spec02
+cargo test 2>&1 | tail -30                            # spec03
+./target/debug/zirkle --help                          # spec03
+```
 
-- The answered fork is stated in one sentence, and the prior pass's call-site census has been checked against the tree with `grep` rather than trusted.
-
-## Fails when
-
-### atomic query-the-record-first
-
-## Do
-
-1. Run `python3 resources/knowledge.py query "<the contract as a question>"` before any research outside the repo.
-2. Read every strong hit; a gap enqueues itself and is a report line, not a question to the person.
-
-## Done when
-
-- Each strong hit is either used or explicitly set aside, and no outside research was done on a question the record already answered.
-
-## Fails when
-
-### atomic apply-the-answered-fork
-
-## Do
-
-1. Write the kept half into its own module and delete the cut half outright.
-2. `grep -rn` every symbol of the cut half across `src` and the tests, and remove each caller.
-3. Where a kept operation was only meaningful because of the cut half, collapse it to what remains rather than porting it.
-4. `grep` for the cut names once more; an empty result is the check.
-
-## Done when
-
-- No symbol of the cut half survives anywhere in the tree, and the kept half compiles as a module that stores nothing the cut half stored.
-
-## Fails when
-
-### atomic port-the-tests-the-cut-orphaned
-
-## Do
-
-1. Read every test of the module being cut and mark which guarantee each one actually asserts.
-2. Rewrite the ones asserting a kept guarantee so they assert it through what remains, in a file named for the kept half.
-3. Delete the ones that only asserted the cut half, and update any fixture whose config existed to drive it.
-
-## Done when
-
-- Each guarantee the contract keeps has a test that names it, and `grep` for the cut half's vocabulary across the test tree returns nothing.
-
-## Fails when
-
-### atomic attempt-the-build
-
-## Do
-
-1. Run the project's build over every target, not just the library.
-2. Clear any stale lock holder first if the build reports one.
-3. Fix what the compiler reports and run it again.
-
-## Done when
-
-- The build prints its success line and exits 0, or it has produced a diagnostic that names a file and a line.
-
-## Fails when
-
-### atomic separate-the-machine-failure-from-the-crate
-
-## Do
-
-1. When the build stalls with no diagnostic, check whether the processes are burning CPU or parked at 0%.
-2. Reduce it to the smallest thing outside the project that shows the same symptom, and keep that reproduction as a script in `probe/`.
-3. Re-test the workarounds a previous pass left untried, and write down the ones that do not work as well as the ones that do.
-4. Say in the report, and in the first acceptance box of every spec, that the tree is unverified and what will verify it.
-
-## Done when
-
-- The failure is demonstrated outside the project under build, the reproduction is runnable from `probe/`, and no spec claims a check that was never run.
-
-## Fails when
-
-### atomic record-what-the-build-learned
-
-## Do
-
-1. Pipe the finding into `python3 resources/knowledge.py remember "<title>"` with `--provenance` naming the route or measurement it came from.
-2. Record the negative results too — the workarounds that did not work are what the next worker would otherwise pay for again.
-
-## Done when
-
-- Every fact the report states that the next worker would have to rediscover has a note id, and the report cites it.
-
-## Fails when
-
-### atomic write-the-specs
-
-## Do
-
-1. Split what the build stands up into implementable units and write each to `specs/specNN.md` from the template.
-2. Give each a `footprint:` of the paths it writes — never a root that clashes with the board — and a `complexity:`.
-3. Under each, say what already stands in the tree and what is left to finish.
-4. Make the first box of every spec the check that was never run, and give each spec a verify command scoped to its footprint.
-
-## Done when
-
-- Every claim the probe made is a box that a command can fail, the footprints cover the tree the probe moved and nothing else, and the summed complexity and the spec count are inside the board's ceilings.
-
-## Fails when
+With `warnings = "deny"`, expect the first build to surface orphaned imports
+and now-dead private functions from the cut — that is the compiler doing the
+half of the standing direction that grep cannot.

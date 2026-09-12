@@ -2,6 +2,7 @@
 atomic: write-the-specs
 subject: the next worker gets the file, not the head, and every unverified claim has to arrive as a box that can fail
 date: 2026-09-12
+updated: 2026-09-12
 runs: 0
 tags:
   - atomic
@@ -19,3 +20,5 @@ tags:
 - Every claim the probe made is a box that a command can fail, the footprints cover the tree the probe moved and nothing else, and the summed complexity and the spec count are inside the board's ceilings.
 
 ## Fails when
+
+- An unverified claim arrives as prose rather than as a box that can fail, so nothing downstream can ever catch it being wrong.

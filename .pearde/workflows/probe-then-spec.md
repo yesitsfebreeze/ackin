@@ -2,7 +2,8 @@
 workflow: probe-then-spec
 subject: The host binary
 date: 2026-09-12
-runs: 0
+updated: 2026-09-12
+runs: 1
 tags:
   - workflow
 ---

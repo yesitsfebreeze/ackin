@@ -43,8 +43,8 @@ warning.
 ## Acceptance
 
 - [ ] `cargo build --all-targets` prints `Finished` and exits 0
-- [ ] `src/lib.rs` names no module that has no file, and no file under `src/` is unreachable from it
-- [ ] `Cargo.toml` differs from `~/dev/sys/core/Cargo.toml` only in the four `path =` values
+- [x] `src/lib.rs` names no module that has no file, and no file under `src/` is unreachable from it — 11 modules listed, 11 files present; only `lib.rs` (the lib root) and `main.rs` (the `[[bin]]`) are not modules
+- [x] `Cargo.toml` differs from `~/dev/sys/core/Cargo.toml` only in the four `path =` values — normalised diff is empty; raw diff is exactly lines 12, 16, 21, 26
 - [ ] `cargo build` emits no warning of any kind
 
 ## Verify and Proof

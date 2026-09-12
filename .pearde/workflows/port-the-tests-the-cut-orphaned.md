@@ -2,7 +2,8 @@
 atomic: port-the-tests-the-cut-orphaned
 subject: every test of the cut part asserted through it, so deleting the file silently drops coverage of the part that was kept
 date: 2026-09-12
-runs: 0
+updated: 2026-09-12
+runs: 1
 tags:
   - atomic
 ---
@@ -18,3 +19,5 @@ tags:
 - Each guarantee the contract keeps has a test that names it, and `grep` for the cut half's vocabulary across the test tree returns nothing.
 
 ## Fails when
+
+- The test file of the cut part is deleted whole, taking with it the assertions that covered the part that was kept.

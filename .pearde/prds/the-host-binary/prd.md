@@ -1,11 +1,12 @@
 ---
-state: claimed
+state: blocked
 origin: requested
 priority: 90
 complexity: 32
 blast-radius: high
 workflow: probe-then-spec
-claim: hostwright 2026-09-12 15:45
+needs:
+  - the-build-signal
 ---
 
 # The host binary

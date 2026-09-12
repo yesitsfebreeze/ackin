@@ -16,3 +16,18 @@ working binary (`/bin/echo`), and killing every stalled `cargo`/
 `build-script-build` on the machine to release whatever XPC requests they
 held. The peg outlives all three. Nothing short of restarting the daemon
 clears it, and that needs a privilege this worker does not have.
+
+## Added pass three
+
+`dyld-inode.sh` is the sharper reproduction. The verdict dyld waits on is
+cached per **inode**, not per path: a hardlink of a working binary runs, a copy
+of the same binary hangs. Healthy machine prints `0 0 0`; pegged prints
+`0 0 142`. Choose a subject that ran successfully *before* the peg — a binary
+created during it hangs from its own inode and looks like a counter-example.
+
+`warm-cache-check.sh` answers, in one command, whether the
+`CARGO_TARGET_DIR`-at-a-warm-tree workaround is worth trying. It is not, here:
+all 31 proc-macro dylibs in `~/dev/sys/target` were themselves created during
+the peg, so none carries a verdict. That route reaches the heavy leaf crates
+(tokio, mlua, rustix, tempfile) and then blocks in `dlopen` — see
+`[[260912-9edf]]`. Disabling the `kache` `RUSTC_WRAPPER` changes nothing.

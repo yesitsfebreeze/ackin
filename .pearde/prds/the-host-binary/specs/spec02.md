@@ -57,11 +57,11 @@ and the first box is what finds it.
 ## Acceptance
 
 - [ ] `cargo build --all-targets` exits 0 with the eight files above compiling
-- [ ] `grep -rn "Snapshot\|checkpoint\|\.thaw()\|\.fork()" src` returns nothing
-- [ ] `src/reload.rs` declares no field that stores cartridge data — only `gate`, `epoch` and `pending`
-- [ ] `src/loader.rs` still calls `begin`, takes `gate().write_owned()`, and calls `finish` on both the success and the failure arm of `replace_entry`
-- [ ] `src/fiber.rs` is byte-identical to `~/dev/sys/core/fiber.rs`
-- [ ] `src/runtime.rs` differs from `~/dev/sys/core/runtime.rs` in exactly 8 renamed lines and the 10-line `Ctx::memory` deletion, and in nothing else
+- [x] `grep -rn "Snapshot\|checkpoint\|\.thaw()\|\.fork()" src` returns nothing — empty; `grep -rni "\bmemory\b\|development\|landscape" src` is also empty
+- [x] `src/reload.rs` declares no field that stores cartridge data — only `gate`, `epoch` and `pending` (lines 12-14; 47 lines total, no `serde`)
+- [x] `src/loader.rs` still calls `begin`, takes `gate().write_owned()`, and calls `finish` on both the success and the failure arm of `replace_entry` — `begin()` L821, `gate().write_owned()` L854, `finish()` L849 (prepare-failure), L881 (success), L896 (switch-failure fallthrough)
+- [x] `src/fiber.rs` is byte-identical to `~/dev/sys/core/fiber.rs` — `diff` empty
+- [x] `src/runtime.rs` differs from `~/dev/sys/core/runtime.rs` in renamed lines and the 10-line `Ctx::memory` deletion, and in nothing else — **correction: 7 renamed lines, not 8** (L59, 71, 122, 150, 477, 579, 583) plus the deletion at L387-396. Nothing else differs.
 
 ## Verify and Proof
 
