@@ -8,6 +8,7 @@ needs:
   - the-host-binary
 workflow: probe-then-spec
 actual: 0.64h
+commit: a20e44c b4006e4
 ---
 
 # The manifest
