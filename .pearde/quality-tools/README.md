@@ -3,7 +3,7 @@
 Run from any directory, with Python 3.9+ and the checkout's Rust toolchain:
 
 ```sh
-python3 /Users/feb/dev/cartridge/.pearde/quality-tools/measure.py \
+python3 /Users/feb/dev/cartridge/cartridge.ctg/.pearde/quality-tools/measure.py \
   /absolute/path/to/checkout /absolute/path/to/round-evidence --checks
 ```
 
