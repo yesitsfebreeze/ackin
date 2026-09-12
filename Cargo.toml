@@ -20,6 +20,11 @@ path = "src/main.rs"
 name = "rpc_fixture"
 path = "src/tests/fixtures/rpc_fixture.rs"
 
+# A cartridge that hosts rpc_fixture as its own child: the recursion fixture.
+[[example]]
+name = "nested_fixture"
+path = "src/tests/fixtures/nested_fixture.rs"
+
 # Provides `lua` as a process, the isolated alternate provider in composition tests.
 [[example]]
 name = "lua_fixture"

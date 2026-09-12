@@ -233,23 +233,23 @@ pub struct Manifest {
 	pub provide: Vec<String>,
 }
 
-fn manifest(cmd: &[String]) -> Result<Manifest, Error> {
+pub(crate) fn manifest(cmd: &[String]) -> Result<Manifest, String> {
 	let program = cmd
 		.first()
-		.ok_or_else(|| Error::Apply("empty cmd".into()))?;
+		.ok_or_else(|| "empty cmd".to_owned())?;
 	let out = std::process::Command::new(program)
 		.args(&cmd[1..])
 		.arg("hello")
 		.stderr(Stdio::piped())
 		.output()
-		.map_err(|e| Error::Apply(format!("{program}: {e}")))?;
+		.map_err(|e| format!("{program}: {e}"))?;
 	for line in String::from_utf8_lossy(&out.stderr).lines() {
 		crate::turn::diagnostic_line(program, line);
 	}
 	if !out.status.success() {
-		return Err(Error::Apply(format!("{program} hello: {}", out.status)));
+		return Err(format!("{program} hello: {}", out.status));
 	}
-	serde_json::from_slice(&out.stdout).map_err(|e| Error::Apply(format!("{program} hello: {e}")))
+	serde_json::from_slice(&out.stdout).map_err(|e| format!("{program} hello: {e}"))
 }
 
 pub fn component(
@@ -258,7 +258,7 @@ pub fn component(
 	cmd: Vec<String>,
 	config: Json,
 ) -> Result<Component, Error> {
-	let m = manifest(&cmd)?;
+	let m = manifest(&cmd).map_err(Error::Apply)?;
 	let cartridge = name.clone();
 	let apply = Arc::new(move |ctx: Ctx| {
 		let (host, name, cmd, config) = (host.clone(), cartridge.clone(), cmd.clone(), config.clone());

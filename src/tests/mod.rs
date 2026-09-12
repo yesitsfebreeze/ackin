@@ -11,6 +11,7 @@ mod reload;
 mod resolver;
 mod rpc_contract;
 mod socket;
+mod wire;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
