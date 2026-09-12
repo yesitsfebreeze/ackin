@@ -664,10 +664,59 @@ impl Host {
 		self.lua.from_value(mlua::Value::Table(value))
 	}
 
-	/// `init.lua` lists the entries; `config.lua`, if present, maps entry id to
-	/// config fields laid over the entry's own.
+	/// One entry per installed cartridge, straight off the ledger, before any
+	/// profile is read. The id is the ledger path, because the path is the
+	/// identity: a bare name is not unique across a tree of subtrees and was
+	/// never meant to be.
+	fn derived(&self) -> Vec<Entry> {
+		crate::ledger::Ledger::scan(&self.dir)
+			.entries()
+			.filter(|e| e.parent().is_none())
+			.map(|e| Entry {
+				id: e.path.clone(),
+				path: e.path.clone(),
+				config: serde_json::Value::Null,
+				// A newly installed cartridge is *available, not started* — it
+				// is listed and can be asked for, and nothing
+				// of it runs until something needs it. `disabled` is the line
+				// between the two: the entry exists, its document is read and
+				// its declarations carry, but nothing is evaluated and nothing
+				// spawns. Stopping it does not mean taking it away, which is
+				// why an installed cartridge stays put when `init.lua` does not
+				// name it — the ledger is the record, not the launch order.
+				disabled: true,
+				isolate: Vec::new(),
+				inject: Vec::new(),
+			})
+			.collect()
+	}
+
+	/// The ledger is the manifest of record and the profile is an override on
+	/// top of it: every cartridge installed under the root is an entry before
+	/// `init.lua` is read at all, so installing one is putting it where the
+	/// ledger looks and nothing edits a list. `init.lua`, if present, then
+	/// overrides — an entry whose `path` names a ledger entry replaces the
+	/// derived one under whatever `id` the profile gives it, and an entry whose
+	/// `path` names something else (a bare `.lua` file, a folder outside the
+	/// root) is added, which is how programmatic composition survives.
+	/// `config.lua` maps entry id to config fields laid over the entry's own.
 	fn entries(self: &Arc<Self>) -> Result<Vec<Entry>, mlua::Error> {
-		let mut entries: Vec<Entry> = self.eval(&self.profile.join("init.lua"))?;
+		let mut entries = self.derived();
+		let profile = self.profile.join("init.lua");
+		let overrides: Vec<Entry> = if profile.is_file() {
+			self.eval(&profile)?
+		} else {
+			Vec::new()
+		};
+		// An override is matched against the *derived* entries only, and by the
+		// file each one resolves to rather than by the string written: a profile
+		// may name the folder or the `cartridge.json` inside it, and `Entry::file`
+		// is the one rule that already makes those the same cartridge. The
+		// derived count is frozen before the `retain`, so two profile entries
+		// naming one path are two instances of it and do not eat each other.
+		let named: Vec<PathBuf> = overrides.iter().map(|e| e.file(&self.dir)).collect();
+		entries.retain(|e| !named.contains(&e.file(&self.dir)));
+		entries.extend(overrides);
 		let mut ids = std::collections::HashSet::new();
 		for entry in &entries {
 			validate(entry)?;

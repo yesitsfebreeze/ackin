@@ -72,6 +72,8 @@ enum Command {
 	Socket,
 	/// Cartridges of the profile and what each one needs, resolved to its provider
 	List,
+	/// Every cartridge installed under the cartridge root, and what each need binds to
+	Ledger,
 	/// Load the profile and run every contract its cartridges declare
 	Verify,
 }
@@ -262,6 +264,52 @@ fn list(cartridges: &[CartridgeInfo]) -> usize {
 	cartridges.iter().filter(|p| p.unread.is_some()).count()
 }
 
+/// One line per installed cartridge, in path order, with each of its needs
+/// under it bound to the path that provides it — `?` where nothing in scope
+/// does, `ambiguous` naming every offer where one scope offers it twice.
+/// Answers how many **problems** the listing found, on the same terms as
+/// [`list`]: an unreadable document is listed and counted, never silently
+/// absent and never printed as a cartridge that declared nothing, and a need
+/// two entries of one scope offer is counted too, so a clash found at install
+/// time is a non-zero exit rather than odd behaviour later.
+fn ledger_lines(ledger: &zirkle::ledger::Ledger) -> usize {
+	for e in ledger.entries() {
+		let mut line = e.path.clone();
+		if !e.name.is_empty() && e.name != e.path.rsplit('/').next().unwrap_or("") {
+			line.push_str(&format!("  ({})", e.name));
+		}
+		if !e.provide.is_empty() {
+			line.push_str(&format!("  provides {}", e.provide.join(", ")));
+		}
+		if !e.export.is_empty() {
+			line.push_str(&format!("  exports {}", e.export.join(", ")));
+		}
+		if let Some(why) = &e.unread {
+			line.push_str(&format!("  error: {why}"));
+		}
+		println!("{line}");
+		for key in &e.needs {
+			match ledger.resolve(&e.path, key) {
+				zirkle::ledger::Bound::One(p) => println!("  {key} <- {}", p.path),
+				zirkle::ledger::Bound::None => println!("  {key} <- ?"),
+				zirkle::ledger::Bound::Clashed(offered) => println!(
+					"  {key} <- ambiguous ({})",
+					offered.iter().map(|p| p.path.as_str()).collect::<Vec<_>>().join(", ")
+				),
+			}
+		}
+	}
+	ledger
+		.entries()
+		.filter(|e| e.unread.is_some())
+		.count()
+		+ ledger
+			.bindings()
+			.iter()
+			.filter(|(_, _, bound)| bound.is_clashed())
+			.count()
+}
+
 #[tokio::main]
 async fn main() {
 	let cli = Cli::parse();
@@ -397,6 +445,12 @@ async fn main() {
 					eprintln!("{error}");
 					std::process::exit(1);
 				}
+			}
+		}
+		Command::Ledger => {
+			let ledger = zirkle::ledger::Ledger::scan(&dir);
+			if ledger_lines(&ledger) > 0 {
+				std::process::exit(1);
 			}
 		}
 		Command::List => {

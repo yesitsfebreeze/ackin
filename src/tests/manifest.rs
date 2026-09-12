@@ -168,7 +168,9 @@ async fn a_parent_passes_an_inner_key_outward_by_naming_it() {
 	let listed = host.manifest().unwrap();
 	let outer = listed.iter().find(|c| c.entry.id == "outer").unwrap();
 	assert_eq!(outer.export, vec!["inner.store".to_owned()]);
-	// The inner cartridge is not an entry of the profile and is not visible as one.
+	// The inner cartridge is an entry of the ledger, not of the profile: the
+	// subtree rule keeps its `provide` private, so the host's flat registry
+	// holds only the entry the profile names.
 	assert_eq!(listed.len(), 1);
 }
 
@@ -253,8 +255,12 @@ async fn a_grandchild_key_reaches_the_top_only_through_every_level() {
 	assert!(host.component(&dir.path().join("outer"), json!({})).is_ok());
 }
 
-/// PROBE: a nested cartridge is not discovered at all. The profile is still the
-/// only way a cartridge enters the graph.
+/// A nested cartridge is an entry of the ledger, but not a host profile entry:
+/// the host makes one entry per *top-level* ledger entry and the profile lays
+/// overrides over those, so a nested one is never a host entry of its own. Its
+/// `provide` stays private to its subtree; what reaches the graph from here is
+/// loaded by the resolver's contract when something asks for it, not by the
+/// host's flat registry.
 #[tokio::test(flavor = "multi_thread")]
 async fn probe_nesting_is_not_discovered() {
 	let dir = tempfile::tempdir().unwrap();

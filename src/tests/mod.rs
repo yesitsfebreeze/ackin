@@ -3,6 +3,7 @@ mod cartridges;
 mod contracts;
 mod folders;
 mod foreground;
+mod ledger;
 mod lifecycle;
 mod manifest;
 mod process;
