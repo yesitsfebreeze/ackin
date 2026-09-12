@@ -344,7 +344,7 @@ impl Host {
 			// keys this cartridge's declaration already carries: a declared
 			// child key is re-advertised, an undeclared one stays a private
 			// service of the sub-host.
-			if self.declared.iter().any(|declared| *declared == key) {
+			if self.declared.contains(&key) {
 				self.write(json!({ "provide": key.clone() }));
 			}
 			return;
@@ -386,8 +386,7 @@ impl Host {
 					id,
 					host.injections()
 						.await
-						.map(|keys| json!(keys))
-						.map_err(|e| e),
+						.map(|keys| json!(keys)),
 				);
 			}));
 		} else if m["cartridges"] == true {
