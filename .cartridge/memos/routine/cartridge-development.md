@@ -13,7 +13,12 @@ owner's `.cartridge/tests/`; outputs are ignored empirical state.
 
 This memo is the command implementation. The small `memo-run` adapter extracts
 its single just block; it does not implement another build system. A failed
-underlying command returns its failure. Model evaluations remain explicit opt-in
+underlying command returns its failure. Git worktrees build into their own `target/` even when the caller exports a
+shared target. Their Cargo and workspace compiler wrappers are disabled locally:
+wrapper cache identity across divergent worktrees is not guaranteed. Ordinary
+checkouts keep the caller's target and wrapper configuration.
+
+Model evaluations remain explicit opt-in
 operations in their own memos.
 
 ```just
@@ -35,7 +40,12 @@ _cargo action module *args:
     set -euo pipefail
     action=$1; module=${2%.ctg}; shift 2
     repos=$(dirname "$MEMO_OWNER_ROOT")
-    export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$MEMO_OWNER_ROOT/target}
+    if [[ -f "$MEMO_OWNER_ROOT/.git" ]]; then
+        export CARGO_TARGET_DIR="$MEMO_OWNER_ROOT/target"
+        export RUSTC_WRAPPER= RUSTC_WORKSPACE_WRAPPER=
+    else
+        export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$MEMO_OWNER_ROOT/target}
+    fi
     export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
     export CARGO_PROFILE_DEV_INCREMENTAL=false CARGO_PROFILE_TEST_INCREMENTAL=false
     if [[ "$module" == all ]]; then
@@ -89,7 +99,11 @@ links:
     #!/usr/bin/env bash
     set -euo pipefail
     export CARTRIDGE_REPOSITORIES=$(dirname "$MEMO_OWNER_ROOT")
-    export CARTRIDGE_TARGET=${CARGO_TARGET_DIR:-$MEMO_OWNER_ROOT/target}
+    if [[ -f "$MEMO_OWNER_ROOT/.git" ]]; then
+        export CARTRIDGE_TARGET="$MEMO_OWNER_ROOT/target"
+    else
+        export CARTRIDGE_TARGET=${CARGO_TARGET_DIR:-$MEMO_OWNER_ROOT/target}
+    fi
     bun -e '
       const fs=require("node:fs"), path=require("node:path");
       for (const name of fs.readdirSync(process.env.CARTRIDGE_REPOSITORIES).filter(n=>n.endsWith(".ctg"))) {

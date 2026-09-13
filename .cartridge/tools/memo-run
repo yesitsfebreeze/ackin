@@ -11,7 +11,7 @@ case "$memo_file" in
     */.cartridge/memos/*.md|*/.cartridge/development/memos/*.md) ;;
     *) echo 'memo-run: expected a Markdown memo inside .cartridge/memos' >&2; exit 2 ;;
 esac
-MEMO_OWNER_ROOT=${memo_file%%/.cartridge/*}
+MEMO_OWNER_ROOT=${memo_file%/.cartridge/*}
 MEMO_FILE=$memo_file
 MEMO_JUSTFILE=$(mktemp "${TMPDIR:-/tmp}/cartridge-memo.XXXXXX")
 export MEMO_OWNER_ROOT MEMO_FILE MEMO_JUSTFILE
