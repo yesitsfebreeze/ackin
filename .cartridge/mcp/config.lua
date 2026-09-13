@@ -9,5 +9,5 @@ return {
 	-- `tool.gitfs`/`tool.ship` write the working tree; those stay at the
 	-- policy's `ask` until someone decides otherwise here.
 	policy = { tools = { memo = "allow" } },
-	mcp = { cwd = "." },
+	mcp = { cwd = ".." },
 }
