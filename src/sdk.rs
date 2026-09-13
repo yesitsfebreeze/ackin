@@ -30,7 +30,8 @@ type Handler = Arc<dyn Fn(Value) -> Fut<Result<Value>> + Send + Sync>;
 type Finalizer = Box<dyn FnOnce() -> Fut<()> + Send>;
 /// A stream subscription's handler, fed the envelope of every event the
 /// cartridge receives on its channel, in channel order.
-type Watcher = mpsc::UnboundedSender<Value>;
+type Watcher = mpsc::Sender<Value>;
+const WATCHER_EVENTS: usize = 258;
 
 /// A cartridge hosted below this one, and what its `hello` declared: the
 /// reload flag is what makes a frame the host above sends this cartridge the
@@ -42,6 +43,7 @@ struct Child {
 
 #[derive(Clone)]
 pub struct Host {
+	version_queries: bool,
 	reload: Arc<Mutex<HashMap<String, Handler>>>,
 	link: Arc<Link>,
 	events: Arc<Mutex<HashMap<String, Handler>>>,
@@ -152,7 +154,7 @@ impl Host {
 		F: Fn(Value) -> Fut + Send + Sync + 'static,
 		Fut: Future<Output = Result<Value>> + Send + 'static,
 	{
-		let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+		let (tx, mut rx) = mpsc::channel::<Value>(WATCHER_EVENTS);
 		let boxed = boxed(f);
 		// One pump per subscription: the wire is read in order and the pump
 		// handles in order, so two events never race inside the handler.
@@ -163,6 +165,22 @@ impl Host {
 		});
 		self.streams.lock().insert(channel.to_owned(), tx);
 		self.write(json!({ "subscribe": channel }));
+	}
+
+	fn deliver_stream(&self, channel: &str, envelope: Value) {
+		let mut streams = self.streams.lock();
+		let Some(tx) = streams.get(channel) else {
+			return;
+		};
+		if tx.capacity() <= 1 {
+			let _ = tx.try_send(json!({"ch":channel,"seq":envelope["seq"],
+				"from":"sdk","kind":"error","data":{"error":"slow stream handler; resubscribe and resynchronize"}}));
+			streams.remove(channel);
+			self.write(json!({"unsubscribe":channel}));
+		} else if tx.try_send(envelope).is_err() {
+			streams.remove(channel);
+			self.write(json!({"unsubscribe":channel}));
+		}
 	}
 
 	/// Stop watching a channel. Both ends of it are themselves events on the
@@ -179,6 +197,15 @@ impl Host {
 			.await
 	}
 
+	/// Cheap invalidation tokens for service descriptors; changes on replacement.
+	pub async fn service_versions(&self, keys: &[String]) -> Result<Value> {
+		// Older daemons do not reply to unknown wire messages. Keep hot
+		// replacement compatible: uncached discovery remains available.
+		if !self.version_queries {
+			return Ok(Value::Null);
+		}
+		self.link.request(json!({"versions":keys})).await
+	}
 	pub async fn meta(&self, key: &str) -> Result<Value> {
 		self.link.request(json!({ "meta": key })).await
 	}
@@ -255,7 +282,7 @@ impl Host {
 				}
 			}
 		});
-		link.send(json!({ "apply": { "name": name, "config": config } }));
+		link.send(json!({ "apply": { "name": name, "config": config, "capabilities":{"service_versions":self.version_queries} } }));
 		let mut startup = BufReader::new(stdout);
 		let mut remaining = 64 * 1024;
 		let ready = tokio::time::timeout(crate::process::STARTUP_TIMEOUT, async {
@@ -415,6 +442,15 @@ impl Host {
 			tokio::spawn(crate::turn::scope(turn, async move {
 				link.reply(id, host.call(&key, args).await);
 			}));
+		} else if let Some(keys) = m["versions"].as_array() {
+			let keys = keys
+				.iter()
+				.filter_map(Value::as_str)
+				.map(str::to_owned)
+				.collect::<Vec<_>>();
+			tokio::spawn(crate::turn::scope(turn, async move {
+				link.reply(id, host.service_versions(&keys).await);
+			}));
 		} else if m["injections"] == true {
 			tokio::spawn(crate::turn::scope(turn, async move {
 				link.reply(id, host.injections().await.map(|keys| json!(keys)));
@@ -539,7 +575,8 @@ impl Cartridge {
 				}
 			}
 		});
-		let host = Host {
+		let mut host = Host {
+			version_queries: false,
 			reload: Arc::default(),
 			link,
 			events: Arc::default(),
@@ -561,6 +598,7 @@ impl Cartridge {
 			let id = m["id"].as_u64().unwrap_or(0);
 			if m["apply"].is_object() {
 				let Some(apply) = apply.take() else { continue };
+				host.version_queries = m["apply"]["capabilities"]["service_versions"] == true;
 				let host = host.clone();
 				let config = m["apply"]["config"].clone();
 				tokio::spawn(async move {
@@ -601,9 +639,7 @@ impl Cartridge {
 				// Stream delivery: queued onto the channel's pump, which feeds the
 				// watcher in arrival order — an event published before another is
 				// handled before it, on this channel.
-				if let Some(tx) = host.streams.lock().get(channel).cloned() {
-					let _ = tx.send(m["event"].clone());
-				}
+				host.deliver_stream(channel, m["event"].clone());
 			} else if m["dispose"] == true {
 				break;
 			}
@@ -614,80 +650,5 @@ impl Cartridge {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	fn host() -> (Host, mpsc::UnboundedReceiver<Option<Value>>) {
-		let (tx, rx) = mpsc::unbounded_channel();
-		(
-			Host {
-				reload: Arc::default(),
-				link: Link::new(tx, "gone"),
-				events: Arc::default(),
-				services: Arc::default(),
-				streams: Arc::default(),
-				finalizers: Arc::default(),
-				declared: vec![],
-				children: Arc::default(),
-			},
-			rx,
-		)
-	}
-	#[tokio::test]
-	async fn reload_registration_dispatches_boolean_values_for_prepare_and_cancel() {
-		let (host, mut rx) = host();
-		host.on_reload(|value: Value| async move {
-			Ok(json!({"prepare":value.as_bool().expect("boolean Value")}))
-		});
-		for prepare in [true, false] {
-			let request = json!({"id":7,"reload":prepare});
-			host.dispatch(&host.reload, &request, "reload", request["reload"].clone());
-			let reply = rx.recv().await.unwrap().unwrap();
-			assert_eq!(reply["reply"], 7);
-			assert_eq!(reply["data"]["prepare"], prepare);
-		}
-	}
-	#[tokio::test]
-	async fn cancelling_nested_startup_kills_and_reaps_its_child() {
-		use std::os::unix::fs::PermissionsExt;
-		let dir = tempfile::tempdir().unwrap();
-		let path = dir.path().join("child.sh");
-		let pid = dir.path().join("pid");
-		std::fs::write(&path,format!("#!/bin/sh\nif [ \"$1\" = hello ]; then echo '{{}}'; exit 0; fi\necho $$ > '{}'\nwhile read line; do :; done\n",pid.display())).unwrap();
-		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-		let (host, _rx) = host();
-		let task = tokio::spawn(async move {
-			host.spawn("nested", &[path.display().to_string()], Value::Null)
-				.await
-		});
-		let pid = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-			loop {
-				if let Some(child) = std::fs::read_to_string(&pid)
-					.ok()
-					.and_then(|value| value.trim().parse::<u32>().ok())
-					.filter(|pid| *pid > 0)
-				{
-					break child;
-				}
-				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-			}
-		})
-		.await
-		.unwrap();
-		task.abort();
-		assert!(task.await.unwrap_err().is_cancelled());
-		let pid = pid.to_string();
-		tokio::time::timeout(std::time::Duration::from_secs(3), async {
-			while std::process::Command::new("/bin/kill")
-				.args(["-0", pid.trim()])
-				.stderr(std::process::Stdio::null())
-				.status()
-				.unwrap()
-				.success()
-			{
-				tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-			}
-		})
-		.await
-		.unwrap();
-	}
-}
+#[path = "../.cartridge/tests/unit/src/sdk/tests.rs"]
+mod tests;

@@ -54,7 +54,8 @@ pub fn executable(program: &str, root: &std::path::Path) -> std::io::Result<std:
 		let beside = std::env::current_exe()
 			.ok()
 			.and_then(|exe| exe.parent().map(|dir| dir.join(program)));
-		std::iter::once(root.join("bin").join(program))
+		std::iter::once(root.join(".cartridge/bin").join(program))
+			.chain(std::iter::once(root.join("bin").join(program)))
 			.chain(beside)
 			.chain(std::env::var_os("PATH").into_iter().flat_map(|paths| {
 				std::env::split_paths(&paths)
@@ -366,7 +367,9 @@ async fn start(
 			}
 		}
 	});
-	link.send(json!({ "apply": { "name": name, "config": config } }));
+	link.send(
+		json!({ "apply": { "name": name, "config": config, "capabilities":{"service_versions":true} } }),
+	);
 	let mut startup = BufReader::new(stdout);
 	let mut remaining = 64 * 1024;
 	let ready = tokio::time::timeout(crate::process::STARTUP_TIMEOUT, async {
@@ -586,6 +589,20 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) ->
 	if m["reload"] == true {
 		host.request_reload(ctx.fiber());
 		link.reply(id, Ok(Json::Null));
+		return Ok(());
+	}
+	if let Some(keys) = m["versions"].as_array() {
+		let versions: Result<Vec<_>, String> = keys
+			.iter()
+			.map(|key| {
+				let key = key.as_str().ok_or("service key required")?;
+				let value = ctx.get(key).map_err(|e| e.to_string())?;
+				Ok(value
+					.downcast_ref::<crate::service::Service>()
+					.map(|service| service.version()))
+			})
+			.collect();
+		link.reply(id, versions.map(|v| json!(v)));
 		return Ok(());
 	}
 	if let Some(key) = m["meta"].as_str() {

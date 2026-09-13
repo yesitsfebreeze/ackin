@@ -6,6 +6,7 @@ return {
 	-- graphs, so a cartridge added here is a tool the landscape indexes.
 	{ id = "memo", path = "memo", inject = { "tool.*" } },
 	{ id = "sessions", path = "sessions" },
+	{ id = "docs", path = "docs" },
 	{ id = "router", path = "router" },
 	{ id = "policy", path = "policy" },
 	{ id = "harness", path = "harness" },

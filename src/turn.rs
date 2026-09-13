@@ -12,7 +12,7 @@
 //! [`diagnostic`] is the channel the turn exists for: one JSON line per event on
 //! a stream the protocol never uses, redacted by field name and bounded by a
 //! byte cap with one rotated generation. `CARTRIDGE_DIAGNOSTICS` names the file (the
-//! default is stderr) and `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` the cap.
+//! default is disabled) and `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` the cap.
 
 use serde_json::Value as Json;
 use std::future::Future;
@@ -159,13 +159,20 @@ impl Sink {
 			.and_then(|v| v.parse().ok())
 			.unwrap_or(8 << 20);
 		match std::env::var("CARTRIDGE_DIAGNOSTICS") {
-			Ok(p) if !p.is_empty() => Sink::file(PathBuf::from(p), cap).unwrap_or(Sink {
+			Ok(p) if p == "stderr" => Sink {
 				out: Out::Stderr,
 				cap,
 				written: 0,
-			}),
+			},
+			Ok(p) if !p.is_empty() && p != "off" => {
+				Sink::file(PathBuf::from(p), cap).unwrap_or(Sink {
+					out: Out::Stderr,
+					cap,
+					written: 0,
+				})
+			}
 			_ => Sink {
-				out: Out::Stderr,
+				out: Out::Disabled,
 				cap,
 				written: 0,
 			},
@@ -225,6 +232,13 @@ impl Sink {
 	}
 }
 
+fn diagnostics_enabled() -> bool {
+	static ENABLED: OnceLock<bool> = OnceLock::new();
+	*ENABLED.get_or_init(|| {
+		std::env::var("CARTRIDGE_DIAGNOSTICS").is_ok_and(|v| !v.is_empty() && v != "off")
+	})
+}
+
 fn sink() -> &'static Mutex<Sink> {
 	static SINK: OnceLock<Mutex<Sink>> = OnceLock::new();
 	SINK.get_or_init(|| Mutex::new(Sink::from_env()))
@@ -234,6 +248,9 @@ fn sink() -> &'static Mutex<Sink> {
 /// `fields` may carry its own `turn`, which wins over the ambient one — that is
 /// how a line a cartridge wrote in its own turn keeps it.
 pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
+	if !diagnostics_enabled() {
+		return;
+	}
 	let mut extra = match fields {
 		Json::Object(o) => o,
 		Json::Null => serde_json::Map::new(),
@@ -277,6 +294,9 @@ pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 /// A line a cartridge wrote on its stderr. One it already shaped as a JSON
 /// object keeps its fields; anything else is the message.
 pub fn diagnostic_line(src: &str, line: &str) {
+	if !diagnostics_enabled() {
+		return;
+	}
 	match serde_json::from_str::<Json>(line) {
 		Ok(Json::Object(mut o)) => {
 			let msg = o
@@ -291,88 +311,5 @@ pub fn diagnostic_line(src: &str, line: &str) {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn a_credential_or_a_prompt_body_is_omitted_and_named() {
-		let mut fields = serde_json::json!({
-			"model": "m",
-			"api_key": "sk-live-1",
-			"request": { "messages": [{ "role": "user" }] },
-		});
-		let mut omitted = Vec::new();
-		redact(&mut fields, &mut omitted);
-		assert_eq!(fields["api_key"], "<omitted>");
-		assert_eq!(fields["request"]["messages"], "<omitted>");
-		assert_eq!(fields["model"], "m");
-		omitted.sort();
-		assert_eq!(omitted, ["api_key", "messages"]);
-	}
-
-	#[test]
-	fn the_sink_stays_bounded_by_rotating_one_generation() {
-		let dir = std::env::temp_dir().join(format!("cartridge-diag-{}", mint()));
-		std::fs::create_dir_all(&dir).unwrap();
-		let path = dir.join("cartridge.jsonl");
-		let mut sink = Sink::file(path.clone(), 64).unwrap();
-		for i in 0..50 {
-			sink.write(&format!("{{\"n\":{i},\"pad\":\"xxxxxxxxxxxxxxxx\"}}\n"));
-		}
-		let live = std::fs::metadata(&path).unwrap().len();
-		assert!(live <= 64, "live generation is {live} bytes, cap is 64");
-		assert!(
-			dir.join("cartridge.jsonl.1").exists(),
-			"no rotated generation"
-		);
-		// Reopening keeps what is there; nothing truncates at startup.
-		let reopened = Sink::file(path.clone(), 64).unwrap();
-		assert_eq!(reopened.written, live);
-		std::fs::remove_dir_all(&dir).unwrap();
-	}
-	#[test]
-	fn redaction_reaches_objects_inside_nested_arrays() {
-		let mut fields = serde_json::json!({"events":[[{"api_key":"synthetic-token", "safe":"kept"}]], "count":1});
-		let mut omitted = Vec::new();
-		redact(&mut fields, &mut omitted);
-		assert_eq!(fields["events"][0][0]["api_key"], "<omitted>");
-		assert_eq!(fields["events"][0][0]["safe"], "kept");
-		assert_eq!(omitted, ["api_key"]);
-		assert!(!fields.to_string().contains("synthetic-token"));
-	}
-
-	#[test]
-	fn oversized_records_are_valid_json_and_bounded_before_and_after_rotation() {
-		let dir = tempfile::tempdir().unwrap();
-		let path = dir.path().join("diagnostic.jsonl");
-		let mut sink = Sink::file(path.clone(), 64).unwrap();
-		let huge = format!("{}\n", serde_json::json!({"text":"é🙂".repeat(100)}));
-		sink.write(&huge);
-		sink.write("{\"ordinary\":true}\n");
-		sink.write(&huge);
-		for file in [path, dir.path().join("diagnostic.jsonl.1")] {
-			let data = std::fs::read_to_string(file).unwrap();
-			assert!(data.len() <= 64);
-			for line in data.lines() {
-				let value: Json = serde_json::from_str(line).unwrap();
-				assert!(value.get("omitted").is_some() || value["ordinary"] == true);
-			}
-		}
-	}
-
-	#[test]
-	fn a_sink_that_cannot_repair_a_failed_write_stops_accepting_records() {
-		let dir = tempfile::tempdir().unwrap();
-		let path = dir.path().join("diagnostic.jsonl");
-		std::fs::write(&path, "{\"ordinary\":true}\n").unwrap();
-		let mut sink = Sink::file(path.clone(), 64).unwrap();
-		sink.out = Out::File(path.clone(), std::fs::File::open(&path).unwrap());
-		sink.write("{\"next\":1}\n");
-		assert!(matches!(sink.out, Out::Disabled));
-		sink.write("{\"next\":2}\n");
-		assert_eq!(
-			std::fs::read_to_string(path).unwrap(),
-			"{\"ordinary\":true}\n"
-		);
-	}
-}
+#[path = "../.cartridge/tests/unit/src/turn/tests.rs"]
+mod tests;

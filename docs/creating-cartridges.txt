@@ -1,0 +1,148 @@
+# Creating a cartridge
+
+Read architecture.txt for composition and development.txt for workspace commands.
+Read writing-good-modules.txt for event coverage, direct integration, dependency
+reuse, and the memo-tool workflow expected of every new cartridge.
+The repeatable authoring procedure is also recorded at
+../.cartridge/memos/routine/create-cartridge.md.
+
+CHOOSE THE CONTRACT
+
+Choose a unique repository/module name, the service keys to provide, the keys
+needed from other cartridges, the configuration shape, and a meaningful observable
+check. Start with a Lua cartridge for a small host service. Use an SDK process
+when Rust libraries, independent process ownership, or a larger implementation
+are useful. Keep model orchestration and MCP hosting in their existing cartridges
+unless extending those contracts is the intended change.
+
+MINIMAL LOADABLE LUA CARTRIDGE
+
+Create hello.ctg/ as a sibling of cartridge.ctg/. Two files are enough to load it.
+The example deliberately uses an echo service with no external dependencies.
+
+cartridge.json:
+{
+  "name": "hello",
+  "description": "Returns the JSON value supplied by its caller.",
+  "entry": "init.lua",
+  "provide": ["hello.echo"],
+  "needs": [],
+  "commands": {
+    "run": {
+      "argv": ["../cartridge.ctg/cartridge", "--profile", "hello", "run",
+               "hello.echo", "{\"message\":\"hello\"}"],
+      "cwd": "."
+    }
+  }
+}
+
+init.lua:
+return {
+  apply = function(ctx, config)
+    ctx:provide("hello.echo", function(input)
+      return input
+    end)
+  end,
+}
+
+Register builtin/hello as a relative link to ../../hello.ctg. Add a profile at
+cartridge.ctg/.cartridge/hello/init.lua:
+  return {{id="hello", path="hello"}}
+From cartridge.ctg, run:
+  ./cartridge --profile hello run hello.echo '{"message":"hello"}'
+Expected result: {"message":"hello"}. Use structured argument arrays when calling
+from a program; shell quoting above is only for interactive command examples.
+
+MANIFEST FIELDS
+
+name and entry are required. entry must be a relative .lua path inside the
+cartridge folder. description is an optional purpose statement. source can name
+the retrieval repository. binary overrides the executable basename when it
+differs from the cartridge directory. ui points to a relative JS/TS UI module.
+
+provide, needs, and export declare service keys. grant requests read/write paths,
+network hosts, and executable names. config holds cartridge-owned defaults.
+selftest and integration name provided contract services; only declare these
+when the service exists and returns the verification format expected by Host::verify.
+Follow tools.ctg and src/tests/contracts.rs for concrete contract examples.
+
+commands maps labels to objects with argv (an array of strings), cwd (a string
+relative to the manifest's directory), and optional description. These are read
+as data; they are not automatically executed during discovery and do not grant
+permission. Include run, test, build, and check commands where applicable. Avoid
+inventing a second schema, repeating provide as provides, or needs as requires.
+The parser in src/loader.rs rejects unknown fields and invalid value types.
+
+RUST SDK PROCESS
+
+Create Cargo.toml and main.rs alongside the manifest. Within this checkout use
+package.workspace = "../cartridge.ctg/workspace", add the package to that
+workspace's members, and depend on cartridge = {path="../cartridge.ctg"}.
+Follow an existing sibling Cargo.toml for edition, minimum Rust version, lints,
+and pinned workspace dependency conventions. The SDK example also needs serde_json
+and tokio with macros and a multi-thread runtime, as the existing packages use.
+
+Set [[bin]] name = "hello" and path = "main.rs". Replace init.lua with:
+  return cartridge.process("hello")
+
+main.rs:
+use cartridge::sdk::Cartridge;
+
+#[tokio::main]
+async fn main() {
+    Cartridge::new()
+        .provide(&["hello.echo"])
+        .run(|host, _config| async move {
+            host.provide("hello.echo", |input| async move { Ok(input) });
+            Ok(())
+        })
+        .await;
+}
+
+Use .inject(&["service.key"]) when the process needs another service and mirror
+it in manifest needs. host.call invokes dependencies. Register listeners/services
+during run's apply callback; after it returns, the component is active. Use SDK
+resource disposal hooks and reload hooks when the service owns long-lived work.
+Do not put arbitrary diagnostics on stdout. The process receives host protocol
+frames there, not interactive commands.
+
+DEVELOPMENT REGISTRATION
+
+1. Initialize or clone the sibling Git repository and commit its source. Register
+   it as a parent submodule using its intended origin; use local Git URL overrides
+   while the remote is unpublished. Keep source out of the parent root.
+2. Add repositories.json metadata: name, repository, package (null for Lua),
+   cartridge=true, and files (the import inventory count where applicable).
+   This catalog feeds module selection and tooling; services still come from
+   cartridge.json. Update fixed-count link-check messages if the catalog grows.
+3. Add the relative builtin link. For Rust, add ../../hello.ctg to shared workspace
+   members. Confirm the executable name matches the manifest/binary convention.
+4. Add the profile entry and any profile configuration. Choose only the profiles
+   that need the new service. For agent/MCP tools, expose a tool.* service using
+   the existing tool metadata/call protocol and the profile's tool injection;
+   a plain hello.echo service is not automatically a tool with an input schema.
+5. Point documented commands at recipes that actually support this module. The
+   current helper has explicit handling for UI, memory, and policy: a new Lua
+   module needs its own test/check dispatch, or direct launcher commands. A new
+   repository name alone does not create a test implementation.
+
+VALIDATION AND DELIVERY
+
+Use just build hello and just process hello hello for a registered Rust package.
+The latter runs SDK capability discovery, not the hello.echo service. Invoke the
+service through the profile to exercise the host and its bindings. Test malformed
+input, missing dependencies, configured behavior, and any owned-resource cleanup.
+For Lua, use a real host invocation with isolated state and assert returned JSON.
+
+Run just test <module>, just check <module>, and relevant integration checks once
+the helper supports the module. Inspect ./cartridge ledger for installed services
+and bindings. Use just verify <module> only for a self-contained declared contract.
+If a contract requires profile settings, invoke that service with the intended
+profile; do not mistake an isolated configuration failure for proof it is broken.
+
+For tools exposed through MCP, check initialize, tools/list, and tools/call under
+the intended policy. For HTTP services, check authentication and a meaningful
+response. Save concise evidence, not credentials or database snapshots. Commit
+implementation inside its submodule, source registration/docs inside cartridge.ctg,
+and updated submodule pointers in the parent. Add a memo describing the decision
+or reusable procedure through memo write; memos.txt explains the record protocol.

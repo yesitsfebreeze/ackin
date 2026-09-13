@@ -2,15 +2,19 @@
 
 Cartridge hosts replaceable Lua and SDK process cartridges. Start here, then
 read the linked plain-text guides relevant to the task. Paths are relative to
-this source repository, ~/dev/cartridge/cartridge.ctg.
+this source repository.
 
-- [System architecture](docs/llms/architecture.txt): repository layout, runtime,
+- [Writing good modules](docs/writing-good-modules.txt): useful events, direct
+  integration, cartridge dependencies, and documentation through memo tools.
+- [Documentation discovery](../docs.ctg/.cartridge/memos/note/documentation-service.md):
+  find documentation across repositories with the docs service and docs.available event.
+- [System architecture](docs/architecture.txt): repository layout, runtime,
   dependency resolution, processes, replacement, permissions, and cartridge roles.
-- [Creating cartridges](docs/llms/creating-cartridges.txt): complete Lua example,
+- [Creating cartridges](docs/creating-cartridges.txt): complete Lua example,
   Rust SDK adapter, manifest fields, registration, profiles, and validation.
-- [Development and operation](docs/llms/development.txt): build/test selection,
+- [Development and operation](docs/development.txt): build/test selection,
   proxy, MCP registration, local data, Git workflow, and troubleshooting.
-- [Memos and knowledge](docs/llms/memos.txt): record types, validated writes,
+- [Memos and knowledge](docs/memos.txt): record types, validated writes,
   discovery, system prompts, and the cartridge-creation routine.
 
 The executable declaration belongs in each cartridge.json. It includes purpose,
@@ -18,6 +22,11 @@ services, dependencies, grants, and documented command argument arrays. Reading
 commands does not execute them. Memos hold context, decisions, and procedures.
 There is no separate development JSON.
 
+A good cartridge owns a concrete capability, exposes useful state changes as
+events, and calls declared dependencies directly for required results. Reuse the
+system's services and preserve their context, errors, and lifecycle. Keep service
+and event contracts discoverable in memos alongside the implementation.
+
 The guides describe this checkout, not a promise that unfinished sandbox work
 is complete. Source contracts and tests are authoritative when behavior changes.
-See src/loader.rs for the manifest schema and .pearde/ for the development board.
+See src/loader.rs for the manifest schema.

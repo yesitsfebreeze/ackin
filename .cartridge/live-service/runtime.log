@@ -1,0 +1,41 @@
+{"msg":"Cartridge Live: http://localhost:4319","src":"live","t":1789291114343,"turn":null}
+{"dir":"/Users/feb/dev/cartridge/cartridge.ctg/builtin","msg":"serving","profile":"/tmp/cartridge-live-production-test/profile","socket":"/tmp/cartridge-7d0504211b0c7530-feb.sock","src":"cartridge","t":1789291114345,"turn":null}
+{"msg":"router: chatgpt: 5 model ids","src":"router","t":1789291117481,"turn":null}
+{"msg":"router: github-copilot: inventory unavailable (Copilot token exchange failed (403 Forbidden); run router op login with provider github-copilot); retaining its last shelf","src":"router","t":1789291117481,"turn":null}
+{"msg":"router: openai: 130 model ids","src":"router","t":1789291117513,"turn":null}
+{"msg":"router: ollama: 25 model ids","src":"router","t":1789291117517,"turn":null}
+{"msg":"process executable `docs` was not found or is not executable","src":"docs","t":1789291235428,"turn":null}
+{"msg":"Cartridge Live: http://localhost:4317","src":"live","t":1789291235499,"turn":null}
+{"dir":"/Users/feb/dev/cartridge/cartridge.ctg/builtin","msg":"serving","profile":"/Users/feb/dev/cartridge/cartridge.ctg/.cartridge/live","socket":"/tmp/cartridge-24a58a917e86daa4-feb.sock","src":"cartridge","t":1789291235504,"turn":null}
+{"msg":"router: chatgpt: 5 model ids","src":"router","t":1789291238629,"turn":null}
+{"msg":"router: github-copilot: inventory unavailable (Copilot token exchange failed (403 Forbidden); run router op login with provider github-copilot); retaining its last shelf","src":"router","t":1789291238629,"turn":null}
+{"msg":"router: openai: 130 model ids","src":"router","t":1789291238655,"turn":null}
+{"msg":"router: ollama: 25 model ids","src":"router","t":1789291238659,"turn":null}
+{"msg":"replacement must be active and preserve provided keys","src":"memo","t":1789291367552,"turn":null}
+{"msg":"replacement must be active and preserve provided keys","src":"agent","t":1789291475428,"turn":null}
+{"msg":"replacement must be active and preserve provided keys","src":"memo","t":1789291579240,"turn":null}
+{"dir":"/Users/feb/dev/cartridge/cartridge.ctg/builtin","msg":"serving","profile":"/Users/feb/dev/cartridge/cartridge.ctg/.cartridge/live","socket":"/tmp/cartridge-24a58a917e86daa4-feb.sock","src":"cartridge","t":1789291625698,"turn":null}
+{"msg":"Cartridge Live: http://localhost:4317","src":"live","t":1789291625727,"turn":null}
+{"msg":"router: chatgpt: 5 model ids","src":"router","t":1789291629193,"turn":null}
+{"msg":"router: github-copilot: inventory unavailable (Copilot token exchange failed (403 Forbidden); run router op login with provider github-copilot); retaining its last shelf","src":"router","t":1789291629193,"turn":null}
+{"msg":"router: openai: 130 model ids","src":"router","t":1789291629204,"turn":null}
+{"msg":"router: ollama: 25 model ids","src":"router","t":1789291629206,"turn":null}
+{"msg":"Cartridge Live: http://localhost:4317","src":"live","t":1789291859482,"turn":null}
+{"dir":"/Users/feb/dev/cartridge/cartridge.ctg/builtin","msg":"serving","profile":"/Users/feb/dev/cartridge/cartridge.ctg/.cartridge/live","socket":"/tmp/cartridge-24a58a917e86daa4-feb.sock","src":"cartridge","t":1789291859490,"turn":null}
+{"msg":"router: chatgpt: 5 model ids","src":"router","t":1789291862499,"turn":null}
+{"msg":"router: github-copilot: inventory unavailable (Copilot token exchange failed (403 Forbidden); run router op login with provider github-copilot); retaining its last shelf","src":"router","t":1789291862499,"turn":null}
+{"msg":"router: openai: 130 model ids","src":"router","t":1789291862516,"turn":null}
+{"msg":"router: ollama: 25 model ids","src":"router","t":1789291862520,"turn":null}
+{"msg":"router: health persistence: No space left on device (os error 28)","src":"router","t":1789292204425,"turn":null}
+{"msg":"router: health persistence: No space left on device (os error 28)","src":"router","t":1789292219425,"turn":null}
+{"msg":"replacement must be active and preserve provided keys","src":"memo","t":1789292242942,"turn":null}
+{"msg":"replacement must be active and preserve provided keys","src":"agent","t":1789292242965,"turn":null}
+{"msg":"Error: Failed to start server. Is port 4317 in use?\n    at serve (unknown)\n    at startServer (/Users/feb/dev/cartridge/live.ctg/src/server.ts:102:22)\n    at <anonymous> (/Users/feb/dev/cartridge/live.ctg/src/main.ts:25:11)\n    at handle (/Users/feb/dev/cartridge/live.ctg/src/wire.ts:69:23)\n    at run (node:async_hooks:62:22)\n    at receive (/Users/feb/dev/cartridge/live.ctg/src/wire.ts:64:16)\n    at <anonymous> (/Users/feb/dev/cartridge/live.ctg/src/wire.ts:29:20)\n    at emit (node:events:95:22)\n    at [_onLine] (node:readline:584:16)\n    at [_normalWrite] (node:readline:674:22)","src":"live","t":1789292243013,"turn":null}
+{"msg":"router: health persistence: No space left on device (os error 28)","src":"router","t":1789292264424,"turn":null}
+{"msg":"router: health persistence: No space left on device (os error 28)","src":"router","t":1789292279425,"turn":null}
+{"dir":"/Users/feb/dev/cartridge/cartridge.ctg/builtin","msg":"serving","profile":"/Users/feb/dev/cartridge/cartridge.ctg/.cartridge/live","socket":"/tmp/cartridge-24a58a917e86daa4-feb.sock","src":"cartridge","t":1789292574600,"turn":null}
+{"msg":"Cartridge Live: http://localhost:4317","src":"live","t":1789292574666,"turn":null}
+{"msg":"router: chatgpt: 5 model ids","src":"router","t":1789292577634,"turn":null}
+{"msg":"router: github-copilot: inventory unavailable (Copilot token exchange failed (403 Forbidden); run router op login with provider github-copilot); retaining its last shelf","src":"router","t":1789292577634,"turn":null}
+{"msg":"router: openai: 130 model ids","src":"router","t":1789292577659,"turn":null}
+{"msg":"router: ollama: 25 model ids","src":"router","t":1789292577663,"turn":null}

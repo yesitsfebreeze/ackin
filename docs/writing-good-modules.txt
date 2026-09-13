@@ -1,0 +1,182 @@
+# Writing good Cartridge modules
+
+> A cartridge owns a useful capability, makes its behavior observable, composes
+> other cartridges, and lets an agent reach a real result with little mediation.
+
+These are authoring expectations. Examples named "example" illustrate contracts
+to implement; they are not installed services or events. Read each owner's
+manifest, source, and memos for its current contract. Source references below
+are relative to cartridge.ctg/ unless stated otherwise.
+
+## Start with the result and its owner
+
+Describe one observable result: what a caller supplies, what changes, and what it
+receives. Name the cartridge that owns the state or external resource. Give that
+owner a callable service with structured inputs, outputs, and explicit errors.
+An agent, UI, and another cartridge should use the same capability.
+
+Discover existing capabilities through memo landscape and cartridge.json files
+before adding code. Extend or compose an existing owner when it already has the
+responsibility. Create a cartridge when a capability needs its own contract,
+configuration, resources, or lifecycle.
+
+## Expose as much useful behavior as possible through events
+
+Treat events as public contracts. Publish meaningful starts, progress, state
+changes, produced artifacts, completion, failure, and cancellation where those
+distinctions exist. Consumers should be able to react without scraping logs,
+reading private storage, or polling for every change. Emit facts where the owner
+knows them; announce a committed change after it succeeds.
+
+Cover meaningful behavior broadly, with structured and bounded payloads. Include
+operation and entity identifiers so consumers can correlate changes; reference
+large results instead of copying them. Preserve existing session/run/call context
+where relevant. Keep credentials and unrelated private content out of events.
+
+Choose the existing API for the intended audience. In src/sdk.rs:
+
+- host.publish(channel, data) publishes to the channel stream. The host supplies
+  the envelope: channel, sequence, publisher, kind, data. host.subscribe observes
+  full envelopes in channel order. Use this for channel-based consumers.
+- host.notify(name, data) reaches both named in-host listeners and socket clients.
+  Use it for named events whose consumers may be in either audience.
+- host.emit(name, data) reaches named in-host listeners registered with host.on,
+  but not socket clients. host.send reaches only socket clients.
+
+These mechanisms differ: publishing on a channel does not notify a named host.on
+listener. Check the consumer before choosing an API. Avoid introducing a private
+event bus or duplicating every event across mechanisms without a reason.
+
+Document each event's name/channel, producer, audience, payload, timing, and
+failure behavior. State supported ordering, replay, retention, and delivery
+limits; emission alone is not a consumer acknowledgment or durable delivery
+guarantee. Keep domain event types in data when a channel carries several shapes;
+do not confuse them with the host envelope's kind.
+
+For example, an implemented build service could publish on "example.build":
+  {"event":"completed","operation_id":"build-17","artifact":"<result reference>"}
+Its memo should also define applicable started/progress/failed/cancelled payloads,
+how late subscribers recover results, and how callers query current state.
+This is a proposed payload, not a built-in event schema or manifest field.
+
+Keep essential correctness in the operation itself. If a dependency must finish
+before a result is valid, await its service call and handle failure. Events let
+additional consumers observe or react without making the producer know them all.
+
+## Keep the path to the result short
+
+Aim for this path:
+  caller -> owning cartridge service -> required provider or resource -> result
+                                      -> useful events for observers
+
+Use ctx:provide for Lua services or host.provide for SDK process services. Use
+declared bindings for cross-cartridge work (host.call in the SDK). Keep adapters
+narrow: translating a protocol, enforcing a real boundary, or owning a lifecycle
+justifies a layer. A wrapper that only renames and forwards data usually does not.
+Avoid parallel registries, unnecessary queues, shelling back into the host for
+an available service, and private copies of another cartridge's state.
+
+Return the actual result or an explicit operation handle with documented status
+and cancellation. An accepted request is not a completed result. Preserve errors,
+correlation context, and streaming behavior across adapters. Keep domain behavior
+in the owner so transport and UI consumers share it.
+
+## Compose other cartridges deliberately
+
+Use the system's capabilities instead of rebuilding them locally:
+
+- memo: typed documentation, discovery, and validated record writes.
+- sessions: session persistence; fs already uses it to record touched files.
+- router and harness: model/provider routing and model-context composition.
+- pty: persistent terminal processes and shell behavior.
+- memory and memory-tool: durable knowledge and its agent-facing adapter.
+- policy and mcp: tool decisions and exposure of the composed tool surface.
+- fs, gitfs, and tools: file operations, Git/workspace capabilities, and
+  development bundle/worktree tooling. Read their exact contracts before reuse.
+
+These are responsibilities, not a list to inject into every module. Declare each
+required service key in cartridge.json needs and keep SDK .inject declarations
+consistent. Declare your own keys in provide. Service keys need not match cartridge
+names. For optional features, use the existing profile injection/configuration
+conventions and explicitly define behavior when a provider is absent.
+
+Select actual providers in the profile. Nested cartridges must export inner keys
+through each parent boundary where callers need them. Let the host resolve
+dependencies; do not rely on incidental startup order or private subtree access.
+Avoid dependency cycles; reconsider ownership or use an event subscription for
+an optional reaction when two owners otherwise require each other.
+
+Document why each dependency exists, which calls it serves, and how absence,
+failure, replacement, and cancellation affect the result. Keep resources owned
+and disposed by the cartridge responsible for their lifecycle.
+
+## Document contracts in memos, using the tools
+
+Discover guidance and maintain the writable workspace record through the memo
+tool. These JSON objects are tool inputs; the host supplies trusted context:
+
+  {"op":"types"}
+  {"op":"landscape","limit":5}
+  {"op":"resolve","usage":"read","query":"cartridge service and event contracts"}
+  {"op":"list","kind":"routine","limit":20}
+  {"op":"read","path":"<path returned by discovery>"}
+
+Read the type declaration before writing and follow pagination when needed. Use
+notes for contracts/findings, decisions for choices and reasons, and routines
+for repeatable procedures. Planning/specifications belong to prd.ctg's record.
+Keep prompt-contributing system memos small and link to detailed guidance.
+
+A minimal workspace note write is:
+  {"op":"write","path":"note/example-service-contract.md","body":"---\nkind: note\ndescription: Contract for the example service\n---\n\n# Example service\n\nDocument inputs, results, errors, dependencies, events, and verification here.\n"}
+
+Supply complete Markdown with frontmatter. When editing, first read the memo and
+include its returned revision as expected_revision in the write. Read it back
+and confirm discovery finds it. Add uses metadata following the record's usage
+declarations when a particular situation should retrieve it. Use qualified paths
+such as @memo/note/memo.md to reference shipped cartridge memos unambiguously.
+
+The tool validates and atomically writes workspace memos. Shipped memos at
+<owner>.ctg/.cartridge/memos/<kind>/<name>.md are read-only through the tool: edit
+their source in the owning repository, then verify discovery with that cartridge
+enabled. If the memo tool is unavailable, report the limitation; do not claim
+a hand-edited file passed tool validation. The memo cartridge's
+.cartridge/docs/README.md describes the full protocol and namespace rules.
+
+Keep one authoritative contract and link to it. A useful contract memo covers:
+
+- Purpose, service keys, input/output examples, errors, and cancellation.
+- Dependencies, their reason, profile requirements, and resource/state ownership.
+- Events/channels: payload examples, audience, timing, and delivery limits.
+- An executable verification command, expected result, and recovery procedure.
+
+Update memos alongside behavior. Preserve concise evidence and observed limits;
+do not describe intended features as implemented. Keep executable declarations
+in cartridge.json and their rationale in memos.
+
+## Prove integrated behavior
+
+Before calling a module done, verify applicable behaviors through a real host:
+
+- A caller reaches the actual result through the documented service/tool entry.
+- A separate intended consumer receives the documented events and correlates
+  them with the operation; optional observers are not required for success.
+- Invalid input, provider failure, and missing required dependencies fail
+  explicitly. Optional-provider absence follows documented behavior.
+- Cancellation/disposal releases owned tasks, listeners, and resources;
+  replacement does not leave duplicate observers or stale owners running.
+- Tool discovery and invocation work through the intended profile and policy.
+- Contract memos are discoverable, and documented commands resolve from their
+  declared working directories.
+
+Use focused checks and isolated state. Record reusable evidence in memos. Check
+current source and paths before copying commands from older guides during moves.
+
+## Source references
+
+- [Creation mechanics](creating-cartridges.txt)
+- [Runtime architecture](architecture.txt)
+- [Memo workflow](memos.txt)
+- [Authoring routine](../.cartridge/memos/routine/create-cartridge.md)
+- Service/event APIs: src/sdk.rs; host event behavior: src/runtime.rs.
+- Channel stream: src/stream.rs; manifest schema: src/loader.rs.
+- Real compositions: .cartridge/default/init.lua and sibling cartridge.json files.

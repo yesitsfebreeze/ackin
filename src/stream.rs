@@ -1,13 +1,17 @@
 //! The stream: named channels a cartridge publishes to and any other node
-//! subscribes to. One JSON envelope per event, appended under one lock, so the
-//! log is ordered and replaying it is deterministic. Publishing with nobody
+//! subscribes to. One JSON envelope per event, appended under a per-channel lock, so the
+//! retained history is ordered and replaying it is deterministic. Publishing with nobody
 //! listening is a sequence bump, one append and no fan-out; subscribing and
 //! unsubscribing are themselves envelopes on the channel, so membership is part
 //! of the log any late subscriber replays.
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde_json::{json, Value as Json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{
+	atomic::{AtomicU64, Ordering},
+	Arc,
+};
 use tokio::sync::mpsc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -34,31 +38,32 @@ impl Kind {
 /// [`Stream::unsubscribe`] is the explicit, announced way off.
 pub struct Subscription {
 	pub id: u64,
-	pub rx: mpsc::UnboundedReceiver<Json>,
+	pub rx: mpsc::Receiver<Json>,
 }
 
-#[derive(Default)]
-struct State {
-	next: u64,
-	channels: HashMap<String, Channel>,
-}
+const HISTORY_EVENTS: usize = 256;
+const HISTORY_BYTES: usize = 1024 * 1024;
+// A full replay, an optional gap, the join, and one reserved error slot.
+const SUBSCRIBER_EVENTS: usize = HISTORY_EVENTS + 3;
 
 #[derive(Default)]
 struct Channel {
 	seq: u64,
-	/// Every envelope ever published here, in sequence order. Retention is not
-	/// this module's policy; the log grows until a caller says otherwise.
-	log: Vec<Json>,
+	log: VecDeque<(Json, usize)>,
+	bytes: usize,
 	subs: Vec<Sub>,
 }
 
 struct Sub {
 	id: u64,
 	owner: String,
-	tx: mpsc::UnboundedSender<Json>,
+	tx: mpsc::Sender<Json>,
 }
 
-pub struct Stream(Mutex<State>);
+pub struct Stream {
+	next: AtomicU64,
+	channels: RwLock<HashMap<String, Arc<Mutex<Channel>>>>,
+}
 
 impl Default for Stream {
 	fn default() -> Self {
@@ -68,118 +73,115 @@ impl Default for Stream {
 
 impl Stream {
 	pub fn new() -> Self {
-		Self(Mutex::new(State::default()))
-	}
-
-	/// Append one envelope and hand it to every listener. The sequence is the
-	/// channel's next number whether or not anyone is listening, so a subscriber
-	/// can always name how far it has read.
-	pub fn publish(&self, channel: &str, from: &str, kind: Kind, data: Json) -> u64 {
-		let mut st = self.0.lock();
-		Self::append(&mut st, channel, from, kind, data)
-	}
-
-	/// Join a channel and receive everything on it from here on, oldest first.
-	/// `after` resumes a subscription the subscriber lost: the envelopes after
-	/// that sequence are handed over first, in order, so it ends up where it was.
-	pub fn subscribe(&self, channel: &str, owner: &str, after: Option<u64>) -> Subscription {
-		let mut st = self.0.lock();
-		st.next += 1;
-		let id = st.next;
-		let (tx, rx): (mpsc::UnboundedSender<Json>, _) = mpsc::unbounded_channel();
-		{
-			let ch = st.channels.entry(channel.to_owned()).or_default();
-			// The log is in sequence order, so the resume point is one binary
-			// search; `None` starts from now and replays nothing.
-			let past = match after {
-				Some(seen) => {
-					&ch.log[ch
-						.log
-						.partition_point(|e| e["seq"].as_u64().is_none_or(|s| s <= seen))..]
-				}
-				None => &ch.log[ch.log.len()..],
-			};
-			for envelope in past {
-				let _ = tx.send(envelope.clone());
-			}
-			ch.subs.push(Sub {
-				id,
-				owner: owner.to_owned(),
-				tx,
-			});
+		Self {
+			next: AtomicU64::new(0),
+			channels: RwLock::new(HashMap::new()),
 		}
-		// Same lock as the registration, so no envelope can land between the
-		// replay and the announcement of the join.
-		Self::append(
-			&mut st,
-			channel,
-			owner,
-			Kind::Subscribe,
-			json!({ "id": id }),
-		);
+	}
+
+	fn channel(&self, name: &str) -> Arc<Mutex<Channel>> {
+		if let Some(channel) = self.channels.read().get(name) {
+			return channel.clone();
+		}
+		self.channels
+			.write()
+			.entry(name.into())
+			.or_default()
+			.clone()
+	}
+
+	pub fn publish(&self, channel: &str, from: &str, kind: Kind, data: Json) -> u64 {
+		Self::append(&mut self.channel(channel).lock(), channel, from, kind, data)
+	}
+
+	/// Replay is bounded. A cursor older than retained history receives an
+	/// explicit gap before the retained events, so consumers can resynchronize.
+	pub fn subscribe(&self, channel: &str, owner: &str, after: Option<u64>) -> Subscription {
+		let ch = self.channel(channel);
+		let mut ch = ch.lock();
+		let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+		let (tx, rx) = mpsc::channel(SUBSCRIBER_EVENTS);
+		if let Some(after) = after {
+			for envelope in Self::history(&ch, channel, after) {
+				let _ = tx.try_send(envelope);
+			}
+		}
+		ch.subs.push(Sub {
+			id,
+			owner: owner.into(),
+			tx,
+		});
+		Self::append(&mut ch, channel, owner, Kind::Subscribe, json!({"id":id}));
 		Subscription { id, rx }
 	}
 
-	/// Leave a channel, announced: the envelope lands on the channel like any
-	/// other, so everyone still listening knows the watch ended.
 	pub fn unsubscribe(&self, channel: &str, id: u64) {
-		let mut st = self.0.lock();
-		let Some(ch) = st.channels.get_mut(channel) else {
+		let Some(ch) = self.channels.read().get(channel).cloned() else {
 			return;
 		};
+		let mut ch = ch.lock();
 		let Some(index) = ch.subs.iter().position(|s| s.id == id) else {
 			return;
 		};
 		let owner = ch.subs.remove(index).owner;
 		Self::append(
-			&mut st,
+			&mut ch,
 			channel,
 			&owner,
 			Kind::Unsubscribe,
-			json!({ "id": id }),
+			json!({"id":id}),
 		);
 	}
 
-	/// The envelopes after `after`, for a reader that wants the log without
-	/// holding a subscription.
 	pub fn replay(&self, channel: &str, after: u64) -> Vec<Json> {
-		self.0
-			.lock()
-			.channels
-			.get(channel)
-			.map(|ch| {
-				ch.log
-					.iter()
-					.filter(|e| e["seq"].as_u64().is_some_and(|s| s > after))
-					.cloned()
-					.collect()
-			})
-			.unwrap_or_default()
+		let Some(ch) = self.channels.read().get(channel).cloned() else {
+			return Vec::new();
+		};
+		let channel_state = ch.lock();
+		Self::history(&channel_state, channel, after)
 	}
 
-	/// The one write path: sequence, log append, fan-out, in that order, under
-	/// the caller's lock hold. A queue whose reader is gone is dropped here and
-	/// then — the subscription is over, so the next announced leave is not owed.
-	fn append(st: &mut State, channel: &str, from: &str, kind: Kind, data: Json) -> u64 {
-		let ch = st.channels.entry(channel.to_owned()).or_default();
+	fn history(ch: &Channel, channel: &str, after: u64) -> Vec<Json> {
+		let oldest = ch
+			.log
+			.front()
+			.map_or(ch.seq + 1, |(e, _)| e["seq"].as_u64().unwrap());
+		let mut events = Vec::new();
+		if after.saturating_add(1) < oldest {
+			events.push(json!({"ch":channel,"seq":oldest - 1,"kind":"error","from":"stream",
+                "data":{"error":"stream history truncated; resynchronize","after":after,"oldest":oldest}}));
+		}
+		events.extend(
+			ch.log
+				.iter()
+				.filter(|(e, _)| e["seq"].as_u64().unwrap() > after)
+				.map(|(e, _)| e.clone()),
+		);
+		events
+	}
+
+	fn append(ch: &mut Channel, channel: &str, from: &str, kind: Kind, data: Json) -> u64 {
 		ch.seq += 1;
-		let envelope = json!({
-			"ch": channel,
-			"seq": ch.seq,
-			"from": from,
-			"kind": kind.name(),
-			"data": data,
-		});
-		ch.log.push(envelope.clone());
-		let mut gone = Vec::new();
-		for (index, sub) in ch.subs.iter().enumerate() {
-			if sub.tx.send(envelope.clone()).is_err() {
-				gone.push(index);
+		let envelope =
+			json!({"ch":channel,"seq":ch.seq,"from":from,"kind":kind.name(),"data":data});
+		let bytes = envelope.to_string().len();
+		ch.bytes += bytes;
+		ch.log.push_back((envelope.clone(), bytes));
+		while ch.log.len() > HISTORY_EVENTS || ch.bytes > HISTORY_BYTES {
+			ch.bytes -= ch.log.pop_front().unwrap().1;
+		}
+		ch.subs.retain(|sub| {
+			// Reserve the last queue slot for a visible failure. Dropping the
+			// sender then closes this subscription after it drains the notice.
+			if sub.tx.capacity() <= 1 {
+				let _ = sub.tx.try_send(
+					json!({"ch":channel,"seq":ch.seq,"from":"stream","kind":"error",
+                    "data":{"error":"slow stream subscriber; reconnect and resynchronize"}}),
+				);
+				return false;
 			}
-		}
-		for index in gone.into_iter().rev() {
-			ch.subs.remove(index);
-		}
+			sub.tx.try_send(envelope.clone()).is_ok()
+		});
 		ch.seq
 	}
 }

@@ -18,22 +18,22 @@ path = "src/main.rs"
 # Built by process tests as a real SDK child, not a public usage example.
 [[example]]
 name = "rpc_fixture"
-path = "src/tests/fixtures/rpc_fixture.rs"
+path = ".cartridge/tests/unit/src/tests/fixtures/rpc_fixture.rs"
 
 # A cartridge that hosts rpc_fixture as its own child: the recursion fixture.
 [[example]]
 name = "nested_fixture"
-path = "src/tests/fixtures/nested_fixture.rs"
+path = ".cartridge/tests/unit/src/tests/fixtures/nested_fixture.rs"
 
 # Provides `lua` as a process, the isolated alternate provider in composition tests.
 [[example]]
 name = "lua_fixture"
-path = "src/tests/fixtures/lua_fixture.rs"
+path = ".cartridge/tests/unit/src/tests/fixtures/lua_fixture.rs"
 
 # A resolver chain node: stays up, re-enters the binary for its dependent.
 [[example]]
 name = "chain_fixture"
-path = "src/tests/fixtures/chain_fixture.rs"
+path = ".cartridge/tests/unit/src/tests/fixtures/chain_fixture.rs"
 
 [dependencies]
 tokio = { version = "1.53", features = ["full"] }
@@ -51,7 +51,7 @@ tempfile = "3"
 [lints.rust]
 warnings = "deny"
 
-# Keep the runtime and its Pearde lanes independent of a containing workspace.
+# Keep the runtime and its isolated worktrees independent of a containing workspace.
 [workspace]
 
 [profile.dev]

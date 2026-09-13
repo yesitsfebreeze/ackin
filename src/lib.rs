@@ -17,4 +17,5 @@ pub mod stream;
 pub mod turn;
 
 #[cfg(test)]
+#[path = "../.cartridge/tests/unit/src/tests/mod.rs"]
 mod tests;

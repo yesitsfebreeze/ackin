@@ -1,7 +1,0 @@
-# Machine-local, not the board's record — see pearde @references/parts/commits.md
-.state/
-.claims/
-.lanes/
-.sessions/
-.view.html
-health/
