@@ -488,15 +488,11 @@ async fn stdio(host: std::sync::Arc<Host>) -> Result<Value, String> {
 		}
 		let (host, replies) = (host.clone(), replies.clone());
 		serving.spawn(async move {
-			match host
+			let result = host
 				.call("mcp", json!({ "op": "message", "line": line }))
-				.await
-			{
-				Ok(reply) if !reply.is_null() => {
-					let _ = replies.send(format!("{reply}\n")).await;
-				}
-				Ok(_) => {}
-				Err(error) => eprintln!("mcp: {error}"),
+				.await;
+			if let Some(reply) = mcp_bridge_reply(&line, result) {
+				let _ = replies.send(format!("{reply}\n")).await;
 			}
 		});
 	}
@@ -505,6 +501,32 @@ async fn stdio(host: std::sync::Arc<Host>) -> Result<Value, String> {
 	let _ = writer.await;
 	Ok(Value::Null)
 }
+
+/// Bridge failures still owe a request its correlated protocol response.
+/// Notifications and client responses never receive an error response.
+fn mcp_bridge_reply(line: &str, result: Result<Value, String>) -> Option<Value> {
+	match result {
+		Ok(reply) => (!reply.is_null()).then_some(reply),
+		Err(error) => {
+			eprintln!("mcp: {error}");
+			let message: Value = match serde_json::from_str(line) {
+				Ok(message) => message,
+				Err(_) => {
+					return Some(
+						json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}),
+					)
+				}
+			};
+			message.get("method")?.as_str()?;
+			let id = message.get("id").filter(|id| !id.is_null())?;
+			Some(json!({"jsonrpc":"2.0","id":id,"error":{"code":-32603,"message":error}}))
+		}
+	}
+}
+
+#[cfg(test)]
+#[path = "../.cartridge/tests/unit/stdio.rs"]
+mod stdio_tests;
 
 /// CLI service arguments use JSON.
 fn json_arg(s: String) -> Value {
