@@ -118,3 +118,21 @@ async fn watcher_reloads_a_folder_when_its_manifest_changes() {
 	package(dir.path(), "watched", "second.lua");
 	assert_eq!(next_event(&mut rx, "version").await, json!(2));
 }
+
+#[test]
+fn recorded_memory_layout_uses_the_separate_submodule() {
+	let output = std::process::Command::new("bun")
+		.args([
+			"test",
+			"./.cartridge/tests/integration/source-layout.test.ts",
+		])
+		.current_dir(env!("CARGO_MANIFEST_DIR"))
+		.output()
+		.unwrap();
+	assert!(
+		output.status.success(),
+		"{}\n{}",
+		String::from_utf8_lossy(&output.stdout),
+		String::from_utf8_lossy(&output.stderr)
+	);
+}
