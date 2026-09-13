@@ -5,6 +5,7 @@ mod landscape;
 pub mod ledger;
 pub mod loader;
 pub mod lua;
+mod observation;
 mod process;
 pub mod reload;
 pub mod resolver;

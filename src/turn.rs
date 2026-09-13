@@ -115,6 +115,11 @@ fn redact(v: &mut Json, omitted: &mut Vec<String>) {
 	}
 	let Json::Object(o) = v else { return };
 	for (k, value) in o.iter_mut() {
+		// This typed observation fact contains no completion body. Strings under
+		// the same spelling still receive the ordinary redaction.
+		if k == "completion_known" && (value.is_boolean() || value.is_null()) {
+			continue;
+		}
 		if sensitive(k) {
 			*value = Json::String("<omitted>".into());
 			omitted.push(k.clone());
@@ -232,7 +237,7 @@ impl Sink {
 	}
 }
 
-fn diagnostics_enabled() -> bool {
+pub(crate) fn diagnostics_enabled() -> bool {
 	static ENABLED: OnceLock<bool> = OnceLock::new();
 	*ENABLED.get_or_init(|| {
 		std::env::var("CARTRIDGE_DIAGNOSTICS").is_ok_and(|v| !v.is_empty() && v != "off")

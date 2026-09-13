@@ -44,6 +44,7 @@ impl Service {
 			let mut epoch = self.reload.epoch();
 			let guard = self.reload.gate().read_owned().await;
 			let previous = *epoch.borrow();
+			crate::observation::dispatch(self);
 			let result = host.invoke_raw(self.value(), args).await;
 			drop(guard);
 			let result = result?;
@@ -51,6 +52,7 @@ impl Service {
 				return Ok(result);
 			};
 			args = resume.clone();
+			crate::observation::resuming(self);
 			epoch
 				.wait_for(|epoch| *epoch != previous)
 				.await

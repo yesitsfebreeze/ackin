@@ -610,19 +610,17 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) ->
 		return Ok(());
 	}
 	if let Some(key) = m["call"].as_str() {
-		let (host, ctx, link, key, args, turn) = (
+		let (host, ctx, link, key, args, turn, source) = (
 			host.clone(),
 			ctx.clone(),
 			link.clone(),
 			key.to_owned(),
 			m["args"].clone(),
 			crate::turn::of(&m),
+			name.to_owned(),
 		);
 		tokio::spawn(crate::turn::scope(turn, async move {
-			let r = match ctx.get(&key) {
-				Ok(v) => host.invoke(v, args).await,
-				Err(e) => Err(e.to_string()),
-			};
+			let r = crate::observation::invoke(&host, &ctx, &source, &key, args).await;
 			link.reply(id, r);
 		}));
 		return Ok(());
