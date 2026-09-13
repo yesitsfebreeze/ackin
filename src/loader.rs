@@ -1310,7 +1310,9 @@ impl Host {
 		for entry in wanted {
 			let previous = self.slot(&entry.id, |l| l.entry.clone());
 			match previous {
-				Some(old) if old != entry => self.replace_entry(entry).await,
+				Some(old) if old != entry => {
+					let _ = self.replace_entry(entry).await;
+				}
 				Some(_) => {}
 				None => {
 					let loaded = self.instantiate(entry).await;
@@ -1345,7 +1347,7 @@ impl Host {
 			.map(|l| l.entry.clone())
 			.collect();
 		for entry in entries {
-			self.replace_entry(entry).await;
+			let _ = self.replace_entry(entry).await;
 		}
 	}
 
@@ -1355,129 +1357,71 @@ impl Host {
 		self.report(id, error);
 	}
 
-	async fn replace_entry(self: &Arc<Self>, entry: Entry) {
+	async fn replace_entry(self: &Arc<Self>, entry: Entry) -> Result<crate::runtime::Uid, String> {
+		let id = entry.id.clone();
+		let result = self.replace_entry_inner(entry).await;
+		if let Err(error) = &result {
+			self.report_entry(&id, error);
+		}
+		result
+	}
+
+	async fn replace_entry_inner(
+		self: &Arc<Self>,
+		entry: Entry,
+	) -> Result<crate::runtime::Uid, String> {
 		if self
 			.slot(&entry.id, |l| l.entry.isolate != entry.isolate)
 			.unwrap_or(false)
 		{
-			self.report_entry(
-				&entry.id,
-				"changing isolation requires removing and recomposing the entry",
-			);
-			return;
+			return Err("changing isolation requires removing and recomposing the entry".into());
 		}
-		let (mut component, files) = match self.load_entry_async(entry.clone()).await {
-			Ok(c) => c,
-			Err(e) => {
-				self.report_entry(&entry.id, e);
-				return;
-			}
-		};
+		let (mut component, files) = self
+			.load_entry_async(entry.clone())
+			.await
+			.map_err(|error| error.to_string())?;
 		let sources = files.into_iter().map(Source::new).collect();
-		let Some((old, reload)) = self.slot(&entry.id, |l| (l.fiber.clone(), l.reload.clone()))
-		else {
-			return;
-		};
-		let Some(old) = old else {
-			component.reload = reload;
-			let fiber = self.spawn(&entry, component);
-			self.slot(&entry.id, |l| {
-				l.entry = entry.clone();
-				l.fiber = Some(fiber);
-				l.sources = sources;
-				l.error = None;
-			});
-			return;
-		};
-		old.settled().await;
-		if old.state() != Some(crate::runtime::State::Active) {
-			// A failed/inactive entry has no live generation to switch. Permit a
-			// corrected entry to recover on the same reload transaction.
-			old.dispose().await;
-			component.reload = reload;
-			let fiber = self.spawn(&entry, component);
-			self.slot(&entry.id, |l| {
-				l.entry = entry.clone();
-				l.fiber = Some(fiber);
-				l.sources = sources;
-				l.error = None;
-			});
-			return;
+		let (old, reload) = self
+			.slot(&entry.id, |l| (l.fiber.clone(), l.reload.clone()))
+			.ok_or_else(|| format!("profile entry `{}` is no longer loaded", entry.id))?;
+		if let Some(old) = &old {
+			old.settled().await;
 		}
-		if !reload.begin() {
-			return;
-		}
-		let mut values = {
-			let reg = self.rt.reg.lock();
-			reg.provided(old.uid())
-				.into_iter()
-				.filter_map(|(_, realm)| reg.value(realm))
-				.collect::<Vec<_>>()
-		};
-		// A process may provide several keys, but its lifecycle hook runs once.
-		let mut prepared = std::collections::HashSet::new();
-		values.retain(|value| {
-			value
-				.downcast_ref::<crate::service::Service>()
-				.and_then(|service| service.process_id())
-				.is_some_and(|id| prepared.insert(id))
-		});
-		for value in &values {
-			if let Some(service) = value.downcast_ref::<crate::service::Service>() {
-				if let Err(e) = service.prepare().await {
-					for value in &values {
-						if let Some(service) = value.downcast_ref::<crate::service::Service>() {
-							service.cancel().await;
-						}
-					}
-					self.report_entry(&entry.id, e);
-					reload.finish();
-					return;
-				}
+		if old
+			.as_ref()
+			.is_none_or(|old| old.state() != Some(crate::runtime::State::Active))
+		{
+			// Initial failures have no active publication to switch. Keep the
+			// existing recovery path, recording its actual newly spawned handle.
+			if let Some(old) = old {
+				old.dispose().await;
 			}
+			component.reload = reload;
+			let fiber = self.spawn(&entry, component);
+			let uid = fiber.uid();
+			self.slot(&entry.id, |l| {
+				l.entry = entry.clone();
+				l.fiber = Some(fiber);
+				l.sources = sources;
+				l.error = None;
+			});
+			return Ok(uid);
 		}
-		let _calls = reload.gate().write_owned().await;
-		component.reload = reload.clone();
-		component.staged = true;
-		let keys = component.provide.clone();
-		let ctx = entry
+		let composing = entry
 			.isolate
 			.iter()
-			.chain(keys.iter())
 			.fold(self.rt.ctx(), |ctx, key| ctx.isolate(key));
-		let candidate = ctx.cartridge(component);
-		candidate.settled().await;
-		let result = if let Some(error) = candidate.error() {
-			Err(error)
-		} else {
-			self.rt
-				.switch(old.uid(), candidate.uid())
-				.map_err(|e| e.to_string())
-		};
-		match result {
-			Ok(()) => {
-				self.slot(&entry.id, |l| {
-					l.entry = entry.clone();
-					l.fiber = Some(candidate);
-					l.sources = sources;
-					l.error = None;
-				});
-				reload.finish();
-				drop(_calls);
-				old.dispose().await;
-				return;
-			}
-			Err(error) => {
-				candidate.dispose().await;
-				for value in &values {
-					if let Some(service) = value.downcast_ref::<crate::service::Service>() {
-						service.cancel().await;
-					}
-				}
-				self.report_entry(&entry.id, error);
-			}
-		}
-		reload.finish();
+		self.replace_active(old.unwrap(), component, composing, reload, |candidate| {
+			// The caller holds reload_lock. This synchronous bookkeeping is
+			// published before the shared transaction unlocks or disposes old.
+			self.slot(&entry.id, |l| {
+				l.entry = entry.clone();
+				l.fiber = Some(candidate);
+				l.sources = sources;
+				l.error = None;
+			});
+		})
+		.await
 	}
 
 	pub(crate) fn request_reload(self: &Arc<Self>, uid: crate::runtime::Uid) {
@@ -1492,7 +1436,7 @@ impl Host {
 			tokio::spawn(async move {
 				let _reload = host.reload_lock.lock().await;
 				if let Some(entry) = host.slot(&entry, |l| l.entry.clone()) {
-					host.replace_entry(entry).await;
+					let _ = host.replace_entry(entry).await;
 				}
 			});
 			return;
@@ -1544,7 +1488,10 @@ impl Host {
 
 	/// Replace one node of the running tree, addressed by its uid. A profile
 	/// entry goes through [`Host::replace_entry`]; a node composed inside
-	/// another cartridge runs the same transaction through its rebuild.
+	/// another cartridge resolves its rebuild before the shared transaction.
+	/// Success names the current generation; candidate refusal is an error.
+	/// Recovery of an initially failed profile entry returns its newly spawned
+	/// handle, which retains the ordinary asynchronous readiness lifecycle.
 	pub async fn replace_node(
 		self: &Arc<Self>,
 		uid: crate::runtime::Uid,
@@ -1557,8 +1504,7 @@ impl Host {
 			.find(|l| l.fiber.as_ref().is_some_and(|f| f.uid() == uid))
 			.map(|l| l.entry.clone());
 		if let Some(entry) = entry {
-			self.replace_entry(entry).await;
-			return Ok(uid);
+			return self.replace_entry(entry).await;
 		}
 		self.swap_node(uid).await
 	}
@@ -1592,24 +1538,36 @@ impl Host {
 		if old.state() != Some(crate::runtime::State::Active) {
 			return Err("the live generation is no longer active".into());
 		}
+		let composing = self.rt.ctx_under(parent, isolate, intercept);
+		let mut component = rebuild(composing.clone()).map_err(|error| error.to_string())?;
+		component.resident = true;
+		component.rebuild = Some(rebuild);
+		self.replace_active(old, component, composing, reload, |_| {})
+			.await
+	}
+
+	/// One publication transaction for an active generation at any depth.
+	/// The caller supplies its resolved context and synchronous bookkeeping;
+	/// process preparation, drain, switch and rejection cleanup stay here.
+	async fn replace_active(
+		self: &Arc<Self>,
+		old: FiberHandle,
+		mut component: Component,
+		composing: crate::runtime::Ctx,
+		reload: crate::reload::Reload,
+		publish: impl FnOnce(FiberHandle) + Send,
+	) -> Result<crate::runtime::Uid, String> {
+		old.settled().await;
+		if old.state() != Some(crate::runtime::State::Active) {
+			return Err("the live generation is no longer active".into());
+		}
 		if !reload.begin() {
 			return Err("a reload is already in flight for this node".into());
 		}
-		let composing = self.rt.ctx_under(parent, isolate, intercept);
-		let mut component = match rebuild(composing.clone()) {
-			Ok(component) => component,
-			Err(e) => {
-				reload.finish();
-				return Err(e.to_string());
-			}
-		};
-		// Every generation of the node is a resident participant carrying the
-		// same rebuild, so the next swap after this one finds the node again.
-		component.resident = true;
-		component.rebuild = Some(rebuild.clone());
+
 		let mut values = {
 			let reg = self.rt.reg.lock();
-			reg.provided(uid)
+			reg.provided(old.uid())
 				.into_iter()
 				.filter_map(|(_, realm)| reg.value(realm))
 				.collect::<Vec<_>>()
@@ -1650,11 +1608,12 @@ impl Host {
 			Err(error)
 		} else {
 			self.rt
-				.switch(uid, candidate.uid())
+				.switch(old.uid(), candidate.uid())
 				.map_err(|e| e.to_string())
 		};
 		match result {
 			Ok(()) => {
+				publish(candidate.clone());
 				reload.finish();
 				drop(_calls);
 				old.dispose().await;

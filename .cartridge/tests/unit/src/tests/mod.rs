@@ -1,5 +1,6 @@
 mod bridge;
 mod cartridges;
+mod composition;
 mod contracts;
 mod folders;
 mod foreground;
