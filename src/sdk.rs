@@ -295,12 +295,12 @@ impl Host {
 					})?
 				else {
 					link.shutdown();
+					// EOF may arrive before the child becomes waitable. Keep the
+					// wait inside this startup timeout, preserving its actual exit.
 					let status = child
-						.try_wait()
-						.ok()
-						.flatten()
-						.map(|s| s.to_string())
-						.unwrap_or_else(|| "closed stdout".into());
+						.wait()
+						.await
+						.map_err(|error| format!("{name} startup exit wait: {error}"))?;
 					return Err(format!("{name} exited before ready: {status}"));
 				};
 				let Ok(m) = serde_json::from_str::<Value>(&line) else {

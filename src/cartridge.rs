@@ -382,12 +382,12 @@ async fn start(
 				})?
 			else {
 				link.shutdown();
+				// EOF can precede process termination; the surrounding startup
+				// deadline still bounds a child that closes stdout and stays alive.
 				let status = child
-					.try_wait()
-					.ok()
-					.flatten()
-					.map(|s| s.to_string())
-					.unwrap_or_else(|| "closed stdout".into());
+					.wait()
+					.await
+					.map_err(|error| Error::Apply(format!("startup exit wait: {error}")))?;
 				return Err(Error::Apply(format!("exited before ready: {status}")));
 			};
 			let m: Json = serde_json::from_str(&line).map_err(|e| {

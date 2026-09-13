@@ -455,7 +455,7 @@ done
 #[tokio::test(flavor = "multi_thread")]
 async fn a_child_that_never_becomes_ready_fails_the_spawn_where_it_failed() {
 	let parent = nested_fixture();
-	for (body, expect) in [
+	for (body, nested_expected, direct_expected) in [
 		(
 			r#"#!/bin/sh
 if [ "$1" = hello ]; then echo '{"provide":["roundtrip"]}'; exit 0; fi
@@ -463,6 +463,7 @@ echo '{"not":"ready"}'
 exit 7
 "#,
 			"nested exited before ready: exit status: 7",
+			"exited before ready: exit status: 7",
 		),
 		(
 			r#"#!/bin/sh
@@ -470,21 +471,154 @@ if [ "$1" = hello ]; then echo '{"provide":["roundtrip"]}'; exit 0; fi
 echo 'garbage'
 "#,
 			"nested sent an unreadable line: garbage",
+			"expected value at line 1 column 1",
+		),
+		(
+			r#"#!/bin/sh
+if [ "$1" = hello ]; then echo '{"provide":["roundtrip"]}'; exit 0; fi
+echo '{"not":"ready"}'
+exec 1>&-
+sleep 0.05
+exit 7
+"#,
+			"nested exited before ready: exit status: 7",
+			"exited before ready: exit status: 7",
 		),
 	] {
+		for nested in [false, true] {
+			let dir = tempfile::tempdir().unwrap();
+			lua_composition(dir.path());
+			let direct_body = body.replace("{\"not\":\"ready\"}", "{\"provide\":\"roundtrip\"}");
+			let child = script(
+				dir.path(),
+				"child.sh",
+				if nested { body } else { &direct_body },
+			);
+			let (host, _rx) = boot(dir.path()).await;
+			settle().await;
+			let fiber = if nested {
+				nest(
+					&host,
+					&parent,
+					&child,
+					json!({"description": "Lua service"}),
+				)
+				.await
+			} else {
+				let component = crate::cartridge::component(
+					host.clone(),
+					"direct".into(),
+					vec![child.to_string_lossy().into_owned()],
+					json!({}),
+				)
+				.unwrap();
+				let fiber = host.runtime().ctx().cartridge(component);
+				fiber.settled().await;
+				fiber
+			};
+			let error = fiber.error().expect("the spawn never failed");
+			let expected = if nested {
+				nested_expected
+			} else {
+				direct_expected
+			};
+			assert!(error.contains(expected), "nested={nested}: {error}");
+		}
+	}
+}
+
+async fn startup_child_reaped(pid: &std::path::Path) {
+	let pid = std::fs::read_to_string(pid).unwrap();
+	tokio::time::timeout(std::time::Duration::from_secs(2), async {
+		while std::process::Command::new("/bin/kill")
+			.args(["-0", pid.trim()])
+			.stderr(std::process::Stdio::null())
+			.status()
+			.unwrap()
+			.success()
+		{
+			tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+		}
+	})
+	.await
+	.expect("owned startup child was not reaped");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stdout_closed_live_children_obey_each_host_deadline_and_are_reaped() {
+	use std::process::Stdio;
+	use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+	let parent = nested_fixture();
+	for nested in [false, true] {
 		let dir = tempfile::tempdir().unwrap();
-		lua_composition(dir.path());
-		let child = script(dir.path(), "child.sh", body);
-		let (host, _rx) = boot(dir.path()).await;
-		settle().await;
-		let fiber = nest(
-			&host,
-			&parent,
-			&child,
-			json!({"description": "Lua service"}),
-		)
-		.await;
-		let error = fiber.error().expect("the spawn never failed");
-		assert!(error.contains(expect), "{error}");
+		let pid = dir.path().join("owned.pid");
+		let child = script(
+			dir.path(),
+			"live.sh",
+			&format!(
+				r#"#!/bin/sh
+if [ "$1" = hello ]; then echo '{{"provide":["roundtrip"]}}'; exit 0; fi
+echo $$ > '{}'
+exec 1>&-
+exec sleep 30
+"#,
+				pid.display()
+			),
+		);
+		if nested {
+			// Isolate the SDK's deadline: an outer runtime deadline starts earlier
+			// and would obscure whether the nested SDK owns and reaps its child.
+			let mut process = tokio::process::Command::new(&parent)
+				.stdin(Stdio::piped())
+				.stdout(Stdio::piped())
+				.stderr(Stdio::piped())
+				.kill_on_drop(true)
+				.spawn()
+				.unwrap();
+			let mut stdin = process.stdin.take().unwrap();
+			stdin
+				.write_all(
+					format!("{}\n", json!({"apply":{"config":{"child":[child]}}})).as_bytes(),
+				)
+				.await
+				.unwrap();
+			let mut lines = BufReader::new(process.stdout.take().unwrap()).lines();
+			let error = tokio::time::timeout(std::time::Duration::from_secs(7), async {
+				loop {
+					let line = lines
+						.next_line()
+						.await
+						.unwrap()
+						.expect("SDK stdout ended before startup error");
+					let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+					if let Some(error) = value["error"].as_str() {
+						break error.to_owned();
+					}
+				}
+			})
+			.await
+			.expect("SDK startup exceeded its deadline");
+			assert!(error.contains("nested timed out before ready"), "{error}");
+			startup_child_reaped(&pid).await;
+			process.kill().await.unwrap();
+			process.wait().await.unwrap();
+		} else {
+			lua_composition(dir.path());
+			let (host, _) = boot(dir.path()).await;
+			let component = crate::cartridge::component(
+				host.clone(),
+				"direct".into(),
+				vec![child.to_string_lossy().into_owned()],
+				json!({}),
+			)
+			.unwrap();
+			let fiber = host.runtime().ctx().cartridge(component);
+			tokio::time::timeout(std::time::Duration::from_secs(7), fiber.settled())
+				.await
+				.expect("runtime startup exceeded its deadline");
+			let error = fiber.error().expect("live child became ready");
+			assert!(error.contains("direct timed out before ready"), "{error}");
+			startup_child_reaped(&pid).await;
+		}
 	}
 }
