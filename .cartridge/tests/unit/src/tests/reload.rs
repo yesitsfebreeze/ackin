@@ -1,4 +1,5 @@
 use super::{boot, next_event, settle, write};
+use crate::runtime::{Component, State};
 use futures::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
@@ -58,6 +59,17 @@ async fn switching_keeps_consumers_bound_and_rejects_bad_migrations() {
 	assert_eq!(host.call("read", json!(null)).await.unwrap()["version"], 4);
 }
 
+/// Wait for exactly the generation under test, then distinguish successful
+/// readiness from a failed or retired fiber (which can also be settled).
+async fn ready_generation(host: &Arc<super::Host>, uid: crate::runtime::Uid) {
+	let fiber = host.runtime().handle(uid);
+	tokio::time::timeout(Duration::from_secs(5), fiber.settled())
+		.await
+		.expect("generation did not settle within 5s");
+	assert_eq!(fiber.state(), Some(State::Active), "{:?}", fiber.error());
+	assert!(fiber.error().is_none());
+}
+
 /// A nested cartridge is swapped under the running tree: the parent composes
 /// it and hands its uid out, the host addresses the node by that uid. The
 /// parent is the dependent — it follows the replacement while a sibling entry
@@ -65,7 +77,11 @@ async fn switching_keeps_consumers_bound_and_rejects_bad_migrations() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_nested_node_is_swapped_and_its_dependent_follows() {
 	let dir = tempfile::tempdir().unwrap();
-	write(dir.path(), "inner.lua", &provider(1, false));
+	write(
+		dir.path(),
+		"inner.lua",
+		&provider(1, false).replacen("return {", "return {inject={\"build_ready\"},", 1),
+	);
 	write(
 		dir.path(),
 		"outer.lua",
@@ -105,8 +121,27 @@ async fn a_nested_node_is_swapped_and_its_dependent_follows() {
 		}
 	}
 	let inner = inner.unwrap();
-	// The uid is handed out at composition, before the first generation is up.
+	// Force the old ordering: announcing the parent and waiting 60 ms does
+	// not make the nested provider ready while its build dependency is held.
 	settle().await;
+	assert_ne!(host.runtime().handle(inner).state(), Some(State::Active));
+	assert!(host.call("read", json!(null)).await.is_err());
+	let build_ready = host.runtime().ctx().cartridge(
+		Component::new(
+			"build-ready",
+			Arc::new(|ctx| {
+				futures::stream::once(async move {
+					ctx.provide("build_ready", Arc::new(json!(true)))?;
+					let dispose: crate::runtime::Disposer = Box::new(|| Box::pin(async {}));
+					Ok(dispose)
+				})
+				.boxed()
+			}),
+		)
+		.provide(["build_ready"]),
+	);
+	build_ready.settled().await;
+	ready_generation(&host, inner).await;
 	assert_eq!(host.call("read", json!(null)).await.unwrap()["version"], 1);
 	let outer = host.fiber_of("o").unwrap().uid();
 	let sibling = host.fiber_of("x").unwrap().uid();
@@ -117,6 +152,7 @@ async fn a_nested_node_is_swapped_and_its_dependent_follows() {
 		.await
 		.unwrap_or_else(|e| panic!("swap failed: {e}"));
 	assert_ne!(generation, inner);
+	ready_generation(&host, generation).await;
 	assert_eq!(host.call("read", json!(null)).await.unwrap()["version"], 2);
 	// The dependent kept its generation; the sibling beside it never noticed.
 	assert_eq!(host.fiber_of("o").unwrap().uid(), outer);
@@ -124,10 +160,12 @@ async fn a_nested_node_is_swapped_and_its_dependent_follows() {
 	// A candidate that raises never publishes; the live generation stays.
 	write(dir.path(), "inner.lua", &provider(3, true));
 	assert!(host.replace_node(generation).await.is_err());
+	ready_generation(&host, generation).await;
 	assert_eq!(host.call("read", json!(null)).await.unwrap()["version"], 2);
 	// And the transaction it failed in is finished, so the next one can begin.
 	write(dir.path(), "inner.lua", &provider(4, false));
 	let third = host.replace_node(generation).await.unwrap();
+	ready_generation(&host, third).await;
 	assert_eq!(host.call("read", json!(null)).await.unwrap()["version"], 4);
 	assert_ne!(third, generation);
 	// The same ask answered for a profile entry goes through the entry path.
