@@ -12,9 +12,11 @@ return {
   { id = "policy", path = "policy" },
   { id = "memory", path = "memory" },
   { id = "memory-tool", path = "memory-tool" },
-  { id = "pty", path = "pty" },
+  { id = "pty", path = "pty", config = { control = "user" } },
   { id = "harness", path = "harness", inject = { "environment", "pty", "memory" }, config = { environment = "environment", terminal = "pty", memory = "memory" } },
   { id = "workspace", path = "workspace" },
   { id = "agent", path = "agent", inject = { "tool.*" } },
   { id = "live", path = "live" },
+  -- Attach the terminal UI to this host to share the voice agent's actual shell.
+  { id = "ui", path = "ui", inject = { "agent", "sessions", "buffers", "router", "pty" }, config = { bridge = true } },
 }

@@ -22,10 +22,17 @@ function profile(root: string, name: string, port = 0) {
       fs.mkdirSync(destination);
       fs.writeFileSync(path.join(destination, "cartridge.json"), JSON.stringify({ name: module, entry: "init.lua" }));
       fs.writeFileSync(path.join(destination, "init.lua"), 'return {provide={"router"},apply=function(ctx) ctx:provide("router",function() return {data={}} end) end}');
-    } else fs.symlinkSync(fs.realpathSync(path.join(runtime, "builtin", module)), destination);
+    } else {
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.symlinkSync(fs.realpathSync(path.join(runtime, "builtin", module)), destination);
+    }
   }
+  const prdRoot = path.join(directory, "prd-fixture");
+  fs.mkdirSync(path.join(prdRoot, ".cartridge/boards/root"), { recursive: true });
+  fs.writeFileSync(path.join(prdRoot, ".cartridge/boards/root/settings.md"), "# Isolated smoke board\n");
   fs.writeFileSync(path.join(directory, "config.lua"), `return {
     sessions={dir="sessions"},memory={dir="memory",reason={url=""},tick={interval_secs=0},queue={enabled=false}},
+    prd={root=${JSON.stringify(prdRoot)},default_board="root"},
     router={listen={"127.0.0.1:0"},config_dir="credentials",data_dir="router"},
     proxy={listen="127.0.0.1:${port}",cwd=".",key_env="CARTRIDGE_PROXY_KEY"},
     mcp={cwd="."},policy={default="ask"},harness={max_bytes=262144},gitfs={store_dir="gitfs"}}`);

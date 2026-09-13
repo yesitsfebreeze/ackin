@@ -23,6 +23,6 @@ return {
 	{ id = "agent", path = "agent", inject = { "tool.*" } },
 	-- One UI cartridge: `cartridge run ui` (terminal). Its chat backend wraps these
 	-- injected services and asks `agent` for the palette's action list.
-	{ id = "pty", path = "pty" },
+	{ id = "pty", path = "pty", config = { control = "user" } },
 	{ id = "ui", path = "ui", inject = { "agent", "sessions", "buffers", "router", "pty" }, config = { bridge = true } },
 }

@@ -37,6 +37,22 @@ providers. Meaningful cartridge tests should cover observable behavior and failu
 paths. Unknown module selections fail. New module types need dispatch support in
 scripts/workspace.py, rather than silently falling back to another test suite.
 
+LOCAL CONVERSATION
+
+run                                start Live, the terminal wrapper, and browser
+just run                           same entry point from the repository
+just run --no-open                 attach the terminal without opening a browser
+just run --no-open --no-terminal   create a headless session and print its URL
+just tui                           open the terminal interface
+
+The bare run command is .cartridge/tools/run linked from ~/.local/bin/run.
+The browser supports voice, text, local task controls, and a model-sized context
+ring. Launch attaches the terminal wrapper to that same host and hands Live
+control of its shell. From a noninteractive launcher, a terminal window opens
+for the wrapper. Its controls let the user reclaim the shell at any time.
+Local work continues when the browser or wrapper closes. Each launch creates a
+new session while retaining prior history. Build the runtime and live services first.
+
 PROFILES AND SERVICES
 
 just daemon [profile]               keep a composition active in the foreground
@@ -69,7 +85,7 @@ MCP AND CODEX
 
 just mcp runs a client-owned stdio server using .cartridge/mcp. stdout is only
 newline-delimited JSON-RPC; stderr carries diagnostics. The current composed tool
-names are gitfs, memo, memory, shell, and ship. Discover schemas with tools/list.
+names include gitfs, memo, memory, shell, ship, prd, and live. Discover schemas with tools/list.
 Policy comes from the profile; registration does not authorize every tool action.
 
 This machine registers it globally in Codex as cartridge using:
@@ -83,6 +99,10 @@ inject new callable tools into a conversation whose tool set is already fixed.
 Validate with initialize, notifications/initialized, tools/list, and a harmless
 memo types call. To remove this configuration use codex mcp remove cartridge.
 MCP is not an HTTP server and does not connect to the proxy's HTTP port.
+The live tool attaches to the existing Live host over its Cartridge socket.
+Start that host with just live. Use live conversations to select a conversation,
+then state/context to inspect it or delegate to submit work. Voice, browser, and
+MCP share the same tasks; disconnecting MCP does not stop the Live host.
 
 STATE, MIGRATION, AND GIT
 

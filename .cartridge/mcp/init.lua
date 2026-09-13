@@ -14,5 +14,6 @@ return {
 	{ id = "memory", path = "memory" },
 	{ id = "memory-tool", path = "memory-tool" },
 	{ id = "prd", path = "prd" },
+	{ id = "live-mcp", path = "live/mcp" },
 	{ id = "mcp", path = "mcp", inject = { "tool.*" } },
 }

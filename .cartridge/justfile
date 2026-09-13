@@ -21,6 +21,9 @@ links:
 run *args:
     @"{{memo_runner}}" "{{runtime_root}}/.cartridge/memos/routine/cartridge-runtime.md" run "$@"
 
+tui *args:
+    @"{{memo_runner}}" "{{runtime_root}}/.cartridge/memos/routine/cartridge-runtime.md" tui "$@"
+
 modules:
     @"{{memo_runner}}" "{{runtime_root}}/.cartridge/memos/routine/cartridge-runtime.md" modules
 
@@ -65,3 +68,7 @@ smoke target="all":
 
 live:
     @"{{memo_runner}}" "{{runtime_root}}/.cartridge/memos/routine/cartridge-runtime.md" live
+
+# Chat and shell attached to the same runtime as the browser voice agent.
+live-terminal:
+    @"{{memo_runner}}" "{{runtime_root}}/.cartridge/memos/routine/cartridge-runtime.md" live-terminal

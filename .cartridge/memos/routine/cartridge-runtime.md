@@ -15,6 +15,9 @@ set positional-arguments
 binary := env_var_or_default("CARGO_TARGET_DIR", env_var("MEMO_OWNER_ROOT") / "target") / "debug/cartridge"
 
 run *args:
+    @bun "$MEMO_OWNER_ROOT/../live.ctg/src/launch.ts" "{{binary}}" "$@"
+
+tui *args:
     @"{{binary}}" run ui "$@"
 
 daemon profile="default":
@@ -39,6 +42,9 @@ mcp:
     @"{{binary}}" --profile mcp mcp
 
 live:
+    @bun "$MEMO_OWNER_ROOT/../live.ctg/src/launch.ts" "{{binary}}"
+
+live-terminal:
     @bun "$MEMO_OWNER_ROOT/../live.ctg/src/launch.ts" "{{binary}}"
 
 launch agent *args:
