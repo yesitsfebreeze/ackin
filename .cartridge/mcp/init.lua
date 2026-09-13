@@ -13,5 +13,6 @@ return {
 	{ id = "gitfs", path = "gitfs" },
 	{ id = "memory", path = "memory" },
 	{ id = "memory-tool", path = "memory-tool" },
+	{ id = "prd", path = "prd" },
 	{ id = "mcp", path = "mcp", inject = { "tool.*" } },
 }
