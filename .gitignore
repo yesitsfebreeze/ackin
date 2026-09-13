@@ -47,3 +47,4 @@ node_modules/
 # Mutable overlay and workspace page stores
 /.cartridge/gitfs/
 /.cartridge/workspace-pages/
+.gstack/
