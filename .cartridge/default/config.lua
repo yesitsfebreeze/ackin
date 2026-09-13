@@ -30,10 +30,10 @@ return {
 		-- Session overlay blobs and runtime state; gitignored, stays out of the tree.
 		store_dir = ".cartridge/gitfs",
 		ship = {
-			-- Ship commits the session's owned paths on the current branch and
-			-- pushes. No remote configured -> the commit stays local and the
-			-- push is reported failed. Set gate_model to enable the LLM
-			-- ship-or-hold gate (fails open); unset -> plain file-summary subject.
+			-- Ship previews first, then publishes the exact reviewed tree locally.
+			-- Legacy push does not enable implicit network access. A configured
+			-- gate_model requires an exact router grant and refuses on failure;
+			-- without a gate, the reviewed subject uses a plain file summary.
 			push = true,
 			remote = "origin",
 			gate_timeout_ms = 30000,
