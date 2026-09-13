@@ -13,7 +13,7 @@ return {
 	{ id = "sessions", path = "sessions" },
 	{ id = "docs", path = "docs" },
 	{ id = "router", path = "router" },
-	{ id = "gitfs", path = "gitfs" },
+	{ id = "gitfs", path = "gitfs", inject = { "sessions" } },
 	{ id = "policy", path = "policy" },
 	{ id = "memory", path = "memory" },
 	{ id = "memory-tool", path = "memory-tool" },

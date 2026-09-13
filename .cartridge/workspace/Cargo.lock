@@ -456,6 +456,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sessions",
  "sha2",
  "tempfile",
  "tokio",
@@ -591,10 +592,12 @@ name = "gitfs"
 version = "0.1.0"
 dependencies = [
  "cartridge",
+ "libc",
  "regex",
  "reqwest",
  "serde",
  "serde_json",
+ "sessions",
  "sha2",
  "tempfile",
  "tokio",
@@ -618,6 +621,7 @@ name = "harness"
 version = "0.1.0"
 dependencies = [
  "cartridge",
+ "landscape",
  "serde",
  "serde_json",
  "sha2",
@@ -1701,6 +1705,7 @@ name = "sessions"
 version = "0.1.0"
 dependencies = [
  "cartridge",
+ "getrandom 0.4.3",
  "serde",
  "serde_json",
  "sha2",

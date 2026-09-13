@@ -10,7 +10,7 @@ return {
 	{ id = "docs", path = "docs" },
 	{ id = "policy", path = "policy" },
 	{ id = "pty", path = "pty" },
-	{ id = "gitfs", path = "gitfs" },
+	{ id = "gitfs", path = "gitfs", inject = { "sessions" } },
 	{ id = "memory", path = "memory" },
 	{ id = "memory-tool", path = "memory-tool" },
 	{ id = "prd", path = "prd" },
