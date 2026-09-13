@@ -4,7 +4,7 @@
 return {
 	-- The record and the landscape over it: `tool.*` is what the landscape
 	-- graphs, so a cartridge added here is a tool the landscape indexes.
-	{ id = "memo", path = "memo", inject = { "tool.*" } },
+	{ id = "memo", path = "memo", inject = { "tool.*", "memory" } },
 	{ id = "sessions", path = "sessions" },
 	{ id = "docs", path = "docs" },
 	{ id = "router", path = "router" },
