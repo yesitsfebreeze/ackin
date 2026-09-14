@@ -55,23 +55,43 @@ pub fn layers(profile: &Path) -> Result<Json> {
 	Ok(out)
 }
 
-/// Which file settled a key, for the listing. Not a layer the merge knows
-/// about — it recomputes the answer by asking each file in turn.
-pub fn source(profile: &Path, key: &str, settled: &Json, declared: &Json) -> &'static str {
-	let global = global_path()
-		.ok()
-		.and_then(|p| read(&p).ok())
-		.is_some_and(|v| get(&v, key).is_some());
-	let project = read(&project_path(profile))
-		.ok()
-		.is_some_and(|v| get(&v, key).is_some());
-	match (project, global) {
-		(true, _) => "project",
-		(false, true) => "global",
-		// Neither file names it, yet it is not what the declaration says: the
-		// profile entry set it in `init.lua`, which composes rather than
-		// configures and so has no line in either file to point at.
-		(false, false) if settled != declared => "profile",
-		(false, false) => "default",
+/// Both configuration files, read once, so a listing asks them per key without
+/// verifying trust and building two Lua states per row. Not a layer the merge
+/// knows about.
+pub struct Sources {
+	global: Json,
+	project: Json,
+}
+
+impl Sources {
+	/// A file that will not read answers for no key, as it did when read per key.
+	pub fn read(profile: &Path) -> Self {
+		Sources {
+			global: global_path()
+				.ok()
+				.and_then(|path| read(&path).ok())
+				.unwrap_or_else(|| json!({})),
+			project: read(&project_path(profile)).unwrap_or_else(|_| json!({})),
+		}
+	}
+
+	/// Which file settled `key`, for the listing.
+	pub fn of(&self, key: &str, settled: &Json, declared: &Json) -> &'static str {
+		match (
+			get(&self.project, key).is_some(),
+			get(&self.global, key).is_some(),
+		) {
+			(true, _) => "project",
+			(false, true) => "global",
+			// Neither file names it, yet it is not what the declaration says:
+			// the profile entry set it in `init.lua`, which composes rather
+			// than configures and so has no line in either file to point at.
+			(false, false) if settled != declared => "profile",
+			(false, false) => "default",
+		}
 	}
 }
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/src/settings/files.rs"]
+mod tests;

@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 pub use crate::transport::settings::{
 	declared, defaults, get, merge, set, undeclared, Kind, Spec, Specs,
 };
-pub use files::{global_path, layers, project_path, read, source};
+pub use files::{global_path, layers, project_path, read, Sources};
 pub use host::{host, host_specs, settle, Host};
 
 /// Fill `config` from the declarations and refuse what it names wrongly.

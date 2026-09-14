@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use cartridge::host::Host;
 use cartridge::loader;
-use cartridge::settings::{self, Spec, Specs};
+use cartridge::settings::{self, Sources, Spec, Specs};
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
 
@@ -89,13 +89,14 @@ fn table(profile: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -
 		}
 	};
 	let mut rows: Vec<Row> = Vec::new();
+	let sources = Sources::read(profile);
 	let mut push = |section: &str, key: &str, spec: Option<&Spec>, value: &Value| {
 		if !wanted(section, key) {
 			return;
 		}
 		let dotted = format!("{section}.{key}");
 		let declared = spec.map_or(Value::Null, |s| s.default.clone());
-		let source = settings::source(profile, &dotted, value, &declared);
+		let source = sources.of(&dotted, value, &declared);
 		let kind = spec.map_or("undeclared".to_owned(), |s| {
 			s.describe()["type"].as_str().unwrap_or("?").to_owned()
 		});
@@ -169,6 +170,7 @@ fn print_rows(rows: &[Row]) {
 /// The listing as data: declarations, settled values and the file each came
 /// from, for anything reading this surface rather than looking at it.
 fn as_json_document(profile: &Path, entries: &[loader::SettingsInfo]) -> String {
+	let sources = Sources::read(profile);
 	let describe = |section: &str, specs: &Specs, settled: &Value, undeclared: &[String]| {
 		let keys: serde_json::Map<String, Value> = specs
 			.iter()
@@ -181,8 +183,7 @@ fn as_json_document(profile: &Path, entries: &[loader::SettingsInfo]) -> String 
 				);
 				map.insert(
 					"source".into(),
-					json!(settings::source(
-						profile,
+					json!(sources.of(
 						&format!("{section}.{key}"),
 						settings::get(settled, key).unwrap_or(&Value::Null),
 						&spec.default,
