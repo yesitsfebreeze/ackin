@@ -80,7 +80,10 @@ verified, and the node refuses an entry whose bytes no longer match. The
 node's sandbox grant is what keeps it away from the store, not the check. The
 one trust read left in a node is its own settling of host settings — it reads
 a `config.lua` it can reach, and warns and uses declared defaults when it
-cannot.
+cannot. A node is started with a cleared environment — an allow-list in
+`src/host/process.rs` plus the variables that name the node, scrubbed before
+any helper exists — so no secret of the person's shell and no base credential
+reaches a cartridge or its helpers.
 
 Each base run has a directory under `$XDG_RUNTIME_DIR/cartridge` or
 `/tmp/cartridge-<uid>` holding one socket per node, stable for the run, and

@@ -799,6 +799,55 @@ done
 	host.stop().await;
 }
 
+/// A node's environment is its own: no injected secret, no ambient shell — a
+/// helper it spawns sees the allow-list, not the base's environment.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_spawned_helper_sees_no_cartridge_variable_and_a_path() {
+	let dir = tempfile::tempdir().unwrap();
+	std::env::set_var("CARTRIDGE_TEST_SECRET", "host-admin-leak");
+	cartridge(
+		dir.path(),
+		"spiller",
+		json!({
+			"name": "spiller", "entry": "init.lua",
+			"events": {"env": {}}, "listen": ["env"],
+			"grant": {"exec": ["/usr/bin/env"]},
+		}),
+		r#"local lines = {}
+			local env = cartridge.spawn({"/usr/bin/env"})
+			env:on_line(function(line) table.insert(lines, line) end)
+			cartridge.listen("env", function() return lines end)"#,
+	);
+	profile(dir.path(), &["spiller"]);
+	let host = boot(dir.path()).await;
+	let mut lines = json!([]);
+	for _ in 0..50 {
+		lines = host
+			.bail("env", json!(null))
+			.await
+			.unwrap()
+			.unwrap_or_default();
+		if lines.as_array().is_some_and(|s| !s.is_empty()) {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+	let lines = lines.as_array().expect("env printed its environment");
+	assert!(
+		lines
+			.iter()
+			.all(|line| !line.as_str().unwrap_or_default().starts_with("CARTRIDGE_")),
+		"no CARTRIDGE_* variable reaches a helper: {lines:?}"
+	);
+	assert!(
+		lines
+			.iter()
+			.any(|line| line.as_str().unwrap_or_default().starts_with("PATH=")),
+		"PATH is passed through: {lines:?}"
+	);
+	host.stop().await;
+}
+
 /// A node's own credential is worth its socket only: presenting it to the
 /// host socket is refused, and the host keeps serving.
 #[tokio::test(flavor = "multi_thread")]

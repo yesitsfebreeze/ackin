@@ -17,6 +17,26 @@ use super::{Host, Plan, Running};
 /// The binary a node runs as; this one unless a test names the built CLI.
 pub const NODE_BIN_ENV: &str = "CARTRIDGE_NODE_BIN";
 
+/// What a node may inherit from the base's environment: nothing it needs to
+/// do its job is missing, and nothing it needs not to see is present. The six
+/// `CARTRIDGE_*` variables are set explicitly below. `PATH` resolves the
+/// helpers `grant.exec` names; `HOME` reaches the global `config.lua` and the
+/// trust store; `XDG_RUNTIME_DIR` names the sockets base; the rest keep a
+/// node's timestamps, messages and temp files from changing with the base's
+/// shell. Everything else — secrets the person's shell held — is dropped.
+const PASSTHROUGH: &[&str] = &[
+	"PATH",
+	"HOME",
+	"TMPDIR",
+	"TZ",
+	"LANG",
+	"LC_ALL",
+	"USER",
+	"LOGNAME",
+	"SHELL",
+	"XDG_RUNTIME_DIR",
+];
+
 pub(super) async fn start(
 	host: &Arc<Host>,
 	plan: &Plan,
@@ -41,6 +61,12 @@ pub(super) async fn start(
 	let mut child = tokio::process::Command::from(
 		crate::sandbox::command(&command, &plan.grant, &plan.root, sockets.as_deref())
 			.map_err(|e| Error::process(&plan.id, e))?,
+	)
+	.env_clear()
+	.envs(
+		PASSTHROUGH
+			.iter()
+			.filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
 	)
 	.env(SOCKET_ENV, &socket)
 	.env(NODE_TOKEN_ENV, &token)

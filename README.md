@@ -38,7 +38,9 @@ Early (`0.1.0`). Interfaces change without notice.
   for each of its `*.lua` files and `cartridge.json` manifests under
   `~/.cartridge/trust`. A changed or unrecorded file is refused by name, so
   cloning a repository never runs its code. `shasum -a 256` reproduces every
-  recorded hash.
+  recorded hash. A node runs with a cleared environment — its own credential,
+  `PATH`, `HOME` and locale only — so a cartridge cannot read the person's
+  shell, and the host admin token never enters a sandbox.
 - **Events**: `emit`, `bail` and `gather` send an event to its listeners and
   differ in what they do with the answers. Each listener's outcome is answered,
   declined, failed, timed out or unavailable, within the event's deadline.

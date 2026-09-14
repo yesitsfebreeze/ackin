@@ -100,6 +100,7 @@ pub async fn main() -> Result<ExitCode> {
 	// authority over this node only, so the six variables are scrubbed below.
 	let host_token = env(NODE_TOKEN_ENV)?;
 	let entry = PathBuf::from(env(ENTRY_ENV)?);
+	let expected = env(ENTRY_SHA256_ENV)?;
 	let root = PathBuf::from(env(ROOT_ENV)?);
 	let listen: Vec<String> = serde_json::from_str(&env(LISTEN_ENV)?)?;
 	let timeout = std::env::var(CONNECT_TIMEOUT_ENV)
@@ -108,6 +109,22 @@ pub async fn main() -> Result<ExitCode> {
 		.map(Duration::from_secs)
 		.unwrap_or(Duration::from_secs(30));
 	let _ = RUNTIME.set(tokio::runtime::Handle::current());
+	// The seven variables named this node; no helper or Lua library spawned
+	// from here needs them. `ponytail:` env is process-global, so a helper
+	// racing a remove_var could still read its own variable — the token is
+	// per-node and the socket answers before any helper exists, so the
+	// exposure is one node's own credential to itself.
+	for key in [
+		SOCKET_ENV,
+		NODE_TOKEN_ENV,
+		CONNECT_TIMEOUT_ENV,
+		ENTRY_ENV,
+		ROOT_ENV,
+		LISTEN_ENV,
+		ENTRY_SHA256_ENV,
+	] {
+		std::env::remove_var(key);
+	}
 	let listener = cartridge::listen(&socket)
 		.await
 		.map_err(|e| Error::process(entry.display().to_string(), e))?;
@@ -124,7 +141,8 @@ pub async fn main() -> Result<ExitCode> {
 		let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
 		lifeline.stop();
 	});
-	let apply = Box::new(move |ctx: Ctx, config: Value| apply(lua, ctx, entry, config).boxed());
+	let apply =
+		Box::new(move |ctx: Ctx, config: Value| apply(lua, ctx, entry, expected, config).boxed());
 	cartridge::serve(listener, ctx, apply).await;
 	Ok(ExitCode::SUCCESS)
 }
@@ -144,12 +162,17 @@ pub(crate) fn entry_bytes(entry: &Path, expected: &str) -> mlua::Result<String> 
 
 /// Run `init.lua` with the config the base handed over, as a coroutine, so its
 /// top level may send events too.
-async fn apply(lua: Lua, ctx: Ctx, entry: PathBuf, config: Value) -> cartridge::Result<()> {
+async fn apply(
+	lua: Lua,
+	ctx: Ctx,
+	entry: PathBuf,
+	expected: String,
+	config: Value,
+) -> cartridge::Result<()> {
 	let run = async {
 		let global: Table = lua.globals().get("cartridge")?;
 		global.set("name", ctx.name())?;
 		global.set("config", lua.to_value(&config)?)?;
-		let expected = std::env::var(ENTRY_SHA256_ENV).map_err(mlua::Error::external)?;
 		let source = entry_bytes(&entry, &expected)?;
 		let returned: mlua::Value = lua
 			.load(source)
