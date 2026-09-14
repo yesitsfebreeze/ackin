@@ -78,11 +78,12 @@ NODES
 
 Each cartridge runs as a node: the base binary re-run on that init.lua, in its
 own sandboxed process, serving JSON-RPC 2.0 on its own local socket. The wire
-is internal: the base hands every node a directory of the event catalogue, the
-listeners' sockets and one token per sender-to-listener edge, and updates it
-whenever the composition changes. A node authenticates a connection with its
-token and answers `event`, `subscribe`, `unsubscribe`, and for the base `apply`,
-`directory` and `dispose`. A reload is a stop and a start on the same socket.
+is internal: the base hands every node a directory of the event catalogue with
+the listeners' sockets and tokens, and updates it whenever the composition
+changes. Each node has one token; senders present it, and the node presents it
+to the base. A node answers `event`, `subscribe`, `unsubscribe`, and for the
+base `apply`, `directory` and `dispose`. A reload is a stop and a start on the
+same socket.
 
 CLI
 

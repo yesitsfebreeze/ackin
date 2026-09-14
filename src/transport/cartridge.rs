@@ -31,9 +31,9 @@ pub struct Directory {
 	/// Every event of the composition: who defines it, its schema, who listens.
 	#[serde(default)]
 	pub events: BTreeMap<String, EventEntry>,
-	/// The tokens this node lets in, and the events each may send it.
+	/// The token every sender presents to this node, and this node presents to the base.
 	#[serde(default)]
-	pub accept: BTreeMap<String, Grant>,
+	pub token: String,
 	/// Events this node declared it needs a listener for; all are covered.
 	#[serde(default)]
 	pub needs: Vec<String>,
@@ -60,29 +60,15 @@ pub struct Address {
 	pub token: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Grant {
-	pub from: String,
-	#[serde(default)]
-	pub names: Vec<String>,
-}
-
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum Access {
 	Host,
-	Granted(Grant),
+	Peer,
 }
 
 impl Access {
-	fn is_host(&self) -> bool {
+	fn is_host(self) -> bool {
 		matches!(self, Access::Host)
-	}
-
-	fn allows(&self, name: &str) -> bool {
-		match self {
-			Access::Host => true,
-			Access::Granted(grant) => grant.names.iter().any(|n| n == name),
-		}
 	}
 }
 
@@ -629,14 +615,8 @@ impl Ctx {
 		if token == self.state.host_token {
 			return Some(Access::Host);
 		}
-		self.state
-			.directory
-			.read()
-			.expect("directory lock")
-			.accept
-			.get(token)
-			.cloned()
-			.map(Access::Granted)
+		let directory = self.state.directory.read().expect("directory lock");
+		(!directory.token.is_empty() && directory.token == token).then_some(Access::Peer)
 	}
 
 	async fn finish(&self) {
@@ -763,7 +743,7 @@ async fn connection(ctx: Ctx, adapter: LocalAdapter, apply: Arc<Mutex<Option<App
 				request.reply(Ok(json!({})));
 			}
 			_ => {
-				tokio::spawn(handle(ctx.clone(), access.clone(), request, apply.clone()));
+				tokio::spawn(handle(ctx.clone(), access, request, apply.clone()));
 			}
 		}
 	}
@@ -824,9 +804,6 @@ async fn handle(ctx: Ctx, access: Access, request: Request, apply: Arc<Mutex<Opt
 		}
 		"event" => {
 			let name = params["name"].as_str().unwrap_or_default().to_owned();
-			if !access.allows(&name) {
-				return unauthorized(request);
-			}
 			let listener = ctx
 				.state
 				.events

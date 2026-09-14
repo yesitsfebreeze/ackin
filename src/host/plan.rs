@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::transport::cartridge::{Address, Directory, EventEntry, Grant as Access};
+use crate::transport::cartridge::{Address, Directory, EventEntry};
 
 use crate::error::{Error, Result};
 use crate::loader::{Declared, Entry, Event, Grant};
@@ -155,10 +155,11 @@ impl Host {
 		})
 	}
 
-	pub(crate) fn token(&self, from: &str, to: &str) -> String {
-		self.edges
+	/// The one token a node accepts from senders and presents to the base.
+	pub(crate) fn token(&self, id: &str) -> String {
+		self.tokens
 			.lock()
-			.entry((from.to_owned(), to.to_owned()))
+			.entry(id.to_owned())
 			.or_insert_with(crate::transport::token)
 			.clone()
 	}
@@ -226,10 +227,11 @@ pub(crate) fn directory(
 ) -> Directory {
 	let mut directory = Directory {
 		needs: plan.needs.clone(),
+		token: host.token(&plan.id),
 		host: Some(Address {
 			cartridge: "host".into(),
-			socket: host.inner_socket(),
-			token: host.token(&plan.id, "host"),
+			socket: host.socket_path(),
+			token: host.token(&plan.id),
 		}),
 		..Directory::default()
 	};
@@ -240,7 +242,7 @@ pub(crate) fn directory(
 			.map(|listener| Address {
 				cartridge: listener.id.clone(),
 				socket: host.socket(&listener.id),
-				token: host.token(&plan.id, &listener.id),
+				token: host.token(&listener.id),
 			})
 			.collect();
 		directory.events.insert(
@@ -252,17 +254,6 @@ pub(crate) fn directory(
 				listeners,
 			},
 		);
-	}
-	if !plan.on.is_empty() {
-		for other in plans.iter().filter(|p| p.id != plan.id) {
-			directory.accept.insert(
-				host.token(&other.id, &plan.id),
-				Access {
-					from: other.id.clone(),
-					names: plan.on.clone(),
-				},
-			);
-		}
 	}
 	directory
 }

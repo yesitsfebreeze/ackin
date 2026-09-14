@@ -1,9 +1,7 @@
 //! The ledger: every cartridge installed under one root, found on the
-//! filesystem. A directory holding a `cartridge.json` is a cartridge; its
-//! direct child directories holding one are its nested entries. An entry's
-//! identity is its path from the root. A key resolves in the asking
-//! cartridge's own subtree first, then outward to the root. A document that
-//! will not read is still an entry, with `unread` saying why.
+//! filesystem. A directory holding a `cartridge.json` is a cartridge, at any
+//! depth below another; an entry's identity is its path from the root. A
+//! document that will not read is still an entry, with `unread` saying why.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -106,66 +104,17 @@ impl Ledger {
 		self.entries.is_empty()
 	}
 
-	/// The entries directly inside `scope` — `""` for the root's own children.
-	/// This is the unit of visibility: a key is a candidate for a lookup in
-	/// `scope` exactly when one of these entries offers it.
-	pub fn children(&self, scope: &str) -> Vec<&Installed> {
-		self.entries
-			.values()
-			.filter(|e| e.parent().unwrap_or("") == scope)
-			.collect()
-	}
-
-	/// The scopes a lookup from `from` passes through, nearest first: the asking
-	/// cartridge's own subtree, then its parent's, outward to the root.
-	fn outward(from: &str) -> Vec<&str> {
-		let mut scopes = vec![from];
-		let mut at = from;
-		while let Some((head, _)) = at.rsplit_once('/') {
-			scopes.push(head);
-			at = head;
-		}
-		if !from.is_empty() {
-			scopes.push("");
-		}
-		scopes
-	}
-
-	/// Bind `key` for the cartridge at `from`. **A walk, not a map hit.** The
-	/// asking cartridge's own subtree answers first; only where it is silent
-	/// does the search step outward, one containing subtree at a time. A key one
-	/// subtree over is invisible however identical its name, because it was never
-	/// offered into any scope this walk passes through. The one visible side of
-	/// that privacy: a nested cartridge's `on` is a candidate for every
-	/// lookup whose walk passes its parent's scope, so everything inside the
-	/// parent's subtree — the parent, the other children, their descendants —
-	/// sees it, and nothing outside the parent does until a parent passes it on.
-	///
-	/// The settled rule — two cartridges may listen to the same event without
-	/// colliding — holds across scopes and does not hold inside one. Where two
-	/// entries of the *same* scope offer the key the walk stops and says so
-	/// ([`Bound::Clashed`]) rather than quietly taking the first in path order:
-	/// a clash you find when you install is a diagnostic, a clash you find from
-	/// odd behaviour later is a bug.
-	///
-	/// `from` is `""` for a lookup made at the root itself.
+	/// Who listens to `key`, apart from `from` itself: one entry, none, or a clash.
 	pub fn resolve(&self, from: &str, key: &str) -> Bound<'_> {
-		for scope in Self::outward(from) {
-			// Path order, so a clash names the same offers on every run rather
-			// than by directory order. Sorting decides what a clash *names*; it
-			// does not decide a winner.
-			let offered: Vec<&Installed> = self
-				.children(scope)
-				.into_iter()
-				.filter(|e| e.path != from && e.offers().any(|k| k == key))
-				.collect();
-			match offered.len() {
-				0 => continue,
-				1 => return Bound::One(offered[0]),
-				_ => return Bound::Clashed(offered),
-			}
+		let offered: Vec<&Installed> = self
+			.entries()
+			.filter(|e| e.path != from && e.offers().any(|k| k == key))
+			.collect();
+		match offered.len() {
+			0 => Bound::None,
+			1 => Bound::One(offered[0]),
+			_ => Bound::Clashed(offered),
 		}
-		Bound::None
 	}
 
 	/// Every need of every entry, paired with what it binds to — [`Bound::None`]

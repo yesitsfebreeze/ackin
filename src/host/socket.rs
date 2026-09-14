@@ -61,7 +61,7 @@ fn tag(profile: &Path) -> String {
 	crate::transport::typed::path_tag(profile)[..12].to_owned()
 }
 
-/// The host socket of the project whose profile is `profile`.
+/// Where the command line finds the base serving `profile`: a link to its socket.
 pub fn path(profile: &Path) -> Result<PathBuf> {
 	Ok(base()?.join(format!("{}.sock", tag(profile))))
 }
@@ -95,21 +95,19 @@ pub(crate) fn run_dir(profile: &Path) -> Result<PathBuf> {
 	Ok(dir)
 }
 
-/// A socket file name for an entry id: readable, and unique even when ids differ only in punctuation.
+/// A socket file name for an entry id.
 pub(crate) fn file_name(id: &str) -> String {
-	let readable: String = id
+	let name: String = id
 		.chars()
 		.map(|c| {
-			if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+			if c.is_ascii_alphanumeric() || c == '-' {
 				c
 			} else {
 				'_'
 			}
 		})
-		.take(24)
 		.collect();
-	let hash = crate::transport::typed::path_tag(Path::new(id));
-	format!("{readable}-{}.sock", &hash[..6])
+	format!("{name}.sock")
 }
 
 pub(crate) async fn listen(path: &Path) -> Result<crate::transport::typed::LocalListener> {
@@ -128,44 +126,45 @@ pub(crate) async fn listen(path: &Path) -> Result<crate::transport::typed::Local
 	}
 }
 
-/// Answer cartridges on the host's inner socket for as long as the host lives.
+/// Answer nodes and the command line on the base's socket for as long as the base lives.
 pub(crate) async fn accept(
 	host: std::sync::Weak<Host>,
 	mut listener: crate::transport::typed::LocalListener,
 ) {
 	while let Ok(adapter) = listener.accept().await {
 		let Some(host) = host.upgrade() else { break };
-		let (stop, _) = mpsc::channel(1);
+		let stop = host.stop_signal();
 		tokio::spawn(connection(host, adapter, stop));
 	}
 }
 
-/// Serve the project's host socket for the command line until asked to stop.
-/// Returns `Ok(false)` when another host already serves this project.
+/// Publish this base as the project's, for the command line, until asked to
+/// stop. Returns `Ok(false)` when another base already serves this project.
 pub async fn serve(host: Arc<Host>) -> Result<bool> {
-	let path = path(&host.profile)?;
-	let mut listener =
-		match crate::transport::typed::bind(&crate::transport::typed::Endpoint::Unix(path.clone()))
-			.await
-		{
-			Ok(crate::transport::typed::BindOutcome::Bound(listener)) => listener,
-			Ok(crate::transport::typed::BindOutcome::AlreadyRunning) => return Ok(false),
-			Err(error) => return Err(Error::Remote(format!("{}: {error}", path.display()))),
-		};
+	let link = path(&host.profile)?;
 	let token = token_path(&host.profile)?;
-	write_private(&token, host.host_token())?;
-	let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-	loop {
-		tokio::select! {
-			accepted = listener.accept() => {
-				let Ok(adapter) = accepted else { break };
-				tokio::spawn(connection(host.clone(), adapter, stop_tx.clone()));
-			}
-			_ = stop_rx.recv() => break,
+	if let Ok(existing) = std::fs::read_link(&link) {
+		if existing.exists() && existing != host.socket_path() {
+			return Ok(false);
 		}
 	}
-	let _ = std::fs::remove_file(&token);
+	let _ = std::fs::remove_file(&link);
+	std::os::unix::fs::symlink(host.socket_path(), &link).map_err(|e| Error::file(&link, e))?;
+	write_private(&token, host.host_token())?;
+	let _published = Published(vec![link, token]);
+	host.stopped().await;
 	Ok(true)
+}
+
+/// Files that name this base to the command line, gone when it stops serving.
+struct Published(Vec<PathBuf>);
+
+impl Drop for Published {
+	fn drop(&mut self) {
+		for path in &self.0 {
+			let _ = std::fs::remove_file(path);
+		}
+	}
 }
 
 fn write_private(path: &Path, text: &str) -> Result<()> {
@@ -191,7 +190,7 @@ enum Caller {
 async fn connection(
 	host: Arc<Host>,
 	adapter: crate::transport::typed::LocalAdapter,
-	stop: mpsc::Sender<()>,
+	stop: tokio_util::sync::CancellationToken,
 ) {
 	let (peer, mut incoming) = Peer::spawn(adapter, Some(1 << 26));
 	let caller = match incoming.recv().await {
@@ -244,7 +243,7 @@ fn handle(
 	peer: Peer,
 	caller: Caller,
 	request: Request,
-	stop: mpsc::Sender<()>,
+	stop: tokio_util::sync::CancellationToken,
 ) -> futures::future::BoxFuture<'static, ()> {
 	Box::pin(answer(host, peer, caller, request, stop))
 }
@@ -254,7 +253,7 @@ async fn answer(
 	peer: Peer,
 	caller: Caller,
 	request: Request,
-	stop: mpsc::Sender<()>,
+	stop: tokio_util::sync::CancellationToken,
 ) {
 	let params = request.params.clone();
 	let application = |e: Error| rpc::Error::application(e.to_string());
@@ -327,7 +326,7 @@ async fn answer(
 		}
 		"stop" => {
 			request.reply(Ok(json!({})));
-			let _ = stop.send(()).await;
+			stop.cancel();
 		}
 		other => request.reply(Err(rpc::Error::new(
 			rpc::METHOD_NOT_FOUND,
@@ -385,7 +384,11 @@ async fn follow(host: &Arc<Host>, peer: &Peer, channel: &str, since: Option<u64>
 pub async fn client(profile: &Path) -> Result<(Peer, mpsc::UnboundedReceiver<Incoming>)> {
 	let token = std::fs::read_to_string(token_path(profile)?).map_err(|e| Error::Unavailable {
 		key: "host".into(),
-		why: format!("no host serves {}: {e}", profile.display()),
+		why: format!("no base serves {}: {e}", profile.display()),
 	})?;
-	super::connect(&path(profile)?, token.trim()).await
+	let socket = std::fs::read_link(path(profile)?).map_err(|e| Error::Unavailable {
+		key: "host".into(),
+		why: format!("no base serves {}: {e}", profile.display()),
+	})?;
+	super::connect(&socket, token.trim()).await
 }

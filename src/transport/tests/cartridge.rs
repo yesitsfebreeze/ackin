@@ -64,13 +64,7 @@ fn directories(dir: &std::path::Path) -> (Directory, Directory) {
 	]);
 	let a = Directory {
 		events: events.clone(),
-		accept: BTreeMap::from([(
-			B_TO_A.to_owned(),
-			Grant {
-				from: "b".into(),
-				names: vec!["a.echo".into(), "ping".into()],
-			},
-		)]),
+		token: B_TO_A.into(),
 		..Directory::default()
 	};
 	let b = Directory {
@@ -135,18 +129,19 @@ async fn an_undeclared_event_or_a_bad_payload_is_refused_before_sending() {
 }
 
 #[tokio::test]
-async fn a_token_only_sends_what_it_was_granted() {
+async fn a_peer_token_sends_events_and_nothing_else() {
 	let (dir, _a, _b, _) = pair().await;
 	let adapter = crate::transport::typed::connect(&Endpoint::Unix(dir.path().join("a.sock")))
 		.await
 		.unwrap();
 	let (peer, _incoming) = Peer::spawn(adapter, None);
 	peer.call("auth", json!({ "token": B_TO_A })).await.unwrap();
-	let error = peer
-		.call("event", json!({ "name": "secret" }))
-		.await
-		.unwrap_err();
-	assert_eq!(error.code, rpc::UNAUTHORIZED);
+	assert_eq!(
+		peer.call("event", json!({ "name": "not.listened" }))
+			.await
+			.unwrap(),
+		Value::Null
+	);
 	let error = peer.call("dispose", json!({})).await.unwrap_err();
 	assert_eq!(error.code, rpc::UNAUTHORIZED);
 }

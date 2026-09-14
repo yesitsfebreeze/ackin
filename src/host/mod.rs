@@ -96,12 +96,13 @@ pub struct Host {
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
 	sockets: PathBuf,
 	host_token: String,
-	edges: Mutex<HashMap<(String, String), String>>,
+	tokens: Mutex<HashMap<String, String>>,
 	slots: Mutex<Vec<Slot>>,
 	listeners: Mutex<HashMap<String, Vec<String>>>,
 	op: tokio::sync::Mutex<()>,
 	lifecycle: broadcast::Sender<Value>,
 	inner: std::sync::OnceLock<tokio::task::JoinHandle<()>>,
+	stop: tokio_util::sync::CancellationToken,
 }
 
 impl Drop for Host {
@@ -136,12 +137,13 @@ impl Host {
 			lua,
 			solo: Mutex::new(None),
 			host_token: crate::transport::token(),
-			edges: Mutex::default(),
+			tokens: Mutex::default(),
 			slots: Mutex::default(),
 			listeners: Mutex::default(),
 			op: tokio::sync::Mutex::new(()),
 			lifecycle: broadcast::channel(crate::settings::host().lifecycle_queue).0,
 			inner: std::sync::OnceLock::new(),
+			stop: tokio_util::sync::CancellationToken::new(),
 		}))
 	}
 
@@ -157,8 +159,18 @@ impl Host {
 		&self.host_token
 	}
 
-	/// The socket cartridges reach the host on.
-	pub(crate) fn inner_socket(&self) -> PathBuf {
+	/// Asked to stop, by the command line.
+	pub(crate) fn stop_signal(&self) -> tokio_util::sync::CancellationToken {
+		self.stop.clone()
+	}
+
+	/// Resolves once the base was asked to stop.
+	pub async fn stopped(&self) {
+		self.stop.cancelled().await;
+	}
+
+	/// The base's own socket: nodes and the command line reach it here.
+	pub fn socket_path(&self) -> PathBuf {
 		self.sockets.join("host.sock")
 	}
 
@@ -225,7 +237,7 @@ impl Host {
 	pub async fn reconcile(self: &Arc<Self>) -> Result<()> {
 		let _op = self.op.lock().await;
 		if self.inner.get().is_none() {
-			let listener = socket::listen(&self.inner_socket()).await?;
+			let listener = socket::listen(&self.socket_path()).await?;
 			let _ = self
 				.inner
 				.set(tokio::spawn(socket::accept(Arc::downgrade(self), listener)));
@@ -655,13 +667,13 @@ impl Host {
 		)
 	}
 
-	/// The cartridge a host token was issued to.
+	/// The cartridge a token was issued to.
 	pub(crate) fn caller(&self, token: &str) -> Option<String> {
-		self.edges
+		self.tokens
 			.lock()
 			.iter()
-			.find(|((_, to), issued)| to == "host" && *issued == token)
-			.map(|((from, _), _)| from.clone())
+			.find(|(_, issued)| *issued == token)
+			.map(|(id, _)| id.clone())
 	}
 
 	/// Enabled cartridges that are running, with their folders.
