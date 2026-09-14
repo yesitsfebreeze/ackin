@@ -91,7 +91,6 @@ impl Slot {
 pub struct Host {
 	pub(crate) dir: PathBuf,
 	pub(crate) profile: PathBuf,
-	pub(crate) lua: mlua::Lua,
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
 	sockets: PathBuf,
 	host_token: String,
@@ -125,18 +124,12 @@ impl Host {
 	pub fn new(dir: impl Into<PathBuf>, profile: impl Into<PathBuf>) -> Result<Arc<Self>> {
 		let dir: PathBuf = dir.into();
 		let profile: PathBuf = profile.into();
-		let lua = crate::lua::interpreter()?;
-		let limit = crate::settings::host().lua_memory_bytes;
-		if limit > 0 {
-			lua.set_memory_limit(limit)?;
-		}
 		let profile = profile.canonicalize().unwrap_or(profile);
 		let host_token = crate::transport::token();
 		Ok(Arc::new(Self {
 			sockets: socket::run_dir(&profile)?,
 			dir: dir.canonicalize().unwrap_or(dir),
 			profile,
-			lua,
 			solo: Mutex::new(None),
 			ctx: Ctx::new(
 				host_token.clone(),

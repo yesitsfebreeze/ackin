@@ -31,21 +31,16 @@ pub fn read(path: &Path) -> Result<Json> {
 	if !path.is_file() {
 		return Ok(json!({}));
 	}
-	let at = |e: mlua::Error| Error::Settings(format!("{}: {e}", path.display()));
-	let source = crate::trust::read(path)?;
-	let lua = crate::lua::interpreter().map_err(at)?;
-	let value: mlua::Value = lua
-		.load(&source)
-		.set_name(path.to_string_lossy())
-		.eval()
-		.map_err(at)?;
-	let value: Json = mlua::LuaSerdeExt::from_value(&lua, value).map_err(at)?;
-	match value.is_object() {
-		true => Ok(value),
-		false => Err(Error::Settings(format!(
+	match crate::lua::evaluate::<Json>(path) {
+		Ok(value) if value.is_object() => Ok(value),
+		Ok(_) => Err(Error::Settings(format!(
 			"{}: must return a table",
 			path.display()
 		))),
+		// The chunk name carries the file for Lua errors; anything else — a
+		// trust refusal — keeps its own words.
+		Err(Error::Lua(e)) => Err(Error::Settings(format!("{}: {e}", path.display()))),
+		Err(other) => Err(other),
 	}
 }
 

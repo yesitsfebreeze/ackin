@@ -20,7 +20,8 @@ refuses, before a cartridge starts, a subscription to an event nobody declares,
 and refuses a payload its schema rejects both when it is sent and when it
 arrives. A cartridge sends only the events it defines or needs, over a token
 minted for that one sender and listener. Each cartridge runs as its own
-sandboxed node; events go straight from sender to listener.
+sandboxed node, with a Lua state, a memory cap and an instruction budget of
+its own; events go straight from sender to listener.
 
 ## Status
 

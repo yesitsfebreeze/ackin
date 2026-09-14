@@ -45,5 +45,9 @@ named by CARTRIDGE_DIAGNOSTICS; CARTRIDGE_LOG selects the host's own log level.
 A cartridge denied by the sandbox usually fails with "Operation not permitted"
 on a path or program its `grant` does not name.
 
+A listener that fails with "exceeded its budget of N Lua instructions" looped
+in Lua; a node that exited with status 70 kept looping after it. Raise
+host.lua_instruction_budget if the work is real.
+
 A command stopping with "is in no trusted project" or "has changed since it
 was trusted" names a file to read before `cartridge trust`.

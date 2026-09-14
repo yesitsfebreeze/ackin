@@ -16,7 +16,7 @@ The base loads and wires; it is not on the path of events.
     run.rs        `run` and `verify`: start, send, stop
   src/node.rs     a node: init.lua with the `cartridge` global, native modules, helpers
   src/ledger.rs   every cartridge installed under the cartridge root
-  src/lua.rs      the sandboxed Lua interpreter
+  src/lua.rs      one Lua state per cartridge and per configuration file, with its limits
   src/trust.rs    what this machine will evaluate or spawn, by SHA-256
   src/sandbox.rs  a grant compiled into an operating-system policy
   src/settings/   settings files and the base's own settings
@@ -73,7 +73,13 @@ directory. The node runs init.lua in the sandboxed Lua interpreter with the
 `cartridge` global injected, loads the native modules the entry asks for, and
 serves the cartridge on its own socket. Its stdin closes when the base goes
 away; its stderr is recorded. When a node fails to start, the error carries the
-last lines it wrote.
+last lines it wrote. The state is the node's own: its memory cap and
+instruction budget are spent by this cartridge alone. Lua that runs
+host.lua_instruction_budget instructions without handing control back — an
+apply, a handler between two waits — is refused with "exceeded its budget of N
+Lua instructions". The budget counts Lua instructions, not a host call Lua is
+waiting on, and a cartridge that catches its own refusal and keeps running
+leaves the process with status 70.
 
 A node reads no trust store: the base hands it the SHA-256 of the entry it
 verified, and the node refuses an entry whose bytes no longer match. The

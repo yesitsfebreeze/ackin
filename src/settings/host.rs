@@ -52,6 +52,7 @@ pub struct Host {
 	pub sandbox_error_chars: usize,
 	pub diagnostics_max_bytes: u64,
 	pub lua_memory_bytes: usize,
+	pub lua_instruction_budget: u64,
 }
 
 impl Host {

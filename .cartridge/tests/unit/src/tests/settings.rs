@@ -40,3 +40,18 @@ fn an_untrusted_project_config_is_refused_at_its_read() {
 		.to_string();
 	assert!(refused.contains("is in no trusted project"), "{refused}");
 }
+
+/// A configuration file that never returns is refused, not a hang: the state
+/// the file runs in has a budget, and the base's own path keeps refusing.
+#[test]
+fn a_configuration_file_that_never_returns_is_refused() {
+	crate::tests::home();
+	let dir = tempfile::tempdir().unwrap();
+	crate::tests::write(dir.path(), "config.lua", "while true do end");
+	crate::trust::record(dir.path()).unwrap();
+	let refused = crate::settings::read(&dir.path().join("config.lua"))
+		.unwrap_err()
+		.to_string();
+	assert!(refused.contains("Lua instructions"), "{refused}");
+	assert!(refused.contains("config.lua"), "{refused}");
+}

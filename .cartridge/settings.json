@@ -70,7 +70,14 @@
       "default": 1073741824,
       "min": 0,
       "max": 68719476736,
-      "doc": "Bytes the host's Lua interpreter may allocate across every Lua cartridge; 0 is unbounded."
+      "doc": "Bytes one Lua state may allocate: each cartridge's node, and each configuration file the base evaluates; 0 is unbounded."
+    },
+    "lua_instruction_budget": {
+      "type": "integer",
+      "default": 1000000000,
+      "min": 0,
+      "max": 1000000000000,
+      "doc": "Lua instructions a state may run before handing control back to the base — an apply, an event handler between two waits, one configuration file — before it is refused; 0 is unbounded."
     },
     "diagnostics_max_bytes": {
       "type": "integer",

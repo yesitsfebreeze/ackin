@@ -903,3 +903,64 @@ async fn an_untrusted_profile_is_refused_where_it_is_enforced() {
 	assert!(refused.contains("is in no trusted project"), "{refused}");
 	assert!(refused.contains("cartridge trust"), "{refused}");
 }
+
+/// Lua that runs without handing control back is refused, and the node keeps
+/// serving everything else — no 60 s deadline, no wedged state.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_spinning_handler_is_refused_and_its_node_keeps_serving() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"spin",
+		json!({"name": "spin", "entry": "init.lua",
+			"events": {"spin": {}, "ping": {}}, "listen": ["spin", "ping"]}),
+		r#"cartridge.listen("spin", function() while true do end end)
+			cartridge.listen("ping", function() return "pong" end)"#,
+	);
+	profile(dir.path(), &["spin"]);
+	let host = boot(dir.path()).await;
+	let error = host
+		.bail("spin", json!(null))
+		.await
+		.unwrap_err()
+		.to_string();
+	assert!(error.contains("Lua instructions"), "{error}");
+	assert_eq!(
+		host.bail("ping", json!(null)).await.unwrap(),
+		Some(json!("pong"))
+	);
+	assert_eq!(status(&host, "spin").state, State::Active);
+	host.stop().await;
+}
+
+/// A node that catches its own refusal and keeps looping ends itself: nothing
+/// inside Lua can stop it, so the process leaves with status 70.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_that_catches_its_own_refusal_exits() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"loop",
+		json!({"name": "loop", "entry": "init.lua",
+			"events": {"spin": {}, "ping": {}}, "listen": ["spin", "ping"]}),
+		r#"cartridge.listen("spin", function() while true do pcall(function() while true do end end) end end)
+			cartridge.listen("ping", function() return "pong" end)"#,
+	);
+	profile(dir.path(), &["loop"]);
+	let host = boot(dir.path()).await;
+	assert!(host.bail("spin", json!(null)).await.is_err());
+	let mut spin = status(&host, "loop");
+	for _ in 0..100 {
+		if spin.state == State::Failed {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(100)).await;
+		spin = status(&host, "loop");
+	}
+	assert_eq!(spin.state, State::Failed, "{:?}", spin.error);
+	assert!(
+		spin.error.unwrap().contains("exited: exit status: 70"),
+		"a runaway node leaves with status 70"
+	);
+	host.stop().await;
+}

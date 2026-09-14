@@ -38,6 +38,16 @@ it. To use another cartridge's event, declare it in `needs` and send it:
   "needs": ["hello.greet"]
   cartridge.listen("welcome", function(args) return cartridge.bail("hello.greet", args) end)
 
+WHAT THE ENTRY RUNS IN
+
+Lua 5.4 with the safe standard library: no io, no package, no require, no
+dofile or loadfile, and os trimmed to clock, date, difftime, getenv and time.
+The state belongs to this cartridge alone and is capped (host.lua_memory_bytes).
+Lua that runs host.lua_instruction_budget instructions without handing control
+back — waiting on bail, gather, host or a spawned program hands it back — is
+refused. Raise either in config.lua if a cartridge does real work in Lua; 0
+turns the limit off. Catching your own refusal and carrying on ends the node.
+
 A RUST CARTRIDGE
 
 The Rust code is a Lua module the entry loads. Cargo.toml:

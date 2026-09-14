@@ -1,10 +1,8 @@
 //! The profile: every installed cartridge as a disabled entry, `init.lua` over
 //! them, and the configuration files laid over each entry.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-
-use mlua::{LuaSerdeExt, Table};
 
 use crate::error::{Error, Result};
 use crate::host::Host;
@@ -22,16 +20,6 @@ pub(crate) fn validate(entry: &Entry) -> Result<()> {
 }
 
 impl Host {
-	pub(crate) fn eval<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<T> {
-		let source = crate::trust::read(path)?;
-		let value: Table = self
-			.lua
-			.load(&source)
-			.set_name(path.to_string_lossy())
-			.eval()?;
-		Ok(self.lua.from_value(mlua::Value::Table(value))?)
-	}
-
 	/// One disabled entry per installed top-level cartridge, keyed by its ledger path.
 	fn derived(&self) -> Vec<Entry> {
 		crate::ledger::Ledger::scan(&self.dir)
@@ -56,7 +44,7 @@ impl Host {
 		let mut entries = self.derived();
 		let profile = self.profile.join("init.lua");
 		let overrides: Vec<Entry> = if profile.is_file() {
-			self.eval(&profile)?
+			crate::lua::evaluate(&profile)?
 		} else {
 			Vec::new()
 		};
@@ -79,7 +67,7 @@ impl Host {
 			if !file.is_file() {
 				continue;
 			}
-			let layer: serde_json::Map<String, serde_json::Value> = self.eval(&file)?;
+			let layer: serde_json::Map<String, serde_json::Value> = crate::lua::evaluate(&file)?;
 			for (id, over) in layer {
 				match overrides.get_mut(&id) {
 					Some(slot) => crate::settings::merge(slot, over),

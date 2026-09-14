@@ -43,7 +43,10 @@ replace, and an explicit null returns a key to its default.
 Both config.lua files are keyed by profile entry id and are ordinary Lua, so
 os.getenv and computed values work in either. $CARTRIDGE_HOME overrides where
 the global one is read from. The same directory holds trust/, the record of
-which project files this machine runs.
+which project files this machine runs. Each file is evaluated in a Lua state
+of its own under the declared limits, and the state is dropped with the
+answer: one file never sees what another left behind, and a file that never
+returns is refused rather than hanging the base.
 
 READING AND WRITING THE SURFACE
 

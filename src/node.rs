@@ -129,11 +129,12 @@ pub async fn main() -> Result<ExitCode> {
 		.await
 		.map_err(|e| Error::process(entry.display().to_string(), e))?;
 	let ctx = Ctx::new(host_token, timeout);
-	let lua = crate::lua::interpreter()?;
-	let limit = crate::settings::host().lua_memory_bytes;
-	if limit > 0 {
-		lua.set_memory_limit(limit)?;
-	}
+	let settings = crate::settings::host();
+	let lua = crate::lua::interpreter(
+		settings.lua_memory_bytes,
+		settings.lua_instruction_budget,
+		crate::lua::Overrun::Exit,
+	)?;
 	let socket_dir = socket.parent().map(Path::to_path_buf).unwrap_or_default();
 	install(&lua, ctx.clone(), root, listen, socket_dir)?;
 	let lifeline = ctx.clone();
