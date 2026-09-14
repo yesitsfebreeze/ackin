@@ -16,6 +16,8 @@ use std::pin::Pin;
 use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
 
+use crate::error::{Error, Result};
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 pub struct Reference {
@@ -101,9 +103,9 @@ impl Limits {
 	/// two neighbours — and its host has already refused anything outside that;
 	/// what is left to check here is that none of the three is zero, because a
 	/// deadline of nothing is not a short deadline.
-	pub fn validate(&self) -> Result<(), String> {
+	pub fn validate(&self) -> Result<()> {
 		if self.deadline_ms == 0 || self.max_rows == 0 || self.max_bytes == 0 {
-			return Err("invalid context limits".into());
+			return Err(Error::Invalid("invalid context limits"));
 		}
 		Ok(())
 	}
@@ -171,11 +173,11 @@ pub fn valid(row: &Evidence) -> bool {
 /// Poll independent sources together under one deadline. Dropping a future does
 /// not assert that a remote server acknowledged cancellation. Producers must not
 /// block executor threads or launch detached retries.
-pub async fn collect(mut tasks: Vec<Task<'_>>, limits: Limits) -> Result<Prepared, String> {
+pub async fn collect(mut tasks: Vec<Task<'_>>, limits: Limits) -> Result<Prepared> {
 	let started = Instant::now();
 	limits.validate()?;
 	if tasks.len() > 16 {
-		return Err("too many context contributors".into());
+		return Err(Error::Invalid("too many context contributors"));
 	}
 	tasks.sort_by(|a, b| a.contributor.cmp(&b.contributor));
 	if tasks.iter().any(|t| !name(&t.contributor))
@@ -183,7 +185,7 @@ pub async fn collect(mut tasks: Vec<Task<'_>>, limits: Limits) -> Result<Prepare
 			.windows(2)
 			.any(|t| t[0].contributor == t[1].contributor)
 	{
-		return Err("invalid or duplicate contributor identity".into());
+		return Err(Error::Invalid("invalid or duplicate contributor identity"));
 	}
 	let deadline = started + Duration::from_millis(limits.deadline_ms);
 	let mut sources: Vec<_> = tasks
@@ -320,7 +322,7 @@ pub async fn collect(mut tasks: Vec<Task<'_>>, limits: Limits) -> Result<Prepare
 		.expect("serializable context")
 		.len() + 3;
 	if encoded_bytes > prepared.limits.max_bytes {
-		return Err("context metadata exceeds byte budget".into());
+		return Err(Error::Invalid("context metadata exceeds byte budget"));
 	}
 	for row in selected.into_values() {
 		let size = serde_json::to_vec(&row)

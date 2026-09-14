@@ -7,9 +7,11 @@ working directory even when called through an absolute path from elsewhere.
 
 DISCOVERY AND BUILD
 
-cartridge help                     what is enabled, one line each (from cartridge.ctg)
-cartridge help <id>                one cartridge: declarations, then its help page
-cartridge help <word>              search every page and description
+cartridge help                     every module; a picker on a terminal (from cartridge.ctg)
+cartridge help <id>                one module's documents: page, declarations, README, docs, memos
+cartridge help <id>/<file>#<sec>   one document or one section of it
+cartridge help <words>             every line holding the words, with its address
+cartridge help --json [<address>]  the same as data; alone, the whole manual
 just isolation                     every undeclared cross-cartridge reference
 just layout                        the repository layout rules
 just modules                       list known modules and memory packages
@@ -140,4 +142,7 @@ When a check fails, inspect validation logs and the selected manifest/profile.
 A malformed manifest should be fixed at its declaration; do not relax strict
 parsing to hide a misspelled key. An absent binary needs a build. A missing service
 needs correct composition or declared dependencies. Keep diagnostics off MCP/SDK
-stdout. Record the cause and the check that confirmed a fix in an appropriate memo.
+stdout. CARTRIDGE_LOG=debug raises what the host and every SDK cartridge say on
+stderr (a tracing filter: cartridge=trace,warn narrows it to the host); a file
+named by CARTRIDGE_DIAGNOSTICS keeps the same events, redacted and bounded.
+Record the cause and the check that confirmed a fix in an appropriate memo.

@@ -8,9 +8,11 @@ and disposes it. Nothing else in the system knows the list.
 
 ## Use
 
-- `cartridge help`: what is enabled and one line each; `cartridge help <id>`
-  prints one cartridge's declarations and the page it ships.
-- `cartridge help <word>`: search every page, description, key and setting.
+- `cartridge help`: every module, then its documents, then their sections — a
+  picker on a terminal. `cartridge help <id>[/<file>[#<section>]]` opens or
+  prints one node; `--json` gives it as data.
+- `cartridge help <words>`: every line in every document holding the words,
+  with the address that opens it.
 - `cartridge list`: every cartridge and what each need binds to.
 - `cartridge settings [<id>|<id>.<key>]`: every tunable value, its current value
   and the file that settled it. `--template` prints a config.lua to save.

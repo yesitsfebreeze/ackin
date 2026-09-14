@@ -1,4 +1,10 @@
-use crate::lua::{block_on, Host};
+//! The `ctx` a Lua cartridge's `apply` receives, and the fiber handles it
+//! hands back. Every method that has to wait — a dispatch that gathers
+//! answers, a fiber to dispose, an effect body that calls out — is an async
+//! method, so the calling coroutine parks on the runtime rather than holding
+//! a thread.
+
+use crate::lua::Host;
 use crate::runtime::{Ctx, FiberHandle, Listener};
 use mlua::{Function, LuaSerdeExt, MetaMethod, UserData, UserDataMethods};
 use std::sync::Arc;
@@ -45,6 +51,23 @@ impl LuaCtx {
 			cartridge: self.cartridge.clone(),
 		}
 	}
+
+	/// A Lua function as a listener: called on its own coroutine for every
+	/// dispatch, `nil` meaning no answer.
+	fn listener(&self, f: Function) -> Listener {
+		let host = self.host.clone();
+		Arc::new(move |payload| {
+			let (host, f) = (host.clone(), f.clone());
+			Box::pin(async move {
+				let argument = host.to_lua(&payload);
+				match f.call_async::<mlua::Value>(argument).await {
+					Ok(mlua::Value::Nil) => Ok(None),
+					Ok(v) => Ok(Some(Arc::new(v) as crate::runtime::Value)),
+					Err(e) => Err(crate::runtime::Error::Apply(e.to_string())),
+				}
+			})
+		})
+	}
 }
 
 pub(crate) struct LuaFiber(Arc<Host>, FiberHandle, crate::reload::Reload);
@@ -60,12 +83,12 @@ impl UserData for LuaFiber {
 			Ok(this.1.state().map(|s| format!("{s:?}")))
 		});
 		methods.add_method("error", |_, this, ()| Ok(this.1.error()));
-		methods.add_method("dispose", |_, this, ()| {
-			block_on(this.1.dispose());
+		methods.add_async_method("dispose", |_, this, ()| async move {
+			this.1.dispose().await;
 			Ok(())
 		});
-		methods.add_method("wait", |_, this, ()| {
-			block_on(this.1.settled());
+		methods.add_async_method("wait", |_, this, ()| async move {
+			this.1.settled().await;
 			Ok(())
 		});
 		methods.add_method("reload", |_, this, ()| {
@@ -80,8 +103,8 @@ impl UserData for LuaFiber {
 
 impl UserData for LuaCtx {
 	fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-		methods.add_method("effect", |_, this, f: Function| {
-			let disposer: mlua::Value = f.call(())?;
+		methods.add_async_method("effect", |_, this, f: Function| async move {
+			let disposer: mlua::Value = f.call_async(()).await?;
 			let host = this.host.clone();
 			this.ctx.effect_sync(move || host.disposer(disposer));
 			Ok(())
@@ -107,41 +130,40 @@ impl UserData for LuaCtx {
 			},
 		);
 		methods.add_method("on", |_, this, (name, f): (String, Function)| {
-			let host = this.host.clone();
-			let listener: Listener = Arc::new(move |payload| {
-				let result = f.call::<mlua::Value>(host.to_lua(&payload));
-				Box::pin(async move {
-					match result {
-						Ok(mlua::Value::Nil) => Ok(None),
-						Ok(v) => Ok(Some(Arc::new(v) as crate::runtime::Value)),
-						Err(e) => Err(crate::runtime::Error::Apply(e.to_string())),
-					}
-				})
-			});
-			this.ctx.on(&name, listener);
+			this.ctx.on(&name, this.listener(f));
 			Ok(())
 		});
 		methods.add_method("emit", |_, this, (name, payload): (String, mlua::Value)| {
 			this.ctx.emit(&name, Arc::new(payload));
 			Ok(())
 		});
-		methods.add_method("bail", |_, this, (name, payload): (String, mlua::Value)| {
-			let answer = block_on(this.ctx.bail(&name, Arc::new(payload))).map_err(external)?;
-			Ok(answer.map(|v| this.host.to_lua(&v)))
-		});
-		methods.add_method(
+		methods.add_async_method(
+			"bail",
+			|_, this, (name, payload): (String, mlua::Value)| async move {
+				let answer = this
+					.ctx
+					.bail(&name, Arc::new(payload))
+					.await
+					.map_err(external)?;
+				Ok(answer.map(|v| this.host.to_lua(&v)))
+			},
+		);
+		methods.add_async_method(
 			"parallel",
-			|_, this, (name, payload): (String, mlua::Value)| {
-				block_on(this.ctx.parallel(&name, Arc::new(payload))).map_err(external)
+			|_, this, (name, payload): (String, mlua::Value)| async move {
+				this.ctx
+					.parallel(&name, Arc::new(payload))
+					.await
+					.map_err(external)
 			},
 		);
 		// One row per answering cartridge: `{from = <entry id>, data = <answer>}`.
 		// The name is stamped here from the registry rather than taken from the
 		// answer, so a contribution cannot claim to come from somewhere else.
-		methods.add_method(
+		methods.add_async_method(
 			"gather",
-			|lua, this, (name, payload): (String, mlua::Value)| {
-				let answers = block_on(this.ctx.gather(&name, Arc::new(payload)));
+			|lua, this, (name, payload): (String, mlua::Value)| async move {
+				let answers = this.ctx.gather(&name, Arc::new(payload)).await;
 				let labels = this.host.labels();
 				let rows = lua.create_table()?;
 				for (uid, answer) in answers {
@@ -186,7 +208,7 @@ impl UserData for LuaCtx {
 						Ok(value) => value,
 						Err(_) => break,
 					};
-					if f.call::<mlua::Value>(value).is_err() {
+					if f.call_async::<mlua::Value>(value).await.is_err() {
 						// A function that dies mid-watch leaves announced, not silent.
 						pump_stream.unsubscribe(&pump_channel, sub.id);
 						break;

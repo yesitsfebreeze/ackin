@@ -20,11 +20,41 @@ workspace. scripts/workspace.py shares target output across these workspaces.
 
 THE HOST
 
-src/runtime.rs and src/fiber.rs manage active components and their lifecycles.
-src/lua.rs supplies the Lua composition API. src/loader.rs reads cartridge.json,
-resolves its Lua entry, reads profile entries, and observes source changes.
-src/ledger.rs records installed declarations and bindings; src/resolver.rs
-resolves service dependencies. A profile selects which cartridges participate.
+src/runtime/ (the registry, and ctx.rs for what a component holds of it) and
+src/fiber.rs manage active components and their lifecycles.
+src/lua.rs supplies the Lua composition API. src/loader/ is the profile, laid
+out as the document is used: document.rs reads and checks cartridge.json,
+entries.rs reads the ledger, init.lua and config.lua into loaded components,
+foreground.rs runs one call or the contracts and disposes, reconcile.rs
+replaces entries and nodes in place, watch.rs observes sources, bridge.rs
+serves a client module's calls. src/ledger.rs records installed declarations
+and bindings; src/resolver.rs resolves service dependencies. A profile selects
+which cartridges participate. src/cli/ is the command line in the order one
+invocation runs it — args.rs the ask, project.rs where it runs, then one
+function per subcommand (host.rs, client.rs, node.rs, listing.rs, settings.rs,
+manual.rs) dispatched from cli/mod.rs; src/main.rs only enters it. src/error.rs is the one error type every host operation answers
+with: a caller matches on the kind (Document, Process, Gone, NotProvided,
+Reload, ...) and the text a variant renders is the sentence a person reads.
+The SDK keeps Result<T, String> on purpose: a handler's error is text that
+travels the wire, and From<Error> for String carries a host error into it.
+
+A Lua cartridge's apply runs as an asynchronous coroutine on the host's
+runtime. Every coroutine.yield is one effect boundary, and every ctx call
+that waits (bail, gather, parallel, a call over the wire, dispose, wait) is
+an async function: the coroutine parks on the runtime and resumes with the
+answer. Nothing blocks a worker thread, so a host runs on any Tokio flavor.
+
+The Lua interpreter is sandboxed (src/lua.rs interpreter()): the safe
+standard library without io and package (no require), an os reduced to
+clock, date, difftime, getenv and time, and no dofile or loadfile. Every
+profile file and every Lua cartridge runs in one such interpreter, bounded by
+host.lua_memory_bytes. A process cartridge is confined separately, by the
+grant its document declares.
+
+The host reports about itself through tracing: stderr at the level
+CARTRIDGE_LOG selects (warn unless set), and, when CARTRIDGE_DIAGNOSTICS names
+a stream, every host event mirrored into that same redacted, bounded file with
+the ambient trace id. Command output goes to stdout and nowhere else.
 
 A typical invocation follows this path:
   launcher -> selected profile -> manifest and Lua entry -> applied component
@@ -59,13 +89,23 @@ outside it. `just isolation` reports every source line that breaks this.
 
 THE MANUAL
 
-cartridge help is built from what is installed and enabled: one line per
-cartridge from its cartridge.json description, and for `cartridge help <id>`
-the declarations off that document followed by the page the cartridge ships at
-.cartridge/help.md, with links relative to its directory. `cartridge help
-<word>` searches every page; --json is the manual as one document; `cartridge
-help host` is the runtime's own page beside the profile. A cartridge without a
-page is reported and the overview exits non-zero.
+cartridge help is every document the composition carries, as one tree read
+fresh on each call (src/cli/manual.rs). The top level is the modules: host
+(this source repository, the cartridge root left out) and each installed
+cartridge. A module's documents are the Markdown and text files in its own
+directory that Git does not ignore — llms.txt, READMEs, docs/, memos and
+.cartridge/help.md — plus its cartridge.json declarations rendered as one more
+document. A document's sections are its Markdown headings, and in a .txt guide
+its all-capitals titles.
+
+Every node has an address: <id>, <id>/<file>, <id>/<file>#<section>. On a
+terminal `cartridge help [<address>]` opens a picker at that node: type to
+filter a level, and from two characters the level also lists every line below
+it holding the typed words; enter descends or opens the document at that line,
+esc steps back. Without a terminal the same address prints that node, words
+that are not an address print each matching line with its address, and --json
+gives the node, the hits, or with nothing else the whole manual. An enabled
+cartridge without a help page is reported and the overview exits non-zero.
 
 SETTINGS
 
@@ -78,7 +118,7 @@ place the numbers live: no Default impl restates them and no configuration
 field takes #[serde(default)]. A cartridge embeds its own cartridge.json and
 reads the declared table back through settings::declared for an unhosted run.
 The host's own keys are declared in settings.json beside llms.txt and live
-under host; src/settings.rs names them to give them types.
+under host; src/settings/host.rs names them to give them types.
 
 Layers, each laid over the last field by field: the declaration, then manifest
 config, then ~/.cartridge/config.lua for the machine, then the project's
@@ -111,7 +151,9 @@ The SDK speaks JSON lines over stdin/stdout; application diagnostics belong on
 stderr. The host applies configuration, routes calls and replies, forwards events,
 and coordinates disposal. stdout logging would corrupt the protocol.
 
-src/cartridge.rs handles the wire, src/sdk.rs its cartridge-facing API, and
+src/cartridge/ handles the wire (link.rs either end, start.rs a process from
+spawn to exit, frames.rs each frame served), src/sdk/ its cartridge-facing
+API (api.rs, nested.rs for a cartridge hosting its own), and
 src/process.rs child execution. src/socket.rs exposes the persistent host to
 clients; src/stream.rs manages channel subscriptions and event envelopes.
 src/trace.rs and src/context.rs carry invocation context. SDK hosts can themselves

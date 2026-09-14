@@ -1,17 +1,17 @@
 # Cartridge: system and authoring guide
 
 Cartridge hosts replaceable Lua and SDK process cartridges. Start with
-`cartridge help`: it lists what this composition has enabled, one line each,
-and `cartridge help <id>` prints that cartridge's declarations and the page it
-ships. The manual is built from the cartridges present, so it is never stale
-and never describes one cartridge from inside another. Then read the linked
-plain-text guides relevant to the task. Paths are relative to this source
-repository.
+`cartridge help`: every document the host and each cartridge carry, as one tree
+of modules, documents and sections. `cartridge help <id>` lists a module's
+documents with their addresses, `cartridge help <id>/<file>[#<section>]` prints
+one, `cartridge help <words>` prints every matching line with its address, and
+`--json` gives the same as data. The manual is read from the cartridges
+present, so it is never stale and never describes one cartridge from inside
+another. Then read the linked plain-text guides relevant to the task. Paths are
+relative to this source repository.
 
 - [Writing good modules](docs/writing-good-modules.txt): useful events, direct
   integration, cartridge dependencies, and documentation through memo tools.
-- [Documentation discovery](../docs.ctg/.cartridge/memos/note/documentation-service.md):
-  find documentation across repositories with the docs service and docs.available event.
 - [System architecture](docs/architecture.txt): repository layout, runtime,
   dependency resolution, processes, replacement, permissions, and cartridge roles.
 - [Creating cartridges](docs/creating-cartridges.txt): complete Lua example,
@@ -68,5 +68,5 @@ discoverable in memos alongside the implementation.
 
 The guides describe this checkout, not a promise that unfinished sandbox work
 is complete. Source contracts and tests are authoritative when behavior changes.
-See src/loader.rs for the manifest schema and src/settings.rs for the settings
+See src/loader/document.rs for the manifest schema and src/settings/ for the settings
 format and the host's own keys.

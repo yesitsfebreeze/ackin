@@ -189,7 +189,7 @@ pub async fn keep_swept() {
 		every.tick().await;
 		match sweep().await {
 			0 => {}
-			swept => crate::trace::diagnostic("cartridge", "swept", json!({ "sockets": swept })),
+			swept => tracing::info!(target: "cartridge", sockets = swept, "swept"),
 		}
 	}
 }
@@ -328,7 +328,7 @@ async fn client(host: Arc<Host>, stream: UnixStream) {
 			tasks.spawn(async move {
 				let result = transaction
 					.await
-					.map_err(mlua::Error::external)
+					.map_err(|e| crate::Error::Profile(format!("reconcile: {e}")))
 					.and_then(|result| result);
 				let reply = match result {
 					Ok(()) => json!({"reloaded":true}),
@@ -397,7 +397,7 @@ async fn client(host: Arc<Host>, stream: UnixStream) {
 			tasks.spawn(crate::trace::scope(trace, async move {
 				let reply = match host.call(&key, request.args).await {
 					Ok(data) => json!({ "reply": request.id, "data": data }),
-					Err(e) => json!({ "reply": request.id, "error": e }),
+					Err(e) => json!({ "reply": request.id, "error": e.to_string() }),
 				};
 				let _ = reply_tx.send(reply);
 			}));

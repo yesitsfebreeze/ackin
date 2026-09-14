@@ -109,6 +109,12 @@ some other cartridge:
 - Carrying a sibling's protocol for an optional feature. If memo wants what
   memory knows, memory answers a memo event or provides a key of memo's
   declared shape; memo does not ship a module that speaks memory's ops.
+  The shape for an optional, many-provider integration is a glob the
+  consumer declares and injects: memo injects context.* and source.*, fs
+  provides context.file, memory provides context.memory, prd provides
+  source.board, and memo learns which exist from its injections alone.
+  The consumer writes the contract (ops, request, reply) in its own docs;
+  each provider ships its own adapter and its own tests for it.
 - Naming a sibling that is not in needs. A tool key, an op name, or a
   cartridge id of another cartridge in your source is that cartridge's to
   change, and your code breaks when it does.

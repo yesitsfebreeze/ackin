@@ -23,7 +23,7 @@ use crate::ledger::{Bound, Installed, Ledger};
 use std::collections::HashSet;
 
 /// Why the chain could not be resolved.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Refusal {
 	/// The key binds to nothing in any scope the walk passes through.
 	Unbound { from: String, key: String },
@@ -48,6 +48,8 @@ impl std::fmt::Display for Refusal {
 		}
 	}
 }
+
+impl std::error::Error for Refusal {}
 
 /// The chain starting `key` from `from` requires, **bottom-up**: the far end
 /// first, the entry that provides `key` last. `from` is `""` for an ask made

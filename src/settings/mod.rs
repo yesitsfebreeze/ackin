@@ -32,13 +32,21 @@
 //! **The host's own keys live under `host`.** They are declared in [`HOST`]
 //! rather than a document, because the host has no `cartridge.json` to put them
 //! in, and are read through [`host`].
+//!
+//! [`files`] reads the two configuration files; [`host`] is the host's own
+//! declaration and its settled values.
+
+mod files;
+mod host;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::time::Duration;
 
 use serde_json::{json, Value as Json};
+
+use crate::error::{Error, Result};
+
+pub use files::{global_path, layers, project_path, read, source};
+pub use host::{host, host_specs, settle, Host};
 
 /// What a setting's value must be. Narrow on purpose: a type that cannot be
 /// checked before a cartridge starts is not a setting, it is an argument.
@@ -115,7 +123,7 @@ pub struct Spec {
 }
 
 impl Spec {
-	fn check(&self, key: &str, value: &Json) -> Result<(), String> {
+	fn check(&self, key: &str, value: &Json) -> std::result::Result<(), String> {
 		if self.optional && value.is_null() {
 			return Ok(());
 		}
@@ -293,7 +301,7 @@ pub fn defaults(specs: &Specs) -> Json {
 /// migrating onto settings has configuration older than its declaration, and
 /// dropping it on the way in would be a silent behaviour change; `undeclared`
 /// is how that backlog stays visible instead.
-pub fn apply(specs: &Specs, config: Json, at: &str) -> Result<Json, String> {
+pub fn apply(specs: &Specs, config: Json, at: &str) -> Result<Json> {
 	let mut out = defaults(specs);
 	merge(&mut out, config);
 	for (key, spec) in specs {
@@ -309,7 +317,8 @@ pub fn apply(specs: &Specs, config: Json, at: &str) -> Result<Json, String> {
 			set(&mut out, key, spec.default.clone());
 		}
 		let value = get(&out, key).expect("just filled");
-		spec.check(key, value).map_err(|e| format!("{at}: {e}"))?;
+		spec.check(key, value)
+			.map_err(|e| Error::Settings(format!("{at}: {e}")))?;
 	}
 	Ok(out)
 }
@@ -367,211 +376,4 @@ pub fn declared(document: &str) -> Json {
 	let document: Document =
 		serde_json::from_str(document).expect("a cartridge's own cartridge.json");
 	defaults(&document.settings)
-}
-
-// ---------------------------------------------------------------------------
-// The files
-// ---------------------------------------------------------------------------
-
-/// The global configuration file: `$CARTRIDGE_HOME/config.lua`, or
-/// `~/.cartridge/config.lua`. One per machine, under the user's own home, so a
-/// preference follows the person across projects without being committed to
-/// any of them.
-pub fn global_path() -> Option<PathBuf> {
-	if let Some(home) = std::env::var_os("CARTRIDGE_HOME") {
-		return Some(PathBuf::from(home).join("config.lua"));
-	}
-	let home = std::env::var_os("HOME")?;
-	Some(PathBuf::from(home).join(".cartridge").join("config.lua"))
-}
-
-/// The project configuration file, beside the profile that composes it.
-pub fn project_path(profile: &Path) -> PathBuf {
-	profile.join("config.lua")
-}
-
-/// Evaluate one configuration file into data. A missing file is an empty
-/// table, not an error: not having a global configuration is the normal case.
-///
-/// Its own Lua, not the host's: settings are read before a host exists — by the
-/// CLI listing them, and by an SDK child that has no host at all — and reading
-/// a table of numbers must not depend on a composition being up.
-pub fn read(path: &Path) -> Result<Json, String> {
-	if !path.is_file() {
-		return Ok(json!({}));
-	}
-	let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-	let lua = mlua::Lua::new();
-	let value: mlua::Value = lua
-		.load(&source)
-		.set_name(path.to_string_lossy())
-		.eval()
-		.map_err(|e| format!("{}: {e}", path.display()))?;
-	let value: Json = mlua::LuaSerdeExt::from_value(&lua, value)
-		.map_err(|e| format!("{}: {e}", path.display()))?;
-	match value.is_object() {
-		true => Ok(value),
-		false => Err(format!("{}: must return a table", path.display())),
-	}
-}
-
-/// The global file laid under the project file: the configuration as the files
-/// on this machine state it, before any declaration fills it in.
-pub fn layers(profile: &Path) -> Result<Json, String> {
-	let mut out = match global_path() {
-		Some(path) => read(&path)?,
-		None => json!({}),
-	};
-	merge(&mut out, read(&project_path(profile))?);
-	Ok(out)
-}
-
-/// Which file settled a key, for the listing. Not a layer the merge knows
-/// about — it recomputes the answer by asking each file in turn.
-pub fn source(profile: &Path, key: &str, settled: &Json, declared: &Json) -> &'static str {
-	let global = global_path()
-		.and_then(|p| read(&p).ok())
-		.is_some_and(|v| get(&v, key).is_some());
-	let project = read(&project_path(profile))
-		.ok()
-		.is_some_and(|v| get(&v, key).is_some());
-	match (project, global) {
-		(true, _) => "project",
-		(false, true) => "global",
-		// Neither file names it, yet it is not what the declaration says: the
-		// profile entry set it in `init.lua`, which composes rather than
-		// configures and so has no line in either file to point at.
-		(false, false) if settled != declared => "profile",
-		(false, false) => "default",
-	}
-}
-
-// ---------------------------------------------------------------------------
-// The host's own settings
-// ---------------------------------------------------------------------------
-
-/// The host's own document. It has no `cartridge.json` — nothing composes the
-/// host — so its declarations live in `settings.json` beside `llms.txt`, in the
-/// same shape a cartridge's `settings` block uses. Embedded rather than read
-/// from disk: these are the values the binary was built with, and a host that
-/// could not find its own declarations would have no defaults to fall back to.
-const DOCUMENT: &str = include_str!("../settings.json");
-
-/// What the host declares, parsed once off [`DOCUMENT`]. The numbers, bounds
-/// and documentation live there and nowhere else; [`Host`] below names the same
-/// keys to give them types, and a mismatch between the two is a deserialization
-/// error rather than a silent divergence.
-pub fn host_specs() -> &'static Specs {
-	static SPECS: OnceLock<Specs> = OnceLock::new();
-	SPECS.get_or_init(|| {
-		#[derive(serde::Deserialize)]
-		struct Document {
-			settings: Specs,
-		}
-		let document: Document =
-			serde_json::from_str(DOCUMENT).expect("the host's own settings.json");
-		document.settings
-	})
-}
-
-/// The host's settled settings: every key of [`DOCUMENT`], typed. Read it; do
-/// not re-derive it. Durations are kept as the numbers the document declares
-/// and handed out as `Duration` by the methods below, so the unit is in the
-/// key's name at every layer a person reads.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Host {
-	pub stream_history_events: usize,
-	pub stream_history_bytes: usize,
-	pub subscriber_headroom: usize,
-	pub outbox_queue: usize,
-	pub lifecycle_queue: usize,
-	pub lifecycle_drain_ms: u64,
-	pub startup_timeout_secs: u64,
-	pub startup_bytes: usize,
-	pub discovery_bytes: usize,
-	pub shutdown_timeout_secs: u64,
-	pub verify_timeout_secs: u64,
-	pub watch_debounce_ms: u64,
-	pub daemon_wait_attempts: u32,
-	pub daemon_wait_ms: u64,
-	pub mcp_reply_queue: usize,
-	pub proxy_key_bytes: usize,
-	pub sandbox_error_chars: usize,
-	pub observation_content_bytes: usize,
-	pub observation_cache_entries: usize,
-	pub observation_actors_bytes: usize,
-	pub observation_actors_max: usize,
-	pub observation_source_chars: usize,
-	pub observation_key_chars: usize,
-	pub diagnostics_max_bytes: u64,
-}
-
-impl Host {
-	/// A full subscriber queue: a replay of everything retained, plus the
-	/// headroom the join, a gap event and a lag notice need.
-	pub fn subscriber_events(&self) -> usize {
-		self.stream_history_events + self.subscriber_headroom
-	}
-
-	pub fn startup_timeout(&self) -> Duration {
-		Duration::from_secs(self.startup_timeout_secs)
-	}
-
-	pub fn shutdown_timeout(&self) -> Duration {
-		Duration::from_secs(self.shutdown_timeout_secs)
-	}
-
-	pub fn verify_timeout(&self) -> Duration {
-		Duration::from_secs(self.verify_timeout_secs)
-	}
-
-	pub fn watch_debounce(&self) -> Duration {
-		Duration::from_millis(self.watch_debounce_ms)
-	}
-
-	pub fn lifecycle_drain(&self) -> Duration {
-		Duration::from_millis(self.lifecycle_drain_ms)
-	}
-
-	pub fn daemon_wait(&self) -> Duration {
-		Duration::from_millis(self.daemon_wait_ms)
-	}
-}
-
-static HOST: OnceLock<Host> = OnceLock::new();
-
-/// The `host` table of the configuration files, settled against [`DOCUMENT`].
-///
-/// A file that will not read, or a value out of its declared range, does not
-/// take the host down: the reason goes to stderr once and the declared defaults
-/// stand. A limit is the thing that keeps a runaway bounded, and refusing to
-/// start because someone typed a limit wrongly trades a bounded system for no
-/// system at all.
-///
-/// `profile` is where the project's configuration file sits. The CLI settles
-/// against the profile it resolved, before anything else runs; everything
-/// downstream reads that one settled answer through [`host`].
-pub fn settle(profile: &Path) -> &'static Host {
-	HOST.get_or_init(|| {
-		let say = |e: String| eprintln!("cartridge: settings: {e}; using declared defaults");
-		let configured = layers(profile)
-			.map(|files| get(&files, "host").cloned().unwrap_or_else(|| json!({})))
-			.unwrap_or_else(|e| {
-				say(e);
-				json!({})
-			});
-		let settled = apply(host_specs(), configured, "host").unwrap_or_else(|e| {
-			say(e);
-			defaults(host_specs())
-		});
-		serde_json::from_value(settled).expect("settled host settings match their declarations")
-	})
-}
-
-/// The host's settings, settling them against the profile beside the working
-/// directory on first use — which is what an SDK child, with no CLI to settle
-/// for it, gets.
-pub fn host() -> &'static Host {
-	settle(Path::new(".cartridge"))
 }

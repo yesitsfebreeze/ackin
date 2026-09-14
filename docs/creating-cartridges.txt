@@ -58,10 +58,12 @@ THE HELP PAGE
 Every cartridge ships .cartridge/help.md: a title, two to four sentences on
 what it owns and who reaches it, a "## Use" list of its tool or service keys
 and how to call them, and a "## Read next" list of links into its own docs and
-memos, relative to the cartridge directory. `cartridge help <id>` prints the
-declarations off cartridge.json and then this page verbatim, and `cartridge
-help` marks a cartridge without one and exits non-zero. Do not restate
-provide, needs, settings or commands on the page; the command prints them.
+memos, relative to the cartridge directory. `cartridge help <id>` lists this
+page first, then the declarations off cartridge.json and every other document
+the cartridge ships; `cartridge help <id>/.cartridge/help.md` prints it, and
+`cartridge help` marks a cartridge without one and exits non-zero. Do not
+restate provide, needs, settings or commands on the page; the manual renders
+them from cartridge.json.
 
 LOCAL STATE
 
@@ -166,7 +168,9 @@ THE ISOLATION RULE
 
 A cartridge reaches another only through a key in its needs (or a key the
 profile injects into it) or by listening to an event. It carries no sibling's
-protocol for an optional feature and names no sibling it did not declare.
+protocol for an optional feature and names no sibling it did not declare. An
+optional feature with several possible providers is a glob the consumer
+injects (context.*, source.*, tool.*) and a key each provider brings under it.
 See writing-good-modules.txt; `just isolation` reports every violation.
 
 DEVELOPMENT REGISTRATION

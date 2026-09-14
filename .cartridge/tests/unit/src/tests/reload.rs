@@ -396,7 +396,11 @@ async fn an_uncomposed_node_and_an_unknown_uid_refuse_the_ask() {
 		));
 	plain.settled().await;
 	let refused = host.replace_node(plain.uid()).await.unwrap_err();
-	assert_eq!(refused, "this node was not composed to be replaceable");
+	assert!(matches!(refused, crate::Error::Reload(_)), "{refused:?}");
+	assert_eq!(
+		refused.to_string(),
+		"this node was not composed to be replaceable"
+	);
 	let refused = host.replace_node(4242).await.unwrap_err();
-	assert_eq!(refused, "no running node carries uid 4242");
+	assert_eq!(refused.to_string(), "no running node carries uid 4242");
 }

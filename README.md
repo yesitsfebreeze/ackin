@@ -9,8 +9,10 @@ protocol. The host resolves what each cartridge declares it needs, starts it,
 routes calls and events between cartridges, hot-reloads changed sources, and
 disposes everything cleanly.
 
-This repository is the host runtime (`src/`), its profiles (`.cartridge/`) and the
-guides (`docs/`). The cartridges themselves — agent, memo, memory, proxy, pty,
+This repository is the host runtime (`src/`, with the command line under
+`src/cli/`), its profiles (`.cartridge/`) and the guides (`docs/`). The host
+logs through `tracing` (`CARTRIDGE_LOG` selects the level) and answers every
+failure with one typed error. The cartridges themselves — agent, memo, memory, proxy, pty,
 router, sessions, tools and others — live in sibling `*.ctg` repositories linked
 under `builtin/`.
 
@@ -29,7 +31,9 @@ The guides describe this checkout; source contracts and tests are authoritative.
   `tools` compose different uses.
 - **Isolation** — a cartridge reaches another only through a key it declared in
   `needs` or by listening to an event. Installing or removing a cartridge changes
-  nothing outside it.
+  nothing outside it. A Lua cartridge runs in a sandboxed interpreter (no `io`,
+  no `require`, an `os` that only reads the clock and the environment); a process
+  cartridge is confined by the `grant` its manifest declares.
 - **Events** — `emit`, `bail`, `parallel` and `gather` dispatch an event to its
   listeners and differ only in what they do with the answers.
 - **Settings** — every tunable value is a declared setting, settled in three
@@ -70,13 +74,15 @@ Then, from `cartridge.ctg`:
 ```sh
 just build            # runtime, Rust cartridges, memory, UI setup
 just test             # full repository suites
-cartridge help        # what this composition enables, one line each
+cartridge help        # browse every module, document and section
 ```
 
 ## Usage
 
 ```sh
-cartridge help [<id>|<word>]      # the manual, built from the installed cartridges
+cartridge help [<address>]        # the manual; an interactive picker on a terminal
+cartridge help <words>            # every documented line holding the words
+cartridge help --json [<address>] # the same as JSON, for scripts and agents
 cartridge list                    # cartridges of the profile and what each need binds to
 cartridge settings [<id>]         # every tunable value and the file that settled it
 cartridge settings --template     # every key as a config.lua ready to save
@@ -87,6 +93,24 @@ cartridge follow <channel>        # print events on a stream channel as they arr
 cartridge verify [<cartridge>]    # run the contracts cartridges declare
 cartridge mcp                     # serve the profile's tools over MCP stdio
 ```
+
+`cartridge help` is all the documentation in one place: `llms.txt`, every README,
+`docs/`, the memos, each cartridge's help page and its `cartridge.json`
+declarations. It is a tree of modules (`host` and each cartridge), their
+documents, and each document's sections, and every node has an address:
+
+```sh
+cartridge help memo                             # the documents memo ships
+cartridge help host/docs/memos.txt              # one document
+cartridge help host/docs/memos.txt#record-format  # one section
+cartridge help validated writes                 # every line holding both words
+```
+
+On a terminal each of these opens a picker at that node. Type to filter; from
+two characters on, the list also shows matching lines from everything below.
+Enter goes one level deeper or opens the document at that line, and Esc goes
+back. Piped or run by an agent, the same commands print plain text, and `--json`
+returns the same data as JSON.
 
 Register the MCP server with a client, for example Claude Code:
 

@@ -2,6 +2,8 @@
 use std::ops::{Deref, DerefMut};
 use std::process::Stdio;
 use std::time::Duration;
+
+use crate::error::{Error, Result};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// How long a starting cartridge has to announce itself, and how much a
@@ -57,23 +59,20 @@ impl Drop for Child {
 	}
 }
 
-async fn capture(read: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>, String> {
+async fn capture(read: impl AsyncRead + Unpin, limit: usize) -> std::io::Result<Vec<u8>> {
 	let mut bytes = Vec::new();
-	read.take(limit as u64 + 1)
-		.read_to_end(&mut bytes)
-		.await
-		.map_err(|e| e.to_string())?;
+	read.take(limit as u64 + 1).read_to_end(&mut bytes).await?;
 	if bytes.len() > limit {
-		return Err(format!("discovery output exceeds {limit} bytes"));
+		return Err(std::io::Error::new(
+			std::io::ErrorKind::InvalidData,
+			format!("discovery output exceeds {limit} bytes"),
+		));
 	}
 	Ok(bytes)
 }
 
-pub(crate) async fn discover(
-	cmd: &[String],
-	timeout: Duration,
-) -> Result<std::process::Output, String> {
-	let program = cmd.first().ok_or("empty cmd")?;
+pub(crate) async fn discover(cmd: &[String], timeout: Duration) -> Result<std::process::Output> {
+	let program = cmd.first().ok_or(Error::Invalid("empty cmd"))?;
 	let mut child = Child::new(
 		tokio::process::Command::new(program)
 			.args(&cmd[1..])
@@ -83,7 +82,7 @@ pub(crate) async fn discover(
 			.stderr(Stdio::piped())
 			.kill_on_drop(true)
 			.spawn()
-			.map_err(|e| format!("{program}: {e}"))?,
+			.map_err(|e| Error::process(program, e))?,
 	);
 	let stdout = child.stdout.take().expect("piped stdout");
 	let stderr = child.stderr.take().expect("piped stderr");
@@ -91,8 +90,9 @@ pub(crate) async fn discover(
 		let (stdout, stderr, status) = tokio::try_join!(
 			capture(stdout, discovery_bytes()),
 			capture(stderr, discovery_bytes()),
-			async { child.wait().await.map_err(|e| e.to_string()) },
-		)?;
+			child.wait(),
+		)
+		.map_err(|e| Error::process(program, e))?;
 		Ok(std::process::Output {
 			status,
 			stdout,
@@ -100,7 +100,7 @@ pub(crate) async fn discover(
 		})
 	})
 	.await
-	.unwrap_or_else(|_| Err(format!("{program} hello timed out")));
+	.unwrap_or_else(|_| Err(Error::Timeout(format!("{program} hello"))));
 	if result.is_err() {
 		let _ = child.kill().await;
 	}

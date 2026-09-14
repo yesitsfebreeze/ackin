@@ -163,6 +163,13 @@
       "max": 65536,
       "doc": "Length of an observed key."
     },
+    "lua_memory_bytes": {
+      "type": "integer",
+      "default": 1073741824,
+      "min": 0,
+      "max": 68719476736,
+      "doc": "Bytes the host's Lua interpreter may allocate across every Lua cartridge; 0 is unbounded."
+    },
     "diagnostics_max_bytes": {
       "type": "integer",
       "default": 67108864,

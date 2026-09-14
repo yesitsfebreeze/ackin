@@ -1,0 +1,244 @@
+//! The commands that compose a host in this process: a foreground `run`, an
+//! agent `launch`, the `mcp` bridge, the `daemon`, and `verify`.
+
+use std::process::ExitCode;
+use std::sync::Arc;
+
+use cartridge::lua::Host;
+use cartridge::runtime::Runtime;
+use cartridge::socket;
+use cartridge::{Error, Result};
+use serde_json::{json, Value};
+
+use super::{fail, stopped, Project, FAILED};
+
+fn host(project: &Project) -> Arc<Host> {
+	Host::with_yolo(Runtime::new(), &project.dir, &project.profile, project.yolo)
+}
+
+/// Foreground process cartridges receive terminal interrupts directly: the
+/// host swallows its own so the child sees the signal and the host sees EOF.
+fn swallow_interrupts() -> tokio::task::JoinHandle<()> {
+	tokio::spawn(async { while tokio::signal::ctrl_c().await.is_ok() {} })
+}
+
+pub(crate) async fn run(project: &Project, key: &str, args: Value) -> Result<ExitCode> {
+	let signals = swallow_interrupts();
+	let host = host(project);
+	// The live host also answers on its socket, so `cartridge call`, `status`
+	// and `tail` from the wrapped shell reach *this* process instead of
+	// loading a second copy of the profile. A second `run` on the same
+	// profile keeps working; only its socket is refused.
+	let served = tokio::spawn({
+		let (host, path) = (host.clone(), socket::path(&project.profile));
+		async move {
+			match socket::serve(host, &path).await {
+				// Another run already answers for this profile; that one keeps it.
+				Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {}
+				Err(e) => {
+					tracing::warn!(target: "cartridge", socket = %path.display(), "socket: {e}")
+				}
+				Ok(()) => {}
+			}
+		}
+	});
+	let result = host.run(key, args).await;
+	served.abort();
+	signals.abort();
+	match result? {
+		value if !value.is_null() => println!("{value}"),
+		_ => {}
+	}
+	Ok(ExitCode::SUCCESS)
+}
+
+pub(crate) async fn launch(
+	project: &Project,
+	agent: String,
+	model: String,
+	args: Vec<String>,
+) -> Result<ExitCode> {
+	// The proxy listener needs a key; the launched agent gets the same one.
+	if std::env::var("CARTRIDGE_PROXY_KEY").map_or(true, |k| k.is_empty()) {
+		std::env::set_var(
+			"CARTRIDGE_PROXY_KEY",
+			random_hex(cartridge::settings::host().proxy_key_bytes)?,
+		);
+	}
+	let signals = swallow_interrupts();
+	let host = host(project);
+	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
+	let result = host.run_then("proxy", request, spawn).await;
+	signals.abort();
+	let status = result?;
+	Ok(ExitCode::from(
+		status.as_i64().unwrap_or(1).clamp(0, 255) as u8
+	))
+}
+
+fn random_hex(bytes: usize) -> Result<String> {
+	use std::io::Read;
+	let mut buf = vec![0u8; bytes];
+	std::fs::File::open("/dev/urandom")
+		.and_then(|mut f| f.read_exact(&mut buf))
+		.map_err(|e| Error::file("/dev/urandom", e))?;
+	Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Run a rendered launch `{program, args, env, unset, cwd}` on this terminal
+/// and resolve to its exit status.
+async fn spawn(launch: Value) -> Result<Value> {
+	let strings = |v: &Value| -> Vec<String> {
+		v.as_array()
+			.into_iter()
+			.flatten()
+			.filter_map(Value::as_str)
+			.map(str::to_owned)
+			.collect()
+	};
+	let program = launch["program"]
+		.as_str()
+		.ok_or(Error::Invalid("launch without program"))?;
+	let mut command = tokio::process::Command::new(program);
+	command.args(strings(&launch["args"]));
+	if let Some(cwd) = launch["cwd"].as_str() {
+		command.current_dir(cwd);
+	}
+	for name in strings(&launch["unset"]) {
+		command.env_remove(name);
+	}
+	if let Some(env) = launch["env"].as_object() {
+		for (k, v) in env {
+			command.env(k, v.as_str().unwrap_or_default());
+		}
+	}
+	let status = command
+		.status()
+		.await
+		.map_err(|e| Error::process(program, e))?;
+	Ok(json!(status.code().unwrap_or(1)))
+}
+
+pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
+	// The client owns this process's lifetime: the pump ends at end of
+	// input and the profile is disposed on the way out.
+	let host = host(project);
+	let serve = {
+		let host = host.clone();
+		|_| async move { stdio(host).await }
+	};
+	host.run_then("mcp", json!({ "op": "ready" }), serve)
+		.await?;
+	Ok(ExitCode::SUCCESS)
+}
+
+/// Newline-delimited JSON-RPC between an MCP client and the `mcp` service:
+/// every line of stdin is one message, every non-null reply one line of stdout.
+/// One task per message, so a cancellation notification is read and acted on
+/// while the call it cancels is still running. Diagnostics stay on stderr;
+/// stdout carries the protocol and nothing else.
+async fn stdio(host: Arc<Host>) -> Result<Value> {
+	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+	let (replies, mut pending) =
+		tokio::sync::mpsc::channel::<String>(cartridge::settings::host().mcp_reply_queue);
+	let writer = tokio::spawn(async move {
+		let mut out = tokio::io::stdout();
+		while let Some(line) = pending.recv().await {
+			if out.write_all(line.as_bytes()).await.is_err() || out.flush().await.is_err() {
+				break;
+			}
+		}
+	});
+	let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+	let mut serving = tokio::task::JoinSet::new();
+	while let Ok(Some(line)) = lines.next_line().await {
+		if line.trim().is_empty() {
+			continue;
+		}
+		let (host, replies) = (host.clone(), replies.clone());
+		serving.spawn(async move {
+			let result = host
+				.call("mcp", json!({ "op": "message", "line": line }))
+				.await;
+			if let Some(reply) = mcp_bridge_reply(&line, result) {
+				let _ = replies.send(format!("{reply}\n")).await;
+			}
+		});
+	}
+	while serving.join_next().await.is_some() {}
+	drop(replies);
+	let _ = writer.await;
+	Ok(Value::Null)
+}
+
+/// Bridge failures still owe a request its correlated protocol response.
+/// Notifications and client responses never receive an error response.
+fn mcp_bridge_reply(line: &str, result: Result<Value>) -> Option<Value> {
+	match result {
+		Ok(reply) => (!reply.is_null()).then_some(reply),
+		Err(error) => {
+			tracing::warn!(target: "cartridge", "mcp: {error}");
+			let message: Value = match serde_json::from_str(line) {
+				Ok(message) => message,
+				Err(_) => {
+					return Some(
+						json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}),
+					)
+				}
+			};
+			message.get("method")?.as_str()?;
+			let id = message.get("id").filter(|id| !id.is_null())?;
+			Some(
+				json!({"jsonrpc":"2.0","id":id,"error":{"code":-32603,"message":error.to_string()}}),
+			)
+		}
+	}
+}
+
+pub(crate) async fn daemon(project: &Project) -> Result<ExitCode> {
+	let host = host(project);
+	if let Err(e) = host.reconcile().await {
+		tracing::error!(target: "cartridge", cartridge = "init.lua", "{e}");
+	}
+	if let Err(e) = host.watch() {
+		tracing::error!(target: "cartridge", cartridge = "watch", "{e}");
+	}
+	let path = socket::path(&project.profile);
+	tracing::info!(
+		target: "cartridge",
+		dir = %project.dir.display(),
+		profile = %project.profile.display(),
+		socket = %path.display(),
+		"serving"
+	);
+	// A daemon outlives every other command, so it is the one that
+	// keeps the socket directory: the collecting runs beside the
+	// serving, off the path of anything waiting on the door to open.
+	tokio::spawn(socket::keep_swept());
+	// The stop is caught rather than taken: the socket is unlinked by a
+	// guard the serving holds, and a guard only runs on the way out of
+	// a future that was allowed to end. Killed outright there is no way
+	// out, and the next sweep is what collects the entry.
+	tokio::select! {
+		served = socket::serve(host, &path) => served?,
+		_ = stopped() => {}
+	}
+	Ok(ExitCode::SUCCESS)
+}
+
+pub(crate) async fn verify(project: &Project, cartridge: Option<&str>) -> Result<ExitCode> {
+	let host = host(project);
+	let (ran, failures) = match cartridge {
+		Some(one) => host.verify_one(one).await?,
+		None => host.verify().await?,
+	};
+	if failures.is_empty() {
+		println!("{ran} contracts passed");
+		return Ok(ExitCode::SUCCESS);
+	}
+	Ok(fail(FAILED, failures.join("\n")))
+}
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/stdio.rs"]
+mod stdio_tests;

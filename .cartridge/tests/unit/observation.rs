@@ -9,7 +9,7 @@ fn fixture() -> (Arc<Observer>, Arc<Mutex<Vec<Value>>>) {
 	));
 	(observer, rows)
 }
-fn finish(observer: &Arc<Observer>, source: &str, op: &str, value: Result<Value, String>) -> Value {
+fn finish(observer: &Arc<Observer>, source: &str, op: &str, value: Result<Value>) -> Value {
 	let mut guard = observer.begin(source, "tool.fixture", op);
 	guard.state.lock().unwrap().value["dispatched"] = json!(true);
 	guard.finish(Some(&value));
@@ -58,7 +58,12 @@ fn outcomes_never_treat_transport_or_cancellation_as_known_effect_completion() {
 			"tool_error",
 			true,
 		),
-		("call", Err("SECRET".into()), "transport_error", false),
+		(
+			"call",
+			Err(crate::Error::remote("SECRET")),
+			"transport_error",
+			false,
+		),
 		(
 			"call",
 			Ok(json!({"invalid":"SECRET"})),

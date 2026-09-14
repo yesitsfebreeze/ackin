@@ -213,7 +213,8 @@ async fn wrapped_process_isolation_metadata_and_dependency_restart_compose() {
 		assert_eq!(
 			host.invoke(original.clone(), json!(null))
 				.await
-				.unwrap_err(),
+				.unwrap_err()
+				.to_string(),
 			"cartridge is gone"
 		);
 		// Await dispatch itself: a retained listener would fail against its dead link.

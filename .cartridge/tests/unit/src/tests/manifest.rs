@@ -152,6 +152,8 @@ async fn malformed_declarations_are_refused_without_evaluating_the_entry() {
 		let error = crate::loader::Cartridge::read(&dir.path().join("p/cartridge.json"))
 			.err()
 			.unwrap_or_else(|| panic!("accepted {manifest}"));
+		assert!(matches!(error, crate::Error::Document { .. }), "{error:?}");
+		let error = error.to_string();
 		assert!(!error.contains("entry evaluated"), "{error}");
 		assert!(error.contains("cartridge.json"), "{error}");
 	}
@@ -351,6 +353,7 @@ async fn a_blank_grant_path_is_refused_like_a_blank_key() {
 		crate::loader::Cartridge::read(&dir.path().join("p/cartridge.json"))
 			.err()
 			.unwrap_or_else(|| panic!("accepted {manifest}"))
+			.to_string()
 	};
 	let key = refused(json!({"name":"p","entry":"init.lua","provide":["   "]}));
 	assert!(key.contains("must be a nonempty exact key"), "{key}");
@@ -534,6 +537,7 @@ async fn a_missing_file_the_document_names_does_not_blank_its_declarations() {
 	);
 	let error = crate::loader::Cartridge::document(&dir.path().join("p/cartridge.json"))
 		.err()
-		.unwrap();
+		.unwrap()
+		.to_string();
 	assert!(error.contains("ui must be a relative"), "{error}");
 }

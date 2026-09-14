@@ -48,9 +48,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
-mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde"] }
+mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde", "async"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "registry", "std"] }
 notify = "9.0.0-rc.5"
 clap = { version = "4", features = ["derive"] }
+# The `help` picker: raw keys and the alternate screen.
+crossterm = "0.29"
 [dev-dependencies]
 tempfile = "3"
 # The evidence tests drive deadlines on a paused clock rather than sleeping.

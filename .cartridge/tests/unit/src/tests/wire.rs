@@ -168,6 +168,7 @@ done
 		)
 		.await
 		.unwrap()
+		.map_err(String::from)
 	}
 	// The declared key is fronted: the daemon's call crosses the nest and the
 	// child serves it.

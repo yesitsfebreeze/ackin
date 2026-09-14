@@ -47,7 +47,7 @@ function profile(root: string, name: string, port = 0) {
     router={listen={"127.0.0.1:0"},config_dir="credentials",data_dir="router"},
     proxy={listen="127.0.0.1:${port}",cwd=".",key_env="CARTRIDGE_PROXY_KEY"},
     live={port=0,dir="live-data"},["live-record"]={dir="live-data"},workspace={dir="workspace-pages"},
-    mcp={cwd="."},policy={default="ask"},harness={max_bytes=262144},gitfs={store_dir="gitfs"}}`);
+    mcp={cwd="."},policy={default="ask",tools={read="allow",docs="allow",write="ask"}},harness={max_bytes=262144},gitfs={store_dir="gitfs"}}`);
   return { command: [binary, "--dir", builtin], cwd: directory };
 }
 

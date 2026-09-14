@@ -321,6 +321,138 @@ pub fn diagnostic_line(src: &str, line: &str) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// tracing
+// ---------------------------------------------------------------------------
+
+/// Where a [`Layer`] delivers: `(src, msg, fields)`, the diagnostic's shape.
+type Deliver = Arc<dyn Fn(&str, &str, Json) + Send + Sync>;
+
+/// A `tracing` layer that mirrors the host's own events into the diagnostic
+/// stream, so a line written with `tracing::warn!` lands in the same redacted,
+/// bounded file a cartridge's stderr does, under the same trace id. Only
+/// events from this crate are taken (targets under `cartridge`); a dependency's
+/// chatter stays on stderr where the level filter governs it.
+///
+/// The `src` of the line is the event's `cartridge` field when it carries one,
+/// otherwise its target; the `message` field is the line's `msg`; every other
+/// field is carried as itself and redacted by name like any diagnostic field.
+pub struct Layer {
+	deliver: Deliver,
+}
+
+impl Default for Layer {
+	fn default() -> Self {
+		Self {
+			deliver: Arc::new(|src, msg, fields| diagnostic(src, msg, fields)),
+		}
+	}
+}
+
+impl Layer {
+	/// A layer delivering somewhere other than the process sink: what a test
+	/// observes.
+	pub fn delivering(deliver: impl Fn(&str, &str, Json) + Send + Sync + 'static) -> Self {
+		Self {
+			deliver: Arc::new(deliver),
+		}
+	}
+}
+
+/// Fields of one event, gathered as JSON.
+#[derive(Default)]
+struct Fields {
+	message: String,
+	fields: serde_json::Map<String, Json>,
+}
+
+impl tracing::field::Visit for Fields {
+	fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+		self.put(field, Json::String(format!("{value:?}")));
+	}
+	fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+		self.put(field, Json::String(value.to_owned()));
+	}
+	fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+		self.put(field, Json::from(value));
+	}
+	fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+		self.put(field, Json::from(value));
+	}
+	fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+		self.put(field, Json::from(value));
+	}
+	fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+		self.put(field, Json::Bool(value));
+	}
+	fn record_error(
+		&mut self,
+		field: &tracing::field::Field,
+		value: &(dyn std::error::Error + 'static),
+	) {
+		self.put(field, Json::String(value.to_string()));
+	}
+}
+
+impl Fields {
+	fn put(&mut self, field: &tracing::field::Field, value: Json) {
+		if field.name() == "message" {
+			self.message = match value {
+				Json::String(s) => s,
+				other => other.to_string(),
+			};
+		} else {
+			self.fields.insert(field.name().to_owned(), value);
+		}
+	}
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
+	fn on_event(
+		&self,
+		event: &tracing::Event<'_>,
+		_ctx: tracing_subscriber::layer::Context<'_, S>,
+	) {
+		let target = event.metadata().target();
+		if !target.starts_with("cartridge") {
+			return;
+		}
+		let mut fields = Fields::default();
+		event.record(&mut fields);
+		fields.fields.insert(
+			"level".into(),
+			Json::String(event.metadata().level().as_str().to_lowercase()),
+		);
+		let src = match fields.fields.remove("cartridge") {
+			Some(Json::String(cartridge)) => cartridge,
+			_ => target.to_owned(),
+		};
+		(self.deliver)(&src, &fields.message, Json::Object(fields.fields));
+	}
+}
+
+/// Install the process-wide `tracing` subscriber: human-readable lines on
+/// stderr at the level `CARTRIDGE_LOG` selects (`warn` when it is unset), and
+/// every host event mirrored into the diagnostic stream through [`Layer`].
+/// Idempotent — a second call, or a call after the embedding program installed
+/// a subscriber of its own, changes nothing.
+pub fn subscribe() {
+	use tracing_subscriber::layer::SubscriberExt;
+	use tracing_subscriber::util::SubscriberInitExt;
+	use tracing_subscriber::{EnvFilter, Layer as _};
+	let filter =
+		EnvFilter::try_from_env("CARTRIDGE_LOG").unwrap_or_else(|_| EnvFilter::new("warn"));
+	let stderr = tracing_subscriber::fmt::layer()
+		.with_writer(std::io::stderr)
+		.with_target(false)
+		.without_time()
+		.with_filter(filter);
+	let _ = tracing_subscriber::registry()
+		.with(stderr)
+		.with(Layer::default())
+		.try_init();
+}
+
 #[cfg(test)]
 #[path = "../.cartridge/tests/unit/src/trace/tests.rs"]
 mod tests;

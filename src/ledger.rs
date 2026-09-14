@@ -271,7 +271,7 @@ fn read_entry(folder: &Path, path: String) -> Installed {
 			provide: Vec::new(),
 			export: Vec::new(),
 			needs: Vec::new(),
-			unread: Some(e),
+			unread: Some(e.to_string()),
 		},
 	}
 }

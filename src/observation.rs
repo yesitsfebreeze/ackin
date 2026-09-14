@@ -1,4 +1,5 @@
 //! Native dispatch metadata, written only to the existing opt-in diagnostic sink.
+use crate::error::Result;
 use crate::{lua::Host, runtime::Ctx, service::Service, trace};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -174,7 +175,7 @@ struct Guard {
 	finished: bool,
 }
 impl Guard {
-	fn finish(&mut self, result: Option<&Result<Value, String>>) {
+	fn finish(&mut self, result: Option<&Result<Value>>) {
 		self.finished = true;
 		let Ok(mut state) = self.state.lock() else {
 			return;
@@ -307,7 +308,7 @@ pub(crate) async fn invoke(
 	source: &str,
 	key: &str,
 	args: Value,
-) -> Result<Value, String> {
+) -> Result<Value> {
 	let observer = key
 		.starts_with("tool.")
 		.then(configured)
@@ -320,10 +321,7 @@ pub(crate) async fn invoke(
 					.all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 		});
 	let Some(observer) = observer else {
-		return match ctx.get(key) {
-			Ok(value) => host.invoke(value, args).await,
-			Err(error) => Err(error.to_string()),
-		};
+		return host.invoke(ctx.get(key)?, args).await;
 	};
 	let op = match args["op"].as_str() {
 		Some("call") => "call",
@@ -333,7 +331,7 @@ pub(crate) async fn invoke(
 	};
 	let mut guard = observer.begin(source, key, op);
 	let result = match ctx.get(key) {
-		Err(error) => Err(error.to_string()),
+		Err(error) => Err(error.into()),
 		Ok(value) => {
 			if let Ok(mut state) = guard.state.lock() {
 				state.target = value

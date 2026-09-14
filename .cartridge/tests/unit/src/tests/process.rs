@@ -43,7 +43,7 @@ async fn a_process_provides_listens_and_is_disposed() {
 	assert_eq!(next_event(&mut rx, "got").await, json!(42));
 	host.emit("ping", json!(5));
 	assert_eq!(next_event(&mut rx, "pong").await, json!(5));
-	assert_eq!(host.call("twice", json!(4)).await, Ok(json!(8)));
+	assert_eq!(host.call("twice", json!(4)).await.unwrap(), json!(8));
 	host.fiber_of("p").unwrap().dispose().await;
 	settle().await;
 	assert_eq!(host.fiber_of("u").unwrap().state(), Some(State::Inactive));
@@ -112,12 +112,12 @@ async fn sdk_child_roundtrip_errors_metadata_and_eof() {
 		json!({"data": {"value": 21}, "meta": {"description": "Lua service"}, "absent": null})
 	);
 	let error = call(json!("error")).await.unwrap().unwrap_err();
-	assert!(error.contains("lua service failed"), "{error}");
+	assert!(error.to_string().contains("lua service failed"), "{error}");
 	let (a, b) = tokio::join!(call(json!(1)), call(json!(2)));
 	assert_eq!(a.unwrap().unwrap()["data"]["value"], 1);
 	assert_eq!(b.unwrap().unwrap()["data"]["value"], 2);
 	assert_eq!(
-		call(json!("exit")).await.unwrap().unwrap_err(),
+		call(json!("exit")).await.unwrap().unwrap_err().to_string(),
 		"cartridge is gone"
 	);
 	fiber.dispose().await;
@@ -142,11 +142,10 @@ async fn closed_links_release_pending_and_reject_new_requests() {
 	assert!(futures::poll!(&mut waiting).is_pending());
 	assert_eq!(rx.recv().await.unwrap().unwrap()["id"], 1);
 	link.close();
-	assert_eq!(waiting.await, Err("peer gone".into()));
-	assert_eq!(
-		link.request(json!({"call": "late"})).await,
-		Err("peer gone".into())
-	);
+	let gone = waiting.await.unwrap_err();
+	assert!(matches!(gone, crate::Error::Gone("peer gone")), "{gone:?}");
+	let late = link.request(json!({"call": "late"})).await.unwrap_err();
+	assert!(matches!(late, crate::Error::Gone("peer gone")), "{late:?}");
 }
 
 #[tokio::test]
@@ -164,7 +163,7 @@ async fn dropping_a_waiter_ignores_its_late_reply() {
 	link.answer(id, Ok(json!("late")));
 	assert!(futures::poll!(&mut waiting).is_pending());
 	link.answer(next, Ok(json!("correct")));
-	assert_eq!(waiting.await, Ok(json!("correct")));
+	assert_eq!(waiting.await.unwrap(), json!("correct"));
 	assert_eq!(link.pending_count(), 0);
 }
 
@@ -287,7 +286,7 @@ async fn lua_wrappers_merge_injections_before_start_and_preserve_config() {
 		json!({"n":2,"keep":true,"tools":["tool.extra"],"inject":["secret"]})
 	);
 	let error = call(json!({"key":"secret"})).await.unwrap().unwrap_err();
-	assert!(error.contains("undeclared access"), "{error}");
+	assert!(error.to_string().contains("undeclared access"), "{error}");
 	extra.dispose().await;
 	settle().await;
 	assert_eq!(host.fiber_of("p").unwrap().state(), Some(State::Inactive));
@@ -413,14 +412,14 @@ async fn watches_reload_wrappers_binaries_and_new_executable_directories_once() 
 	write(
 		dir.path(),
 		"dependent.lua",
-		&format!(
-			r#"return {{inject={{"watch"}},apply=function(ctx)
-		local function log(line) local f=assert(io.open({}, "a")); f:write(line .. "\n"); f:close() end
-		log("dependent-start")
-		return function() log("dependent-stop") end
-	end}}"#,
-			json!(log)
-		),
+		// The count of applications lives in the chunk: a dependent that is
+		// re-applied when its provider is swapped would answer 2.
+		r#"local starts = 0
+	return {inject={"watch"},provide={"dependent.count"},apply=function(ctx)
+		starts = starts + 1
+		ctx:provide("dependent.count", function() return starts end)
+		return function() ctx:send("dependent-stop", starts) end
+	end}"#,
 	);
 	write(
 		dir.path(),
@@ -469,6 +468,11 @@ async fn watches_reload_wrappers_binaries_and_new_executable_directories_once() 
 	watched_script(second_bin.path(), 5, &log);
 	assert_eq!(next_event(&mut rx, "version").await, 5);
 	tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+	assert_eq!(
+		host.call("dependent.count", json!(null)).await.unwrap(),
+		json!(1),
+		"the dependent was re-applied"
+	);
 	host.fiber_of("p").unwrap().dispose().await;
 	let lines = std::fs::read_to_string(&log).unwrap();
 	let process: Vec<_> = lines
@@ -490,23 +494,12 @@ async fn watches_reload_wrappers_binaries_and_new_executable_directories_once() 
 		6,
 		"one hello per load: {lines}"
 	);
-	assert_eq!(
-		lines
-			.lines()
-			.filter(|line| *line == "dependent-start")
-			.count(),
-		1,
-		"{lines}"
+	// The dependent's one disposer ran once, when its provider went away.
+	assert_eq!(next_event(&mut rx, "dependent-stop").await, json!(1));
+	assert!(
+		rx.try_recv().is_err(),
+		"the dependent stopped more than once"
 	);
-	assert_eq!(
-		lines
-			.lines()
-			.filter(|line| *line == "dependent-stop")
-			.count(),
-		1,
-		"{lines}"
-	);
-	assert!(lines.contains("dependent-stop\nstop:5"), "{lines}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

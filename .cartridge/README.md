@@ -9,7 +9,8 @@ contain paths and defaults; credentials and runtime stores remain local.
 Every tunable value is a declared setting, not a constant. Each cartridge
 declares its keys in its own `cartridge.json` under `settings`, with a type, a
 default, bounds and one line of documentation; the host's own keys are declared
-in `src/settings.rs` and live under `host`.
+in `settings.json` beside the crate (read by `src/settings/host.rs`) and live
+under `host`.
 
 Three layers settle a key, each laid over the last field by field:
 
@@ -42,6 +43,12 @@ Runtime diagnostics are off by default. Set `CARTRIDGE_DIAGNOSTICS=stderr` or
 set it to a file path to enable them; the cap on that file is
 `host.diagnostics_max_bytes`, with one rotated generation, and
 `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` overrides it for one invocation.
+
+What the host says about itself goes through `tracing`: `CARTRIDGE_LOG` is the
+filter for stderr (`warn` when unset; `debug`, or `cartridge=trace,warn` to
+raise only the host), and every host event is mirrored into the diagnostic
+stream above when one is enabled, under the same trace id as the call it
+belongs to. SDK cartridges read the same variable for their own stderr.
 
 Automatic usage journals are opt-in through `record_usage = true` in each agent,
 MCP, or proxy configuration. Session checkpoints and explicit memo/memory writes

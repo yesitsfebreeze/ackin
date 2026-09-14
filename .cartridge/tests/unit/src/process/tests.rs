@@ -14,7 +14,7 @@ async fn refuses(body: &str, expected: &str) {
 	let error = discover(&[script.display().to_string()], Duration::from_secs(3))
 		.await
 		.unwrap_err();
-	assert!(error.contains(expected), "{error}");
+	assert!(error.to_string().contains(expected), "{error}");
 	let pid = std::fs::read_to_string(pid).unwrap();
 	let alive = std::process::Command::new("/bin/kill")
 		.args(["-0", pid.trim()])

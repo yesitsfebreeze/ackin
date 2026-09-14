@@ -20,7 +20,9 @@ return {
 
 	-- Services the front ends share.
 	{ id = "auth", path = "auth" },
-	{ id = "memo", path = "memo", inject = { "tool.*", "memory" } },
+	-- `context.*` and `source.*` are memo's own contracts: fs, memory and prd
+	-- provide them, and memo learns which exist from this injection alone.
+	{ id = "memo", path = "memo", inject = { "tool.*", "context.*", "source.*" } },
 	{ id = "sessions", path = "sessions" },
 	{ id = "docs", path = "docs" },
 	{ id = "router", path = "router" },

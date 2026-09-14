@@ -172,10 +172,16 @@ async fn failed_initial_profile_entry_recovers_with_its_current_handle() {
 	);
 	let (host, _) = boot(dir.path()).await;
 	let failed = host.fiber_of("provider").unwrap();
-	tokio::time::timeout(Duration::from_secs(5), failed.settled())
-		.await
-		.unwrap();
-	assert!(failed.error().is_some());
+	// Settled is not failed: the entry is inactive until `shared` provides
+	// what it injects, and only then does its apply run and refuse.
+	tokio::time::timeout(Duration::from_secs(5), async {
+		while failed.error().is_none() {
+			tokio::time::sleep(Duration::from_millis(20)).await;
+			failed.settled().await;
+		}
+	})
+	.await
+	.expect("the candidate never failed");
 	write(dir.path(), "provider.lua", &provider(2, false));
 	let recovered = host.replace_node(failed.uid()).await.unwrap();
 	assert_ne!(recovered, failed.uid());

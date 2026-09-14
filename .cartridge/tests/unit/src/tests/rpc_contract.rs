@@ -58,9 +58,10 @@ async fn fixture(language: &str) -> (tempfile::TempDir, std::sync::Arc<crate::lu
 }
 
 async fn call(host: &crate::lua::Host, key: &str, value: Value) -> Result<Value, String> {
-	tokio::time::timeout(Duration::from_secs(5), host.call(key, value))
+	let result = tokio::time::timeout(Duration::from_secs(5), host.call(key, value))
 		.await
-		.expect("contract peer did not settle within the test deadline")
+		.expect("contract peer did not settle within the test deadline");
+	result.map_err(String::from)
 }
 
 async fn roundtrips(language: &str) {

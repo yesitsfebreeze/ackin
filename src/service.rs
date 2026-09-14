@@ -1,4 +1,5 @@
 //! Stable service references. Calls drain before a generation is switched.
+use crate::error::{Error, Result};
 use crate::{lua::Host, reload::Reload, runtime::Value};
 use parking_lot::Mutex;
 use serde_json::Value as Json;
@@ -39,7 +40,7 @@ impl Service {
 		old
 	}
 
-	pub(crate) async fn call(&self, host: &Host, mut args: Json) -> Result<Json, String> {
+	pub(crate) async fn call(&self, host: &Host, mut args: Json) -> Result<Json> {
 		loop {
 			let mut epoch = self.reload.epoch();
 			let guard = self.reload.gate().read_owned().await;
@@ -56,11 +57,11 @@ impl Service {
 			epoch
 				.wait_for(|epoch| *epoch != previous)
 				.await
-				.map_err(|_| "cartridge removed".to_owned())?;
+				.map_err(|_| Error::Gone("cartridge removed"))?;
 		}
 	}
 
-	pub(crate) async fn prepare(&self) -> Result<(), String> {
+	pub(crate) async fn prepare(&self) -> Result<()> {
 		let value = self.value();
 		if let Some(remote) = value.downcast_ref::<crate::cartridge::Remote>() {
 			remote.prepare_reload().await?;

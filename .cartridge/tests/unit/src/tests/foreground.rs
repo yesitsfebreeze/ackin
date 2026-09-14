@@ -40,12 +40,14 @@ async fn foreground_missing_or_failed_service_still_disposes() {
 		.run("example", json!({}))
 		.await
 		.unwrap_err()
+		.to_string()
 		.contains("service failed"));
 	assert!(host.fiber_of("p").is_none());
 	assert!(host
 		.run("missing", json!({}))
 		.await
 		.unwrap_err()
+		.to_string()
 		.contains("unavailable"));
 	assert!(host.fiber_of("p").is_none());
 }

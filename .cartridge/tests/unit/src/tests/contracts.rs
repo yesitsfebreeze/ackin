@@ -190,7 +190,7 @@ async fn a_need_that_binds_to_nothing_is_named_instead_of_run() {
 	);
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
 	assert_eq!(
-		host.verify_one("consumer").await.unwrap_err(),
+		host.verify_one("consumer").await.unwrap_err().to_string(),
 		"consumer: need `absent` binds to nothing in the tree"
 	);
 }
@@ -209,7 +209,7 @@ async fn a_clashed_need_stops_the_run_before_it_loads() {
 	write(dir.path(), "twin/init.lua", "return {}");
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
 	assert_eq!(
-		host.verify_one("consumer").await.unwrap_err(),
+		host.verify_one("consumer").await.unwrap_err().to_string(),
 		"consumer: need `provider` is ambiguous (provider, twin)"
 	);
 }
@@ -297,7 +297,7 @@ async fn an_unknown_cartridge_is_named_rather_than_run() {
 	let dir = tempfile::tempdir().unwrap();
 	tree(dir.path(), SOLO_CONTRACTS());
 	let host = Host::new(Runtime::new(), dir.path(), dir.path());
-	let error = host.verify_one("absent").await.unwrap_err();
+	let error = host.verify_one("absent").await.unwrap_err().to_string();
 	assert!(
 		error.starts_with("`absent` is not a cartridge under "),
 		"{error}"

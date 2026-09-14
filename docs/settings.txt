@@ -25,7 +25,8 @@ Each cartridge contributes its own keys in its cartridge.json, under settings:
 
 A dotted key is a nested table: ship.remote is ship = { remote = ... }, not a
 key with a dot in its name. The host has no cartridge.json, so its own keys are
-declared in src/settings.rs and live under host.
+declared in settings.json beside the crate (read by src/settings/host.rs)
+and live under host.
 
 THREE LAYERS
 
