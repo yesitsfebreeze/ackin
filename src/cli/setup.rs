@@ -114,11 +114,8 @@ pub(crate) async fn setup(root: &Path, dir: &Path, ask: Ask) -> Result<ExitCode>
 		}
 		true => vec![dir.to_path_buf()],
 	};
-	let catalog_path = ask.catalog.clone().or_else(catalog_path);
-	let catalog = match &catalog_path {
-		Some(path) => read_catalog(path)?,
-		None => Vec::new(),
-	};
+	let catalog_path = ask.catalog.clone().map_or_else(catalog_path, Ok)?;
+	let catalog = read_catalog(&catalog_path)?;
 	let candidates = candidates(&from, catalog);
 	if candidates.is_empty() {
 		eprintln!(
@@ -127,9 +124,7 @@ pub(crate) async fn setup(root: &Path, dir: &Path, ask: Ask) -> Result<ExitCode>
 				.map(|p| p.display().to_string())
 				.collect::<Vec<_>>()
 				.join(", "),
-			catalog_path.map_or("~/.cartridge/catalog.json".to_owned(), |p| p
-				.display()
-				.to_string())
+			catalog_path.display()
 		);
 		return Ok(ExitCode::from(FAILED));
 	}
@@ -185,12 +180,8 @@ fn suggest(root: &Path, dir: &Path) -> PathBuf {
 
 /// The person's catalog of known repositories: `$CARTRIDGE_HOME/catalog.json`
 /// or `~/.cartridge/catalog.json`, a map of name to `{repository, description}`.
-pub(crate) fn catalog_path() -> Option<PathBuf> {
-	if let Some(home) = std::env::var_os("CARTRIDGE_HOME") {
-		return Some(PathBuf::from(home).join("catalog.json"));
-	}
-	let home = std::env::var_os("HOME")?;
-	Some(PathBuf::from(home).join(".cartridge").join("catalog.json"))
+pub(crate) fn catalog_path() -> Result<PathBuf> {
+	Ok(cartridge::trust::home()?.join("catalog.json"))
 }
 
 /// The catalog read, in name order. A missing catalog is empty, not an error.

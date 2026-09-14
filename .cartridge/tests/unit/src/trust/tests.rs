@@ -141,3 +141,45 @@ fn a_nested_record_does_not_shadow_a_fresh_outer_one() {
 	record(dir.path()).unwrap();
 	verify(&dir.path().join("cart/init.lua")).unwrap();
 }
+
+/// An empty or relative CARTRIDGE_HOME (or an empty HOME) must refuse, not
+/// silently turn trust off by making the project "the person's own".
+#[test]
+fn a_relative_or_empty_home_is_refused_rather_than_trust_disabling() {
+	let bin = crate::tests::built(&["--bin", "cartridge"]);
+	let dir = tempfile::tempdir().unwrap();
+	crate::tests::write(dir.path(), ".cartridge/init.lua", "return {}");
+	for (home_var, home) in [
+		("CARTRIDGE_HOME", ""),
+		("CARTRIDGE_HOME", "."),
+		("HOME", ""),
+	] {
+		let mut command = std::process::Command::new(&bin);
+		command
+			.arg("list")
+			.current_dir(dir.path())
+			.env_remove("CARTRIDGE_HOME")
+			.env_remove("HOME")
+			.env(home_var, home)
+			.stdout(std::process::Stdio::null())
+			.stderr(std::process::Stdio::piped());
+		let said = String::from_utf8_lossy(&command.output().unwrap().stderr).into_owned();
+		assert!(
+			said.contains("is not an absolute path"),
+			"{home_var}=`{home}`: {said}"
+		);
+	}
+}
+
+/// A dotfiles setup symlinks the global config outside the home; the home
+/// exemption must accept the file as the base spells it, not only as the
+/// kernel resolves it.
+#[test]
+fn a_global_config_symlinked_out_of_the_home_still_passes() {
+	let elsewhere = project(&[("config.lua", "return {}")]);
+	let link = crate::tests::home().join("config.lua");
+	let _ = std::fs::remove_file(&link);
+	std::os::unix::fs::symlink(elsewhere.path().join("config.lua"), &link).unwrap();
+	verify(&link).unwrap();
+	let _ = std::fs::remove_file(&link);
+}

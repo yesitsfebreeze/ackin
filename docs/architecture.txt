@@ -38,8 +38,9 @@ SHA-256 for it, in `~/.cartridge/trust` (or `$CARTRIDGE_HOME/trust`), keyed
 by the canonical directory: every `*.lua` and every `cartridge.json` under
 it, manifests included because the grant comes from them. A file passes when
 any trusted directory above it recorded its current hash. Files under
-`~/.cartridge` are the person's own. Listing a manifest takes no trust;
-planning a cartridge does.
+`~/.cartridge` are the person's own, and a home that is not an absolute path
+is refused rather than quietly disabling all of this. Listing a manifest takes
+no trust; planning a cartridge does.
 
 PLANNING AND CHECKS
 

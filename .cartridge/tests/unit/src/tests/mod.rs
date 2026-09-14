@@ -25,7 +25,7 @@ pub(crate) fn home() -> &'static Path {
 }
 
 /// Build a target through cargo and return the binary or library it produced.
-fn built(args: &[&str]) -> PathBuf {
+pub(crate) fn built(args: &[&str]) -> PathBuf {
 	let output = std::process::Command::new(env!("CARGO"))
 		.arg("build")
 		.args(args)

@@ -12,12 +12,8 @@ use crate::error::{Error, Result};
 /// `~/.cartridge/config.lua`. One per machine, under the user's own home, so a
 /// preference follows the person across projects without being committed to
 /// any of them.
-pub fn global_path() -> Option<PathBuf> {
-	if let Some(home) = std::env::var_os("CARTRIDGE_HOME") {
-		return Some(PathBuf::from(home).join("config.lua"));
-	}
-	let home = std::env::var_os("HOME")?;
-	Some(PathBuf::from(home).join(".cartridge").join("config.lua"))
+pub fn global_path() -> Result<PathBuf> {
+	Ok(crate::trust::home()?.join("config.lua"))
 }
 
 /// The project configuration file, beside the profile that composes it.
@@ -57,8 +53,8 @@ pub fn read(path: &Path) -> Result<Json> {
 /// on this machine state it, before any declaration fills it in.
 pub fn layers(profile: &Path) -> Result<Json> {
 	let mut out = match global_path() {
-		Some(path) => read(&path)?,
-		None => json!({}),
+		Ok(path) => read(&path)?,
+		Err(e) => return Err(e),
 	};
 	merge(&mut out, read(&project_path(profile))?);
 	Ok(out)
@@ -68,6 +64,7 @@ pub fn layers(profile: &Path) -> Result<Json> {
 /// about — it recomputes the answer by asking each file in turn.
 pub fn source(profile: &Path, key: &str, settled: &Json, declared: &Json) -> &'static str {
 	let global = global_path()
+		.ok()
 		.and_then(|p| read(&p).ok())
 		.is_some_and(|v| get(&v, key).is_some());
 	let project = read(&project_path(profile))

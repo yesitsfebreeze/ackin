@@ -72,6 +72,7 @@ impl Host {
 		}
 		let mut overrides = serde_json::Map::new();
 		for file in crate::settings::global_path()
+			.ok()
 			.into_iter()
 			.chain([crate::settings::project_path(&self.profile)])
 		{

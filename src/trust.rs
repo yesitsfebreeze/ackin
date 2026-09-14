@@ -27,17 +27,23 @@ fn hex(bytes: &[u8]) -> String {
 	bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// `$CARTRIDGE_HOME`, else `~/.cartridge`. Creates nothing: every gated read
-/// asks for it.
+/// `$CARTRIDGE_HOME`, else `~/.cartridge`: the store, the global `config.lua`
+/// and the catalog. Creates nothing. Refuses a home that is not absolute: a
+/// relative one resolves against the project, making the project "the
+/// person's own" and putting the store inside it.
 pub fn home() -> Result<PathBuf> {
-	if let Some(home) = std::env::var_os("CARTRIDGE_HOME") {
-		return Ok(PathBuf::from(home));
+	let home = match std::env::var_os("CARTRIDGE_HOME") {
+		Some(home) => PathBuf::from(home),
+		None => std::env::var_os("HOME")
+			.map_or_else(PathBuf::new, |home| PathBuf::from(home).join(".cartridge")),
+	};
+	match home.is_absolute() {
+		true => Ok(home),
+		false => Err(Error::Profile(format!(
+			"the cartridge home `{}` is not an absolute path; set CARTRIDGE_HOME or HOME",
+			home.display()
+		))),
 	}
-	std::env::var_os("HOME")
-		.map(|home| PathBuf::from(home).join(".cartridge"))
-		.ok_or_else(|| {
-			Error::Profile("no CARTRIDGE_HOME and no HOME: the trust store has no home".into())
-		})
 }
 
 fn store() -> Result<PathBuf> {
@@ -87,7 +93,10 @@ fn nearest_project(file: &Path) -> PathBuf {
 pub fn verify(path: &Path) -> Result<()> {
 	let file = path.canonicalize().map_err(|e| Error::file(path, e))?;
 	let home = home()?;
-	if file.starts_with(home.canonicalize().unwrap_or(home)) {
+	// The home both ways, as written and as resolved: a dotfiles setup symlinks
+	// its config elsewhere, and the paths here are spelled by the base itself.
+	if path.starts_with(&home) || file.starts_with(home.canonicalize().as_deref().unwrap_or(&home))
+	{
 		return Ok(());
 	}
 	let digest = digest(&file)?;
