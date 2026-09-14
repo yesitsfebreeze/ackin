@@ -54,6 +54,9 @@ Early (`0.1.0`). Interfaces change without notice.
   buffer; others subscribe.
 - **Settings**: every tunable value is declared, then settled in layers: the
   declaration, `~/.cartridge/config.lua`, the project's `.cartridge/config.lua`.
+  A cartridge key no declaration names is listed as `undeclared` and makes
+  `cartridge settings` exit non-zero; a stray `host` key is warned about and
+  the host's declared defaults stand.
 
 ## Build
 

@@ -73,6 +73,17 @@ impl Host {
 	}
 }
 
+/// The settled table as [`Host`]. A key no declaration names survives the
+/// merge and `deny_unknown_fields` refuses it; one typo must not end every
+/// command, so the reason is said and the declared defaults stand.
+fn typed(settled: serde_json::Value) -> Host {
+	serde_json::from_value(settled).unwrap_or_else(|e| {
+		tracing::warn!(target: "cartridge", "settings: host: {e}; using declared defaults");
+		serde_json::from_value(defaults(host_specs()))
+			.expect("settled host settings match their declarations")
+	})
+}
+
 static HOST: OnceLock<Host> = OnceLock::new();
 
 /// The `host` table of the configuration files, settled against [`DOCUMENT`].
@@ -99,7 +110,7 @@ pub fn settle(profile: &Path) -> &'static Host {
 			say(e);
 			defaults(host_specs())
 		});
-		serde_json::from_value(settled).expect("settled host settings match their declarations")
+		typed(settled)
 	})
 }
 
@@ -109,3 +120,7 @@ pub fn settle(profile: &Path) -> &'static Host {
 pub fn host() -> &'static Host {
 	settle(Path::new(".cartridge"))
 }
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/src/settings/host.rs"]
+mod tests;

@@ -28,7 +28,7 @@ key with a dot in its name. The host has no cartridge.json, so its own keys are
 declared in .cartridge/settings.json (read by src/settings/host.rs) and live
 under host.
 
-THREE LAYERS
+LAYERS
 
 Each is laid over the one above it, field by field. A file naming one key keeps
 every other key the layers above settled; tables merge, scalars and lists
@@ -56,11 +56,17 @@ READING AND WRITING THE SURFACE
   cartridge settings --json       the same as data, values not elided
   cartridge settings --template   every key at its current value as config.lua
 
-The source column reads default, global or project. The template is what to
+The source column reads default, global, project, or profile for a value the
+init.lua entry set. The template is what to
 save as either config.lua: it changes nothing as printed, and deleting a line
 returns that key to its declared default. The exit status is non-zero when a
 cartridge is configured with keys it never declared, which is the one thing the
 listing exists to find.
+
+An undeclared key is not refused: it is merged, handed to the cartridge as
+written and listed as `undeclared`; the non-zero exit is the whole refusal.
+Under `host`, a typed struct, an undeclared key is reported once on stderr
+and the declared defaults stand for that run.
 
 WHAT A CARTRIDGE MAY ASSUME
 
