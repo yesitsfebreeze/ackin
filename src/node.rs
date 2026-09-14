@@ -444,17 +444,16 @@ fn pipe(
 			std::io::Error::last_os_error()
 		)));
 	}
+	// Held open by the node itself before init.lua goes on, so a writer's open
+	// never waits for a reader and readers never see EOF between writers.
+	let keep = std::fs::OpenOptions::new()
+		.read(true)
+		.write(true)
+		.open(&path)
+		.map_err(|e| external(format!("{}: {e}", path.display())))?;
 	let (lua, ctx) = (lua.clone(), ctx.clone());
 	let reader = path.clone();
 	tokio::spawn(async move {
-		// Held open for writing by the node itself, so readers never see EOF between writers.
-		let Ok(keep) = std::fs::OpenOptions::new()
-			.read(true)
-			.write(true)
-			.open(&reader)
-		else {
-			return;
-		};
 		let Ok(file) = tokio::fs::File::open(&reader).await else {
 			return;
 		};

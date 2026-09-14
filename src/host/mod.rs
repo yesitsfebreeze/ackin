@@ -441,6 +441,7 @@ impl Host {
 		directory: &Directory,
 		generation: u64,
 	) -> Result<Running> {
+		tracing::info!(target: "cartridge", cartridge = %plan.id, "starting");
 		process::start(self, plan, directory, generation).await
 	}
 
