@@ -40,3 +40,14 @@ fn mcp_bridge_keeps_notifications_silent_and_successes_intact() {
 	assert_eq!(parse["error"]["code"], -32700);
 	assert!(parse["id"].is_null());
 }
+
+/// Minting is a decision, not an overwrite, and it is separate from installing
+/// so `main` can `set_var` before the runtime exists.
+#[test]
+fn a_proxy_key_is_minted_only_when_the_environment_has_none() {
+	let key = minted_proxy_key()
+		.unwrap()
+		.expect("no CARTRIDGE_PROXY_KEY in the test env");
+	assert_eq!(key.len(), cartridge::settings::host().proxy_key_bytes * 2);
+	assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+}

@@ -52,38 +52,43 @@ pub fn main() -> ExitCode {
 			.block_on(cartridge::node::main())
 			.unwrap_or_else(|error| fail(FAILED, error));
 	}
-	let outcome = cli.check().and_then(|()| {
-		let runtime = tokio::runtime::Runtime::new()?;
-		match cli.command {
-			// Setup is what makes a project, so it runs where it was typed
-			// rather than in a project above it.
-			Command::Setup {
+	let outcome = cli.check().and_then(|()| match cli.command {
+		// Setup is what makes a project, so it runs where it was typed
+		// rather than in a project above it.
+		Command::Setup {
+			from,
+			with,
+			yes,
+			catalog,
+		} => {
+			let runtime = tokio::runtime::Runtime::new()?;
+			let root = std::env::current_dir()?;
+			let dir = cli.dir.map_or_else(|| root.clone(), |dir| root.join(dir));
+			let ask = setup::Ask {
 				from,
 				with,
 				yes,
 				catalog,
-			} => {
-				let root = std::env::current_dir()?;
-				let dir = cli.dir.map_or_else(|| root.clone(), |dir| root.join(dir));
-				let ask = setup::Ask {
-					from,
-					with,
-					yes,
-					catalog,
-				};
-				runtime.block_on(setup::setup(&root, &dir, ask))
+			};
+			runtime.block_on(setup::setup(&root, &dir, ask))
+		}
+		// Before `locate`, which reads the files this approves.
+		Command::Trust {
+			path,
+			revoke,
+			list,
+			ask,
+		} => trust::run(path.as_deref(), revoke, list, ask),
+		command => {
+			let project = project::locate(cli.dir)?;
+			// Still single threaded: a runtime's workers would race this `setenv`.
+			if matches!(command, Command::Launch { .. }) {
+				if let Some(key) = host::minted_proxy_key()? {
+					std::env::set_var(host::PROXY_KEY_ENV, key);
+				}
 			}
-			// Before `locate`, which reads the files this approves.
-			Command::Trust {
-				path,
-				revoke,
-				list,
-				ask,
-			} => trust::run(path.as_deref(), revoke, list, ask),
-			command => {
-				let project = project::locate(cli.dir)?;
-				runtime.block_on(run(command, &project))
-			}
+			let runtime = tokio::runtime::Runtime::new()?;
+			runtime.block_on(run(command, &project))
 		}
 	});
 	outcome.unwrap_or_else(|error| fail(code_of(&error), error))

@@ -50,13 +50,6 @@ pub(crate) async fn launch(
 	model: String,
 	args: Vec<String>,
 ) -> Result<ExitCode> {
-	// The proxy listener needs a key; the launched agent gets the same one.
-	if std::env::var("CARTRIDGE_PROXY_KEY").map_or(true, |k| k.is_empty()) {
-		std::env::set_var(
-			"CARTRIDGE_PROXY_KEY",
-			random_hex(cartridge::settings::host().proxy_key_bytes)?,
-		);
-	}
 	let signals = swallow_interrupts();
 	let host = host(project)?;
 	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
@@ -66,6 +59,19 @@ pub(crate) async fn launch(
 	Ok(ExitCode::from(
 		status.as_i64().unwrap_or(1).clamp(0, 255) as u8
 	))
+}
+
+/// The variable [`minted_proxy_key`] fills.
+pub(crate) const PROXY_KEY_ENV: &str = "CARTRIDGE_PROXY_KEY";
+
+/// A fresh proxy key, or `None` when the environment already carries one. The
+/// caller installs it before the runtime exists: `setenv` races every other
+/// thread's `getenv`, and `config.lua` reads it in this process.
+pub(crate) fn minted_proxy_key() -> Result<Option<String>> {
+	match std::env::var(PROXY_KEY_ENV) {
+		Ok(key) if !key.is_empty() => Ok(None),
+		_ => random_hex(cartridge::settings::host().proxy_key_bytes).map(Some),
+	}
 }
 
 fn random_hex(bytes: usize) -> Result<String> {
