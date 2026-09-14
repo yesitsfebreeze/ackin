@@ -67,8 +67,9 @@ wave by wave. `cartridge status` names what a waiting cartridge waits for.
 NODES
 
 Each cartridge runs as a node: the base binary re-run with `node`, inside a
-sandbox built from the cartridge's `grant` (macOS: sandbox-exec; Linux is
-refused until Landlock is implemented), with access to the base's socket
+sandbox built from the cartridge's `grant` (macOS: sandbox-exec; Linux: the
+`__confine` trampoline, which applies Landlock and a seccomp socket filter to
+itself and then becomes the node), with access to the base's socket
 directory. The node runs init.lua in the sandboxed Lua interpreter with the
 `cartridge` global injected, loads the native modules the entry asks for, and
 serves the cartridge on its own socket. Its stdin closes when the base goes
@@ -102,6 +103,23 @@ alone, so the base's admin token never enters a node. A listener's node knows
 which events each token it accepts may send. The base sends its own events
 (`run`, `call`, `send`, `verify`) through
 the same code the nodes send with, to active listeners only.
+
+WHAT THE SANDBOX DOES NOT COVER
+
+Both platforms: `grant.net` names hosts and no kernel policy filters by host,
+so a nonempty `net` allows outbound network and an empty one allows none.
+
+macOS: an interpreter linked against other installations — a Homebrew node
+reaching /opt/homebrew/opt — needs those paths in `grant.read`; only its own
+installation prefix is implicit.
+
+Linux: below Landlock ABI V9 (Linux 7.1) a unix socket named by a path is not
+gated, so a node can connect to any socket on the machine — another project's
+base socket (still behind its token), the docker socket, an ssh agent. The node
+says which ABI it obtained on its stderr at every start below V9. A grant naming
+a path that does not exist yet is refused: Landlock is inode-based.
+`grant.exec: ["*"]` is refused unless `grant.read` names `/`, because Landlock
+needs read access on a program to execute it.
 
 RELOAD
 

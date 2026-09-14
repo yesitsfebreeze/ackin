@@ -52,7 +52,9 @@ host.lua_instruction_budget if the work is real.
 A runtime that cannot read something it needs before `main` dies on a signal
 with nothing on stderr — bun traps (SIGTRAP), dyld aborts (SIGABRT). On macOS,
 `log stream --predicate 'senderImagePath CONTAINS "Sandbox"'` while the
-cartridge starts names the denied path.
+cartridge starts names the denied path. On Linux the node's first stderr line
+names the Landlock ABI it was confined at; below V9 a unix socket named by a
+path is not among the things the kernel gates.
 
 A command stopping with "is in no trusted project" or "has changed since it
 was trusted" names a file to read before `cartridge trust`.

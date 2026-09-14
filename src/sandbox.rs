@@ -3,9 +3,11 @@
 //! A cartridge's `grant` is compiled into an operating-system policy and the
 //! child is spawned inside it, so a cartridge reaching outside what it declared
 //! is stopped by the OS rather than by review. On macOS the mechanism is
-//! `sandbox-exec` with a generated profile; on Linux it is Landlock with
-//! seccomp, which is not implemented here yet — a child that cannot be
-//! confined on the running platform is refused, never spawned unconfined.
+//! `sandbox-exec` with a generated profile; on Linux it is Landlock plus a
+//! seccomp socket filter, installed by the `__confine` trampoline the host
+//! spawns in front of the node. A child that cannot be confined on the running
+//! platform is refused, never spawned unconfined — and a kernel that enforces
+//! less than the policy asks for says so on the child's stderr.
 //!
 //! **What is implicit.** A child cannot exist without reading its own binary,
 //! its interpreter, that interpreter's installation and the machine's runtime,
@@ -30,7 +32,8 @@
 //! and `sandbox-exec` accepts only `*` and `localhost` in a remote filter, so
 //! a grant naming specific hosts cannot be confined host by host: a nonempty
 //! `net` allows outbound network and an empty one allows none. The gap is the
-//! platform's, and it is stated here rather than hidden.
+//! platform's, and it is stated here rather than hidden. On Linux the same
+//! all-or-nothing rule is a seccomp filter on the socket call's domain.
 
 use std::path::{Path, PathBuf};
 
@@ -365,8 +368,8 @@ pub fn command(
 	}
 	#[cfg(target_os = "linux")]
 	{
-		let _ = (binary, sockets);
-		linux::command(cmd, grant, root)
+		let _ = binary;
+		linux::command(cmd, grant, root, sockets)
 	}
 	#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 	{
@@ -374,6 +377,22 @@ pub fn command(
 		Err(std::io::Error::new(
 			std::io::ErrorKind::Unsupported,
 			"no sandbox mechanism on this platform: a cartridge process is not spawned unconfined",
+		))
+	}
+}
+
+/// Become `cmd`, confined by `policy`. Returns only on failure: the process
+/// restricts itself and then `execve`s.
+pub fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::convert::Infallible> {
+	#[cfg(target_os = "linux")]
+	{
+		linux::confine(policy, cmd)
+	}
+	#[cfg(not(target_os = "linux"))]
+	{
+		let _ = (policy, cmd);
+		Err(crate::Error::Argument(
+			"__confine is the Linux trampoline; this platform confines at spawn".into(),
 		))
 	}
 }

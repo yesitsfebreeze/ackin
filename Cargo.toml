@@ -42,6 +42,11 @@ crossterm = "0.29"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Neither crate is cfg-gated internally; outside this target the macOS build breaks.
+landlock = { version = "0.4.7", default-features = false }
+seccompiler = { version = "0.5.0", default-features = false }
+
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1.53", features = ["full", "test-util"] }

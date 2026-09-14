@@ -145,6 +145,13 @@ pub(crate) enum Command {
 	/// Run one cartridge's `init.lua` as a node of the base that started this process
 	#[command(hide = true)]
 	Node,
+	/// Restrict this process to a compiled policy, then become the command after `--`
+	#[command(hide = true, name = "__confine")]
+	Confine {
+		policy: String,
+		#[arg(last = true, required = true, allow_hyphen_values = true, num_args = 1..)]
+		command: Vec<String>,
+	},
 }
 
 impl Cli {

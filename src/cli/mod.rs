@@ -35,8 +35,14 @@ fn code_of(error: &Error) -> u8 {
 }
 
 pub fn main() -> ExitCode {
-	cartridge::trace::subscribe();
+	// The trampoline restricts and execs; it must stay single-threaded and do
+	// nothing else, so it runs before the tracing runtime is even made.
 	let cli = Cli::parse();
+	if let Command::Confine { policy, command } = &cli.command {
+		let Err(error) = cartridge::sandbox::confine(policy, command);
+		return fail(FAILED, error);
+	}
+	cartridge::trace::subscribe();
 	if matches!(cli.command, Command::Node) {
 		let runtime = match tokio::runtime::Runtime::new() {
 			Ok(runtime) => runtime,
@@ -108,6 +114,7 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 		}
 		Command::Follow { channel, since } => client::follow(project, &channel, since).await,
 		Command::Node => cartridge::node::main().await,
+		Command::Confine { .. } => unreachable!("__confine runs before a project is located"),
 		Command::Doctor => setup::doctor(project).await,
 		Command::Setup { .. } => unreachable!("setup runs before a project is located"),
 		Command::Trust { .. } => unreachable!("trust runs before a project is located"),
