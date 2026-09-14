@@ -364,3 +364,79 @@ fn a_document_refuses_a_duplicate_or_wildcard_listener() {
 		assert!(crate::loader::Cartridge::document(&dir.path().join("cartridge.json")).is_err());
 	}
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_typescript_cartridge_speaks_the_same_wire() {
+	let Ok(bun) = which("bun") else {
+		return;
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let wire =
+		std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/transport/wire.ts")).unwrap();
+	write(dir.path(), "ts/wire.ts", &wire);
+	write(
+		dir.path(),
+		"ts/main.ts",
+		r#"import { Wire } from "./wire";
+const wire = new Wire();
+wire.on("apply", async () => {});
+wire.on("ts.echo", async args => ({ ts: args }));
+wire.on("ts.relay", async args => wire.call("greet", args));
+wire.listen("ping", async data => ({ pong: data }));
+"#,
+	);
+	write(
+		dir.path(),
+		"ts/cartridge.json",
+		&json!({
+			"name": "ts", "entry": "init.lua",
+			"provide": ["ts.echo", "ts.relay"], "needs": ["greet"], "on": ["ping"],
+			"grant": {"exec": [bun.display().to_string()], "read": ["/"]},
+		})
+		.to_string(),
+	);
+	let main = dir.path().canonicalize().unwrap().join("ts/main.ts");
+	write(
+		dir.path(),
+		"ts/init.lua",
+		&format!(
+			"return cartridge.process({{{:?}, {:?}}})",
+			bun.display().to_string(),
+			main.display().to_string()
+		),
+	);
+	write(dir.path(), "provider.lua", PROVIDER);
+	profile(
+		dir.path(),
+		r#"{id="provider", path="provider.lua"}, {id="ts", path="ts"}"#,
+	);
+	let host = boot(dir.path()).await;
+	let status = host.status();
+	assert!(
+		status.iter().all(|s| s.state == State::Active),
+		"{status:?}"
+	);
+	assert_eq!(
+		host.call("ts.echo", json!(1)).await.unwrap(),
+		json!({"ts": 1})
+	);
+	assert_eq!(
+		host.call("ts.relay", json!({"name": "bun"})).await.unwrap(),
+		json!("hello bun")
+	);
+	assert_eq!(
+		host.emit("ping", json!(3)).await,
+		vec![("ts".to_owned(), Ok(json!({"pong": 3})))]
+	);
+	host.stop().await;
+}
+
+fn which(program: &str) -> Result<std::path::PathBuf, ()> {
+	std::env::var_os("PATH")
+		.into_iter()
+		.flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+		.map(|dir| dir.join(program))
+		.find(|path| path.is_file())
+		.and_then(|path| path.canonicalize().ok())
+		.ok_or(())
+}
