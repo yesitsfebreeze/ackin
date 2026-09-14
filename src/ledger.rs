@@ -19,14 +19,14 @@ pub struct Installed {
 	/// The document's own `name`. Empty when the document would not read.
 	pub name: String,
 	/// Keys offered, private to this cartridge's own subtree. A nested
-	/// cartridge's `on` is seen by every lookup made from inside its
+	/// cartridge's `listen` is seen by every lookup made from inside its
 	/// parent's subtree — the walk passes the parent's scope — and by nothing
 	/// outside the parent unless a parent passes it on: that is the settled
 	/// reading of "inner cartridges are hidden until passed on", and
 	/// the-manifest's "satisfies its parent's needs and nothing else" names
 	/// the graph outside the parent, not the siblings within it.
 	/// Events this cartridge listens to: what a `needs` of another resolves to.
-	pub on: Vec<String>,
+	pub listen: Vec<String>,
 	/// Keys asked for, resolved outward from here by [`Ledger::resolve`].
 	pub needs: Vec<String>,
 	/// Why the document would not read, when it would not.
@@ -40,7 +40,7 @@ impl Installed {
 	}
 
 	pub fn offers(&self) -> impl Iterator<Item = &String> {
-		self.on.iter()
+		self.listen.iter()
 	}
 }
 
@@ -167,7 +167,7 @@ fn read_entry(folder: &Path, path: String) -> Installed {
 			path,
 			dir: folder.to_path_buf(),
 			name: doc.name,
-			on: doc.on,
+			listen: doc.listen,
 			needs: doc.needs,
 			unread: None,
 		},
@@ -175,7 +175,7 @@ fn read_entry(folder: &Path, path: String) -> Installed {
 			path,
 			dir: folder.to_path_buf(),
 			name: String::new(),
-			on: Vec::new(),
+			listen: Vec::new(),
 			needs: Vec::new(),
 			unread: Some(e.to_string()),
 		},

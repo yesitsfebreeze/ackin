@@ -4,7 +4,7 @@
 //! Methods, after `auth {token}`. A cartridge's token (from its directory) is
 //! granted `status`, `snapshot` and `cartridges`, and `bridge.*` where its
 //! profile entry sets `bridge = true`; the host token is granted everything.
-//!   status                        -> [{id, state, error, waiting, events, needs, on, socket}]
+//!   status                        -> [{id, state, error, waiting, events, needs, listen, socket}]
 //!   snapshot                      -> {host_pid, profile, cartridge_root, entries}
 //!   cartridges                    -> [{id, dir}]
 //!   bridge.status                 -> [{id, generation, module, services}]

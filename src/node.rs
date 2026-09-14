@@ -20,7 +20,7 @@ use crate::transport::cartridge::{self, Ctx, CONNECT_TIMEOUT_ENV, HOST_TOKEN_ENV
 
 pub const ENTRY_ENV: &str = "CARTRIDGE_ENTRY";
 pub const ROOT_ENV: &str = "CARTRIDGE_ROOT";
-pub const ON_ENV: &str = "CARTRIDGE_ON";
+pub const LISTEN_ENV: &str = "CARTRIDGE_LISTEN";
 
 static RUNTIME: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
 
@@ -53,7 +53,7 @@ pub async fn main() -> Result<ExitCode> {
 	let host_token = env(HOST_TOKEN_ENV)?;
 	let entry = PathBuf::from(env(ENTRY_ENV)?);
 	let root = PathBuf::from(env(ROOT_ENV)?);
-	let on: Vec<String> = serde_json::from_str(&env(ON_ENV)?)?;
+	let listen: Vec<String> = serde_json::from_str(&env(LISTEN_ENV)?)?;
 	let timeout = std::env::var(CONNECT_TIMEOUT_ENV)
 		.ok()
 		.and_then(|secs| secs.parse().ok())
@@ -69,7 +69,7 @@ pub async fn main() -> Result<ExitCode> {
 	if limit > 0 {
 		lua.set_memory_limit(limit)?;
 	}
-	install(&lua, ctx.clone(), root, on)?;
+	install(&lua, ctx.clone(), root, listen)?;
 	let lifeline = ctx.clone();
 	std::thread::spawn(move || {
 		let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
@@ -114,7 +114,7 @@ fn apply(lua: &Lua, ctx: &Ctx, entry: &Path, config: Value) -> cartridge::Result
 
 /// The `cartridge` global: the base's event system, streams, host queries, and
 /// the two ways a cartridge brings code of its own.
-fn install(lua: &Lua, ctx: Ctx, root: PathBuf, on: Vec<String>) -> mlua::Result<()> {
+fn install(lua: &Lua, ctx: Ctx, root: PathBuf, listen: Vec<String>) -> mlua::Result<()> {
 	let global = lua.create_table()?;
 	global.set("root", root.to_string_lossy().into_owned())?;
 	global.set(
@@ -129,11 +129,11 @@ fn install(lua: &Lua, ctx: Ctx, root: PathBuf, on: Vec<String>) -> mlua::Result<
 		let ctx = ctx.clone();
 		lua.create_function(move |lua, ()| lua.to_value(&ctx.events()))?
 	})?;
-	global.set("on", {
+	global.set("listen", {
 		let (ctx, lua_handle) = (ctx.clone(), lua.clone());
 		lua.create_function(move |_, (name, f): (String, Function)| {
-			if !on.contains(&name) {
-				return Err(external(format!("`{name}` is not declared in `on`")));
+			if !listen.contains(&name) {
+				return Err(external(format!("`{name}` is not declared in `listen`")));
 			}
 			let lua = lua_handle.clone();
 			ctx.on(&name, move |data| {

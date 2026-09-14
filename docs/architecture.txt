@@ -39,7 +39,7 @@ For each enabled entry the base reads cartridge.json: the events it defines,
 listens to and needs, its grant and its settled configuration. It never runs
 the entry itself. From all enabled entries it builds the event catalogue and
 refuses, before anything starts: an event defined twice (the later entry
-fails) and an `on` or `needs` naming an event nobody defines.
+fails) and a `listen` or `needs` naming an event nobody defines.
 
 LIFECYCLE
 

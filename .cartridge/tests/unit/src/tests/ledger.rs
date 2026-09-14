@@ -64,12 +64,12 @@ fn two_entries_of_one_scope_offering_one_key_is_a_clash() {
 	cartridge(
 		dir.path(),
 		"left",
-		json!({"name": "left", "entry": "init.lua", "on": ["store.get"]}),
+		json!({"name": "left", "entry": "init.lua", "listen": ["store.get"]}),
 	);
 	cartridge(
 		dir.path(),
 		"right",
-		json!({"name": "right", "entry": "init.lua", "on": ["store.get"]}),
+		json!({"name": "right", "entry": "init.lua", "listen": ["store.get"]}),
 	);
 	let ledger = Ledger::scan(dir.path());
 	let bound = ledger.resolve("asker", "store.get");
@@ -103,7 +103,7 @@ fn an_unreadable_document_is_an_entry_with_its_reason() {
 	let ledger = Ledger::scan(dir.path());
 	assert_eq!(ledger.len(), 1);
 	let entry = ledger.get("broken").unwrap();
-	assert_eq!(entry.on.len() + entry.needs.len(), 0);
+	assert_eq!(entry.listen.len() + entry.needs.len(), 0);
 	assert!(entry.unread.is_some());
 }
 

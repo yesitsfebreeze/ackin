@@ -16,6 +16,6 @@ documents. Then read what the task needs:
 - [Settings](docs/settings.txt): declared settings and the layers that settle them.
 - [Development](docs/development.txt): building, testing and troubleshooting the base.
 
-`cartridge.json` is the whole declaration: `events`, `on`, `needs`, `grant`,
+`cartridge.json` is the whole declaration: `events`, `listen`, `needs`, `grant`,
 `settings`, contracts (`selftest`, `integration`). Nothing is declared anywhere
 else, and nothing is read by running the cartridge.

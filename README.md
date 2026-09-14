@@ -10,8 +10,8 @@ program the entry talks to; neither imports anything from the base.
 
 ```lua
 local fs = cartridge.load("fs")
-cartridge.on("tool.read", fs.read)
-cartridge.on("session.start", function(data) fs.watch(data.cwd) end)
+cartridge.listen("tool.read", fs.read)
+cartridge.listen("session.start", function(data) fs.watch(data.cwd) end)
 ```
 
 Everything between cartridges is an event. `cartridge.json` declares the
@@ -27,7 +27,7 @@ Early (`0.1.0`). Interfaces change without notice.
 ## Concepts
 
 - **Cartridge**: `cartridge.json` declares `events` (name, description,
-  schema), `on` (listened), `needs` (must have a listener), `grant` (machine
+  schema), `listen` (listened), `needs` (must have a listener), `grant` (machine
   access) and `settings`. `init.lua` registers into the base.
 - **Profile**: `.cartridge/init.lua` lists the cartridges a project runs and
   `.cartridge/config.lua` configures them. Installed cartridges not listed

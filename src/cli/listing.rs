@@ -41,7 +41,7 @@ fn deps(all: &[CartridgeInfo], cartridge: &CartridgeInfo, depth: usize, stack: &
 	for key in &cartridge.needs {
 		let provider = all
 			.iter()
-			.find(|p| !p.entry.disabled && p.on.iter().any(|k| k == key));
+			.find(|p| !p.entry.disabled && p.listen.iter().any(|k| k == key));
 		match provider {
 			None => println!("{pad}{key} <- ?"),
 			Some(p) if stack.contains(&p.entry.id) => {
@@ -72,8 +72,8 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 		if !p.events.is_empty() {
 			line.push_str(&format!("  events {}", p.events.join(", ")));
 		}
-		if !p.on.is_empty() {
-			line.push_str(&format!("  on {}", p.on.join(", ")));
+		if !p.listen.is_empty() {
+			line.push_str(&format!("  listens {}", p.listen.join(", ")));
 		}
 		// What it asked for is what it gets and the wall it hits, so it is listed
 		// next to what it provides rather than in a second place.
@@ -118,8 +118,8 @@ fn ledger_lines(ledger: &cartridge::ledger::Ledger) -> usize {
 		if !e.name.is_empty() && e.name != e.path.rsplit('/').next().unwrap_or("") {
 			line.push_str(&format!("  ({})", e.name));
 		}
-		if !e.on.is_empty() {
-			line.push_str(&format!("  on {}", e.on.join(", ")));
+		if !e.listen.is_empty() {
+			line.push_str(&format!("  listens {}", e.listen.join(", ")));
 		}
 		if let Some(why) = &e.unread {
 			line.push_str(&format!("  error: {why}"));

@@ -14,7 +14,7 @@
 //!   "settings": { "max_bytes": {"type": "integer", "default": 67108864, "min": 1024, "doc": "Read budget."} },
 //!   "events": { "store.changed": {"description": "…", "schema": {"type": "object"}} },
 //!   "needs": ["log.write"],     // events that must have a listener
-//!   "on": ["store.flush"],      // events this cartridge listens to
+//!   "listen": ["store.flush"],  // events this cartridge listens to
 //!   "grant": { "read": ["data"], "write": ["cache"], "net": ["api.host"], "exec": ["rg"] }
 //! }
 //! ```
@@ -57,7 +57,7 @@ pub struct CartridgeInfo {
 	pub entry: Entry,
 	pub needs: Vec<String>,
 	pub events: Vec<String>,
-	pub on: Vec<String>,
+	pub listen: Vec<String>,
 	/// `None` when the document could not be read.
 	pub grant: Option<Grant>,
 	/// Why the document would not read.

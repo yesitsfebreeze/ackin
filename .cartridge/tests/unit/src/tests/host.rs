@@ -32,9 +32,9 @@ fn greeter(dir: &Path) {
 		json!({
 			"name": "greeter", "entry": "init.lua",
 			"events": {"greet": {"description": "a greeting", "schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}}},
-			"on": ["greet"],
+			"listen": ["greet"],
 		}),
-		r#"cartridge.on("greet", function(args) return "hello " .. args.name end)"#,
+		r#"cartridge.listen("greet", function(args) return "hello " .. args.name end)"#,
 	);
 }
 
@@ -65,10 +65,10 @@ async fn a_cartridge_answers_the_events_it_listens_to() {
 		"welcome",
 		json!({
 			"name": "welcome", "entry": "init.lua",
-			"events": {"welcome": {}}, "needs": ["greet"], "on": ["welcome"],
+			"events": {"welcome": {}}, "needs": ["greet"], "listen": ["welcome"],
 		}),
 		r#"return { apply = function(ctx, config)
-			ctx.on("welcome", function(args) return ctx.bail("greet", args) end)
+			ctx.listen("welcome", function(args) return ctx.bail("greet", args) end)
 		end }"#,
 	);
 	profile(dir.path(), &["welcome", "greeter"]);
@@ -101,7 +101,7 @@ async fn an_undeclared_event_fails_the_cartridge_before_it_starts() {
 	cartridge(
 		dir.path(),
 		"stray",
-		json!({"name": "stray", "entry": "init.lua", "on": ["nobody.declares"]}),
+		json!({"name": "stray", "entry": "init.lua", "listen": ["nobody.declares"]}),
 		"",
 	);
 	cartridge(
@@ -152,9 +152,9 @@ async fn a_node_refuses_to_listen_to_what_it_did_not_declare() {
 	cartridge(
 		dir.path(),
 		"sneaky",
-		json!({"name": "sneaky", "entry": "init.lua", "events": {"sneak": {}}, "on": ["sneak"]}),
-		r#"cartridge.on("sneak", function()
-			local ok, error = pcall(cartridge.on, "greet", function() end)
+		json!({"name": "sneaky", "entry": "init.lua", "events": {"sneak": {}}, "listen": ["sneak"]}),
+		r#"cartridge.listen("sneak", function()
+			local ok, error = pcall(cartridge.listen, "greet", function() end)
 			return tostring(error)
 		end)"#,
 	);
@@ -162,7 +162,10 @@ async fn a_node_refuses_to_listen_to_what_it_did_not_declare() {
 	let host = boot(dir.path()).await;
 	let answer = host.bail("sneak", json!(null)).await.unwrap().unwrap();
 	assert!(
-		answer.as_str().unwrap().contains("not declared in `on`"),
+		answer
+			.as_str()
+			.unwrap()
+			.contains("not declared in `listen`"),
 		"{answer}"
 	);
 	host.stop().await;
@@ -175,17 +178,17 @@ async fn gather_parallel_and_emit_reach_every_listener() {
 		cartridge(
 			dir.path(),
 			id,
-			json!({"name": id, "entry": "init.lua", "on": ["ping"]}),
+			json!({"name": id, "entry": "init.lua", "listen": ["ping"]}),
 			&format!(
-				r#"cartridge.on("ping", function(data) return {{ from = {id:?}, data = data }} end)"#
+				r#"cartridge.listen("ping", function(data) return {{ from = {id:?}, data = data }} end)"#
 			),
 		);
 	}
 	cartridge(
 		dir.path(),
 		"asker",
-		json!({"name": "asker", "entry": "init.lua", "events": {"ping": {}, "ask": {}}, "on": ["ask"]}),
-		r#"cartridge.on("ask", function(data)
+		json!({"name": "asker", "entry": "init.lua", "events": {"ping": {}, "ask": {}}, "listen": ["ask"]}),
+		r#"cartridge.listen("ask", function(data)
 			local all = cartridge.gather("ping", data)
 			cartridge.parallel("ping", data)
 			cartridge.emit("ping", data)
@@ -221,11 +224,11 @@ async fn a_native_module_reaches_the_base_through_the_global() {
 		json!({
 			"name": "native", "entry": "init.lua",
 			"events": {"twice": {"schema": {"type": "integer"}}, "relay": {}},
-			"needs": ["greet"], "on": ["twice", "relay"],
+			"needs": ["greet"], "listen": ["twice", "relay"],
 		}),
 		r#"local native = cartridge.load("native_fixture")
-		cartridge.on("twice", function(n) return native.twice(n) end)
-		cartridge.on("relay", function(args) return native.ask("greet", args) end)"#,
+		cartridge.listen("twice", function(n) return native.twice(n) end)
+		cartridge.listen("relay", function(args) return native.ask("greet", args) end)"#,
 	);
 	std::fs::copy(
 		&module,
@@ -255,11 +258,11 @@ async fn a_spawned_program_answers_requests_by_id() {
 		"echoer",
 		json!({
 			"name": "echoer", "entry": "init.lua",
-			"events": {"echo": {}}, "on": ["echo"],
+			"events": {"echo": {}}, "listen": ["echo"],
 			"grant": {"exec": ["/bin/cat"]},
 		}),
 		r#"local cat = cartridge.spawn({"/bin/cat"})
-		cartridge.on("echo", function(data) return cat:request({ data = data }) end)"#,
+		cartridge.listen("echo", function(data) return cat:request({ data = data }) end)"#,
 	);
 	profile(dir.path(), &["echoer"]);
 	let host = boot(dir.path()).await;
@@ -275,18 +278,18 @@ async fn streams_replay_and_then_deliver_live() {
 	cartridge(
 		dir.path(),
 		"source",
-		json!({"name": "source", "entry": "init.lua", "events": {"tick": {}}, "on": ["tick"]}),
-		r#"cartridge.on("tick", function(n) cartridge.publish("ticks", n) return true end)"#,
+		json!({"name": "source", "entry": "init.lua", "events": {"tick": {}}, "listen": ["tick"]}),
+		r#"cartridge.listen("tick", function(n) cartridge.publish("ticks", n) return true end)"#,
 	);
 	cartridge(
 		dir.path(),
 		"watcher",
-		json!({"name": "watcher", "entry": "init.lua", "events": {"seen": {}}, "needs": ["tick"], "on": ["seen"]}),
+		json!({"name": "watcher", "entry": "init.lua", "events": {"seen": {}}, "needs": ["tick"], "listen": ["seen"]}),
 		r#"local seen = {}
 		cartridge.subscribe("source", "ticks", function(envelope)
 			if envelope.kind == "data" then table.insert(seen, envelope.data) end
 		end)
-		cartridge.on("seen", function() return seen end)"#,
+		cartridge.listen("seen", function() return seen end)"#,
 	);
 	profile(dir.path(), &["source", "watcher"]);
 	let host = boot(dir.path()).await;
@@ -315,8 +318,8 @@ async fn a_restart_keeps_its_dependents_working() {
 	cartridge(
 		dir.path(),
 		"welcome",
-		json!({"name": "welcome", "entry": "init.lua", "events": {"welcome": {}}, "needs": ["greet"], "on": ["welcome"]}),
-		r#"cartridge.on("welcome", function(args) return cartridge.bail("greet", args) end)"#,
+		json!({"name": "welcome", "entry": "init.lua", "events": {"welcome": {}}, "needs": ["greet"], "listen": ["welcome"]}),
+		r#"cartridge.listen("welcome", function(args) return cartridge.bail("greet", args) end)"#,
 	);
 	profile(dir.path(), &["greeter", "welcome"]);
 	let host = boot(dir.path()).await;
@@ -327,7 +330,7 @@ async fn a_restart_keeps_its_dependents_working() {
 	write(
 		dir.path(),
 		"greeter/init.lua",
-		r#"cartridge.on("greet", function(args) return "hi " .. args.name end)"#,
+		r#"cartridge.listen("greet", function(args) return "hi " .. args.name end)"#,
 	);
 	host.replace("greeter").await.unwrap();
 	assert_eq!(status(&host, "welcome").state, State::Active);
@@ -344,7 +347,7 @@ async fn a_missing_listener_waits_and_says_for_what() {
 	cartridge(
 		dir.path(),
 		"welcome",
-		json!({"name": "welcome", "entry": "init.lua", "events": {"greet": {}, "welcome": {}}, "needs": ["greet"], "on": ["welcome"]}),
+		json!({"name": "welcome", "entry": "init.lua", "events": {"greet": {}, "welcome": {}}, "needs": ["greet"], "listen": ["welcome"]}),
 		"",
 	);
 	profile(dir.path(), &["welcome"]);
@@ -362,8 +365,8 @@ async fn a_cartridge_asks_the_host_what_only_the_host_knows() {
 	cartridge(
 		dir.path(),
 		"curious",
-		json!({"name": "curious", "entry": "init.lua", "events": {"ask": {}}, "on": ["ask"]}),
-		r#"cartridge.on("ask", function()
+		json!({"name": "curious", "entry": "init.lua", "events": {"ask": {}}, "listen": ["ask"]}),
+		r#"cartridge.listen("ask", function()
 			local cartridges = cartridge.host("cartridges", nil)
 			local snapshot = cartridge.host("snapshot", nil)
 			local ok, refused = pcall(cartridge.host, "bridge.status", nil)
@@ -421,8 +424,8 @@ async fn verify_sends_every_declared_contract() {
 	cartridge(
 		dir.path(),
 		"checked",
-		json!({"name": "checked", "entry": "init.lua", "events": {"checked.ok": {}}, "on": ["checked.ok"], "selftest": "checked.ok"}),
-		r#"cartridge.on("checked.ok", function() return true end)"#,
+		json!({"name": "checked", "entry": "init.lua", "events": {"checked.ok": {}}, "listen": ["checked.ok"], "selftest": "checked.ok"}),
+		r#"cartridge.listen("checked.ok", function() return true end)"#,
 	);
 	profile(dir.path(), &["checked"]);
 	node_binary();
@@ -470,7 +473,7 @@ fn a_document_refuses_a_bad_schema_or_a_contract_it_does_not_listen_to() {
 	let dir = tempfile::tempdir().unwrap();
 	for manifest in [
 		json!({"name": "p", "entry": "init.lua", "events": {"a": {"schema": {"type": "no-such-type"}}}}),
-		json!({"name": "p", "entry": "init.lua", "on": ["a", "a"]}),
+		json!({"name": "p", "entry": "init.lua", "listen": ["a", "a"]}),
 		json!({"name": "p", "entry": "init.lua", "selftest": "a"}),
 	] {
 		write(dir.path(), "cartridge.json", &manifest.to_string());

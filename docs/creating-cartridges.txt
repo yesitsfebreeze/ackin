@@ -18,11 +18,11 @@ cartridge.json:
       "schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}
     }
   },
-  "on": ["hello.greet"]
+  "listen": ["hello.greet"]
 }
 
 init.lua:
-cartridge.on("hello.greet", function(args)
+cartridge.listen("hello.greet", function(args)
   return "hello " .. args.name
 end)
 
@@ -36,7 +36,7 @@ Everything the entry can do is on the `cartridge` global; transport.txt lists
 it. To use another cartridge's event, declare it in `needs` and send it:
 
   "needs": ["hello.greet"]
-  cartridge.on("welcome", function(args) return cartridge.bail("hello.greet", args) end)
+  cartridge.listen("welcome", function(args) return cartridge.bail("hello.greet", args) end)
 
 A RUST CARTRIDGE
 
@@ -81,7 +81,7 @@ src/lib.rs:
 init.lua:
 
   local hello = cartridge.load("hello")
-  cartridge.on("hello.greet", hello.greet)
+  cartridge.listen("hello.greet", hello.greet)
 
 The module's crate must not share a Cargo workspace with the base. Ship the
 built `libhello.dylib` (or `.so`) in the cartridge folder; while developing,
@@ -96,7 +96,7 @@ A cartridge may start a program in any language and speak to it over lines of
 JSON; the program knows nothing of the base.
 
   local app = cartridge.spawn({"bun", cartridge.root .. "/src/main.ts"})
-  cartridge.on("live.status", function(args) return app:request({op = "status"}) end)
+  cartridge.listen("live.status", function(args) return app:request({op = "status"}) end)
   app:on_line(function(line) if line.event then cartridge.emit(line.event, line.data) end end)
 
 `request` writes one line with an `id` and returns the line the program writes
@@ -109,14 +109,14 @@ name and entry are required; entry is a relative .lua path inside the folder.
 
   description     one line of purpose
   events          name -> {description?, schema?}; events this cartridge defines
-  on              events listened to
+  listen          events listened to
   needs           events that must have a listener before this cartridge starts;
                   the profile can add more with `inject`
   grant           {read, write, net, exec}; absent grants nothing
   settings        dotted key -> {type, default, optional?, min?, max?, doc?}; see settings.txt
   config          author defaults laid over the declared ones
-  selftest        an event in `on` that proves the cartridge's behaviour
-  integration     an event in `on` that proves its wiring to a real dependency
+  selftest        an event in `listen` that proves the cartridge's behaviour
+  integration     an event in `listen` that proves its wiring to a real dependency
   commands        label -> {argv, cwd, description?}; documentation, never run by the base
   binary          executable basename when it differs from the folder
   ui              a JavaScript or TypeScript client module inside the folder

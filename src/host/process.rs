@@ -44,7 +44,10 @@ pub(super) async fn start(
 	)
 	.env(crate::node::ENTRY_ENV, &plan.entry)
 	.env(crate::node::ROOT_ENV, &plan.root)
-	.env(crate::node::ON_ENV, serde_json::to_string(&plan.on)?)
+	.env(
+		crate::node::LISTEN_ENV,
+		serde_json::to_string(&plan.listen)?,
+	)
 	.stdin(Stdio::piped())
 	.stdout(Stdio::null())
 	.stderr(Stdio::piped())

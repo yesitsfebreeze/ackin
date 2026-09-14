@@ -51,7 +51,7 @@ pub struct Cartridge {
 	pub needs: Vec<String>,
 	/// Events this cartridge listens to.
 	#[serde(default)]
-	pub on: Vec<String>,
+	pub listen: Vec<String>,
 	/// The capability request: the same declaration the resolver grants and the
 	/// sandbox confines to. Absent means nothing is asked for, which is the
 	/// tightest policy and not the loosest.
@@ -217,10 +217,10 @@ impl Cartridge {
 			}
 		}
 		let mut heard = std::collections::HashSet::new();
-		for k in &self.on {
-			key("on", k)?;
+		for k in &self.listen {
+			key("listen", k)?;
 			if !heard.insert(k.as_str()) {
-				return Err(at(&format!("duplicate on declaration `{k}`")));
+				return Err(at(&format!("duplicate listen declaration `{k}`")));
 			}
 		}
 		let mut asked = std::collections::HashSet::new();
@@ -235,7 +235,7 @@ impl Cartridge {
 			("integration", &self.integration),
 		] {
 			if let Some(k) = contract {
-				if !self.on.contains(k) {
+				if !self.listen.contains(k) {
 					return Err(at(&format!(
 						"`{field}` names `{k}`, which this cartridge does not listen to"
 					)));
@@ -256,7 +256,7 @@ impl Grant {
 			for p in paths {
 				let path = Path::new(p);
 				// A path is blank on the same terms a key is: `trim()` on both, so
-				// `"   "` is refused in a grant exactly as it is in `on`.
+				// `"   "` is refused in a grant exactly as it is in `listen`.
 				if p.trim().is_empty() || p.contains('\0') {
 					return Err(at(&format!(
 						"`grant.{field}` entry `{p}` must be a nonempty exact path"
@@ -309,7 +309,7 @@ pub(crate) struct Declared {
 	pub(crate) sources: Vec<PathBuf>,
 	pub(crate) events: std::collections::BTreeMap<String, Event>,
 	pub(crate) needs: Vec<String>,
-	pub(crate) on: Vec<String>,
+	pub(crate) listen: Vec<String>,
 	pub(crate) config: serde_json::Value,
 	pub(crate) settings: crate::settings::Specs,
 	pub(crate) grant: Grant,
@@ -338,7 +338,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 			sources: vec![path],
 			events: Default::default(),
 			needs: Vec::new(),
-			on: Vec::new(),
+			listen: Vec::new(),
 			config: serde_json::Value::Null,
 			settings: Default::default(),
 			grant: Grant::default(),
@@ -357,7 +357,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		sources,
 		events: manifest.events,
 		needs: manifest.needs,
-		on: manifest.on,
+		listen: manifest.listen,
 		config: manifest.config,
 		settings: manifest.settings,
 		grant: manifest.grant,

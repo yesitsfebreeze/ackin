@@ -565,7 +565,7 @@ fn declarations(c: &CartridgeInfo, document: &Result<loader::Cartridge>, dir: &P
 	for (label, keys) in [
 		("events", &events),
 		("needs", &doc.needs),
-		("on", &doc.on),
+		("listens", &doc.listen),
 		("wired", &c.needs),
 	] {
 		if !keys.is_empty() {

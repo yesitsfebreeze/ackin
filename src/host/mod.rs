@@ -47,7 +47,7 @@ pub struct Status {
 	pub waiting: Vec<String>,
 	pub events: Vec<String>,
 	pub needs: Vec<String>,
-	pub on: Vec<String>,
+	pub listen: Vec<String>,
 	pub socket: PathBuf,
 }
 
@@ -226,7 +226,7 @@ impl Host {
 						.map(|p| p.events.keys().cloned().collect())
 						.unwrap_or_default(),
 					needs,
-					on: plan.map(|p| p.on.clone()).unwrap_or_default(),
+					listen: plan.map(|p| p.listen.clone()).unwrap_or_default(),
 					socket: self.socket(&slot.entry.id),
 				}
 			})
@@ -727,7 +727,7 @@ impl Host {
 					"dir": root,
 					"inject": needs,
 					"events": plan.map(|p| p.events.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
-					"on": plan.map(|p| p.on.clone()).unwrap_or_default(),
+					"listen": plan.map(|p| p.listen.clone()).unwrap_or_default(),
 					"dependencies": dependencies,
 					"sources": sources,
 					"context": {
@@ -780,7 +780,7 @@ impl Host {
 						"id": s.entry.id,
 						"generation": s.generation,
 						"module": module,
-						"services": s.plan.as_ref().map(|p| p.on.clone()).unwrap_or_default(),
+						"services": s.plan.as_ref().map(|p| p.listen.clone()).unwrap_or_default(),
 					}))
 				})
 				.collect(),
@@ -812,7 +812,7 @@ impl Host {
 			if !slot
 				.plan
 				.as_ref()
-				.is_some_and(|p| p.on.iter().any(|k| k == key))
+				.is_some_and(|p| p.listen.iter().any(|k| k == key))
 			{
 				return Err(Error::Reload(
 					"a bridge client may only send events its own cartridge listens to".into(),

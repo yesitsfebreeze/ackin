@@ -9,12 +9,12 @@ declaration before a cartridge starts and every payload before it is sent.
 DECLARATION
 
   "events": { "session.start": { "description": "…", "schema": { …JSON Schema… } } }
-  "on":     ["tool.read", "session.start"]
+  "listen": ["tool.read", "session.start"]
   "needs":  ["memory.query"]
 
   events   what this cartridge defines: the name, one line of purpose, and a
            JSON Schema for the payload. One owner per event.
-  on       what this cartridge listens to. Its listener's return value is the
+  listen   what this cartridge listens to. Its listener's return value is the
            answer; nil is no answer.
   needs    events this cartridge sends that must have a listener before it starts.
 
@@ -23,7 +23,7 @@ schema and listens to it; anyone sends `tool.read` and takes the answer.
 
 CHECKS
 
-Before a cartridge starts, every name in `on` and `needs` must be an event some
+Before a cartridge starts, every name in `listen` and `needs` must be an event some
 enabled cartridge declares; otherwise it fails with "listens to `x`, which no
 cartridge declares" and never runs. An event declared by two cartridges fails
 the later one. A cartridge waits until every `needs` event has an active
@@ -37,7 +37,7 @@ THE LUA GLOBAL
 
 The base injects `cartridge` into every init.lua:
 
-  cartridge.on(name, fn)          listen; name must be in `on`. fn(data) returns the answer
+  cartridge.listen(name, fn)      listen; name must be in `listen`. fn(data) returns the answer
   cartridge.emit(name, data)      send to every listener, do not wait
   cartridge.bail(name, data)      send in order, take the first non-nil answer
   cartridge.parallel(name, data)  send to all, wait, error if any failed

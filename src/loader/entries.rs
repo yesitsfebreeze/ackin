@@ -111,8 +111,11 @@ impl Host {
 			.map(|entry| {
 				let mut exact = entry.clone();
 				exact.inject.retain(|key| !key.ends_with('*'));
-				let on = self.plan(&exact).map(|plan| plan.on).unwrap_or_default();
-				(entry.id.clone(), on)
+				let listen = self
+					.plan(&exact)
+					.map(|plan| plan.listen)
+					.unwrap_or_default();
+				(entry.id.clone(), listen)
 			})
 			.collect();
 		for entry in entries.iter_mut().filter(|entry| globbed(entry)) {
@@ -133,7 +136,7 @@ impl Host {
 				let mut matched: Vec<String> = listened
 					.iter()
 					.filter(|(id, _)| *id != entry.id)
-					.flat_map(|(_, on)| on.iter())
+					.flat_map(|(_, listen)| listen.iter())
 					.filter(|key| key.starts_with(prefix))
 					.cloned()
 					.collect();
@@ -190,14 +193,14 @@ impl Host {
 					Ok(grant) => (Some(grant), None),
 					Err(e) => (None, Some(e.to_string())),
 				};
-				let (needs, events, on, error) = if entry.disabled {
+				let (needs, events, listen, error) = if entry.disabled {
 					(Vec::new(), Vec::new(), Vec::new(), None)
 				} else {
 					match self.plan(&entry) {
 						Ok(plan) => (
 							plan.needs,
 							plan.events.keys().cloned().collect(),
-							plan.on,
+							plan.listen,
 							None,
 						),
 						Err(e) => {
@@ -210,7 +213,7 @@ impl Host {
 					entry,
 					needs,
 					events,
-					on,
+					listen,
 					grant,
 					unread,
 					error,

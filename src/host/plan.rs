@@ -19,7 +19,7 @@ pub struct Plan {
 	pub entry: PathBuf,
 	pub events: BTreeMap<String, Event>,
 	pub needs: Vec<String>,
-	pub on: Vec<String>,
+	pub listen: Vec<String>,
 	pub config: serde_json::Value,
 	pub grant: Grant,
 	pub sources: Vec<PathBuf>,
@@ -28,7 +28,7 @@ pub struct Plan {
 impl Plan {
 	/// Everything that changes what the other cartridges are told.
 	pub(crate) fn wiring(&self) -> (Vec<&String>, &[String], &[String]) {
-		(self.events.keys().collect(), &self.needs, &self.on)
+		(self.events.keys().collect(), &self.needs, &self.listen)
 	}
 }
 
@@ -61,11 +61,11 @@ impl Host {
 			.to_path_buf();
 		let mut needs = declared.needs.clone();
 		needs.extend(entry.inject.iter().cloned());
-		let mut on = declared.on.clone();
+		let mut listen = declared.listen.clone();
 		exact(&needs)?;
-		exact(&on)?;
+		exact(&listen)?;
 		dedup(&mut needs);
-		dedup(&mut on);
+		dedup(&mut listen);
 		let grant = self.expand_grant(&declared.grant, &config)?;
 		Ok(Plan {
 			id: entry.id.clone(),
@@ -74,7 +74,7 @@ impl Host {
 			entry: declared.entry.clone(),
 			events: declared.events.clone(),
 			needs,
-			on,
+			listen,
 			config,
 			grant,
 			sources: declared.sources.clone(),
@@ -196,7 +196,7 @@ pub(crate) fn unmatched(
 	plan: &Plan,
 	catalogue: &BTreeMap<String, (String, Event)>,
 ) -> Option<String> {
-	for (what, names) in [("listens to", &plan.on), ("needs", &plan.needs)] {
+	for (what, names) in [("listens to", &plan.listen), ("needs", &plan.needs)] {
 		if let Some(name) = names.iter().find(|name| !catalogue.contains_key(*name)) {
 			return Some(format!("{what} `{name}`, which no cartridge declares"));
 		}
@@ -208,7 +208,7 @@ pub(crate) fn unmatched(
 pub(crate) fn listeners(plans: &[Arc<Plan>]) -> HashMap<String, Vec<String>> {
 	let mut listeners: HashMap<String, Vec<String>> = HashMap::new();
 	for plan in plans {
-		for name in &plan.on {
+		for name in &plan.listen {
 			listeners
 				.entry(name.clone())
 				.or_default()
@@ -238,7 +238,7 @@ pub(crate) fn directory(
 	for (name, (owner, event)) in catalogue {
 		let listeners = plans
 			.iter()
-			.filter(|p| p.on.iter().any(|n| n == name))
+			.filter(|p| p.listen.iter().any(|n| n == name))
 			.map(|listener| Address {
 				cartridge: listener.id.clone(),
 				socket: host.socket(&listener.id),
