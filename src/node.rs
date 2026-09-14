@@ -69,7 +69,8 @@ pub async fn main() -> Result<ExitCode> {
 	if limit > 0 {
 		lua.set_memory_limit(limit)?;
 	}
-	install(&lua, ctx.clone(), root, listen)?;
+	let socket_dir = socket.parent().map(Path::to_path_buf).unwrap_or_default();
+	install(&lua, ctx.clone(), root, listen, socket_dir)?;
 	let lifeline = ctx.clone();
 	std::thread::spawn(move || {
 		let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
@@ -114,7 +115,13 @@ fn apply(lua: &Lua, ctx: &Ctx, entry: &Path, config: Value) -> cartridge::Result
 
 /// The `cartridge` global: the base's event system, streams, host queries, and
 /// the two ways a cartridge brings code of its own.
-fn install(lua: &Lua, ctx: Ctx, root: PathBuf, listen: Vec<String>) -> mlua::Result<()> {
+fn install(
+	lua: &Lua,
+	ctx: Ctx,
+	root: PathBuf,
+	listen: Vec<String>,
+	socket_dir: PathBuf,
+) -> mlua::Result<()> {
 	let global = lua.create_table()?;
 	global.set("root", root.to_string_lossy().into_owned())?;
 	// A native module's own mlua does not know this marker; it tags arrays with it.
@@ -259,6 +266,11 @@ fn install(lua: &Lua, ctx: Ctx, root: PathBuf, listen: Vec<String>) -> mlua::Res
 		})?
 	})?;
 	global.set("spawn", lua.create_function(spawn)?)?;
+	global.set("pipe", {
+		let dir = socket_dir.clone();
+		let counter = Arc::new(AtomicU64::new(1));
+		lua.create_function(move |lua, f: Function| pipe(lua, &dir, &counter, f))?
+	})?;
 	lua.globals().set("cartridge", global)
 }
 
@@ -292,6 +304,53 @@ fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> 
 		.map_err(|e| external(format!("{}: {e}", path.display())))?;
 	let open = unsafe { lua.create_c_function(*open) }?;
 	open.call::<mlua::Value>(name)
+}
+
+/// A FIFO the node reads: every line written to it, from any thread of a
+/// native module, reaches `f` on the node's Lua thread. Returns the path.
+fn pipe(lua: &Lua, dir: &Path, counter: &AtomicU64, f: Function) -> mlua::Result<String> {
+	let path = dir.join(format!(
+		"{}.{}.fifo",
+		std::process::id(),
+		counter.fetch_add(1, Ordering::SeqCst)
+	));
+	let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
+		.map_err(|e| external(e.to_string()))?;
+	// SAFETY: a NUL-terminated path; mkfifo touches nothing else.
+	if unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) } != 0 {
+		return Err(external(format!(
+			"{}: {}",
+			path.display(),
+			std::io::Error::last_os_error()
+		)));
+	}
+	let lua = lua.clone();
+	let reader = path.clone();
+	tokio::spawn(async move {
+		// Held open for writing by the node itself, so readers never see EOF between writers.
+		let Ok(keep) = std::fs::OpenOptions::new()
+			.read(true)
+			.write(true)
+			.open(&reader)
+		else {
+			return;
+		};
+		let Ok(file) = tokio::fs::File::open(&reader).await else {
+			return;
+		};
+		let mut lines = BufReader::new(file).lines();
+		while let Ok(Some(line)) = lines.next_line().await {
+			let value: Value = serde_json::from_str(&line).unwrap_or(Value::String(line));
+			let result = tokio::task::block_in_place(|| -> mlua::Result<()> {
+				f.call::<()>(lua.to_value(&value)?)
+			});
+			if let Err(error) = result {
+				tracing::warn!(target: "cartridge", "pipe handler failed: {error}");
+			}
+		}
+		drop(keep);
+	});
+	Ok(path.to_string_lossy().into_owned())
 }
 
 /// A helper program: lines of JSON in and out. `request` matches a reply by `id`;

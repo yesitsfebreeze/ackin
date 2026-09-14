@@ -53,6 +53,7 @@ The base injects `cartridge` into every init.lua:
   cartridge.on_dispose(fn)        runs when the cartridge stops
   cartridge.load(name)            a native Lua module shipped by this cartridge
   cartridge.spawn(cmd, opts)      a helper program: :request(v), :send(v), :on_line(fn), :kill()
+  cartridge.pipe(fn)              a FIFO path; every line written to it reaches fn on the node thread
   cartridge.name, cartridge.config, cartridge.root, cartridge.trace()
   cartridge.array_metatable       the table that marks a Lua table as a JSON array
 
@@ -66,7 +67,10 @@ A cartridge written in Rust is a Lua module: a cdylib exporting
 dynamic_lookup` on macOS). It imports nothing from the base: inside the Lua
 state it reads the `cartridge` global to send events. A module's own mlua does
 not share the base's array marker, so a table it means as a JSON array (an empty
-one above all) gets `cartridge.array_metatable` set as its metatable. init.lua loads it with
+one above all) gets `cartridge.array_metatable` set as its metatable. A module's
+own threads must not call into Lua: the module's mlua and the base's lock the
+state separately. A thread that has something to say writes a line to a
+`cartridge.pipe`; the handler runs on the node thread and may call anything. init.lua loads it with
 `cartridge.load("<name>")` from the cartridge folder (or target/{release,debug}
 while developing) and wires its functions to events.
 

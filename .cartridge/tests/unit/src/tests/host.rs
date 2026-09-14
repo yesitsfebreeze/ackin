@@ -483,3 +483,35 @@ fn a_document_refuses_a_bad_schema_or_a_contract_it_does_not_listen_to() {
 		);
 	}
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pipe_wakes_the_node_from_outside() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"piped",
+		json!({"name": "piped", "entry": "init.lua", "events": {"path": {}, "seen": {}}, "listen": ["path", "seen"], "grant": {"exec": ["/bin/sh"]}}),
+		r#"local seen = {}
+		local path = cartridge.pipe(function(line) table.insert(seen, line) end)
+		cartridge.listen("path", function() return path end)
+		cartridge.listen("seen", function() return seen end)"#,
+	);
+	profile(dir.path(), &["piped"]);
+	let host = boot(dir.path()).await;
+	let path = host.bail("path", json!(null)).await.unwrap().unwrap();
+	std::fs::write(path.as_str().unwrap(), "{\"n\":1}\nplain\n").unwrap();
+	let mut seen = json!([]);
+	for _ in 0..50 {
+		seen = host
+			.bail("seen", json!(null))
+			.await
+			.unwrap()
+			.unwrap_or_default();
+		if seen.as_array().is_some_and(|s| s.len() == 2) {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+	assert_eq!(seen, json!([{"n": 1}, "plain"]));
+	host.stop().await;
+}
