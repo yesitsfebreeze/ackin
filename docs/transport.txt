@@ -88,10 +88,11 @@ waiting, for example on `:request`:
   {"ask": id, "bail"|"gather": name, "args": …}          answered as {"ask": id, "result"|"error": …}
   {"ask": id, "host": method, "params": …}               the same, for a host query
 
-On a helper's stdout the answer to an ask is written to its stdin. A line with
-an `id` answers the `:request` with that id; any other line reaches the
-`:on_line` handler (or the pipe's `fn`) on the node thread, which the handler
-must not block on. init.lua loads it with
+On a helper's stdout the answer to an ask is written to its stdin; on a pipe
+it reaches the pipe's `fn`. Asks are answered out of line, so several may be
+in flight. A line with an `id` answers the `:request` with that id; any other
+line reaches the `:on_line` handler (or the pipe's `fn`) in order, one at a
+time. init.lua loads it with
 `cartridge.load("<name>")` from the cartridge folder (or target/{release,debug}
 while developing) and wires its functions to events.
 

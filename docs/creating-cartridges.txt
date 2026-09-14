@@ -119,7 +119,7 @@ name and entry are required; entry is a relative .lua path inside the folder.
   listen          events listened to
   needs           events that must have a listener before this cartridge starts;
                   `tool.*` names every event with that prefix another enabled
-                  cartridge listens to
+                  cartridge listens to, and nothing when there is none
   grant           {read, write, net, exec}; absent grants nothing
   settings        dotted key -> {type, default, optional?, min?, max?, doc?}; see settings.txt
   config          author defaults laid over the declared ones

@@ -420,8 +420,8 @@ async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'st
 	true
 }
 
-/// A FIFO the node reads: protocol lines are served by the node itself; every
-/// other line reaches `f` on the node's Lua thread. Returns the path.
+/// A FIFO the node reads: protocol lines are served by the node itself, an
+/// ask's answer and every other line reach `f`. Returns the path.
 fn pipe(
 	lua: &Lua,
 	ctx: &Ctx,
@@ -461,7 +461,19 @@ fn pipe(
 		let mut lines = BufReader::new(file).lines();
 		while let Ok(Some(line)) = lines.next_line().await {
 			let value: Value = serde_json::from_str(&line).unwrap_or(Value::String(line));
-			if relay(&ctx, &value, |_| {}).await {
+			let answer = {
+				let (lua, f) = (lua.clone(), f.clone());
+				move |answer: Value| {
+					let Some(f) = f else { return };
+					tokio::spawn(async move {
+						let run = async { f.call_async::<()>(lua.to_value(&answer)?).await };
+						if let Err(error) = run.await {
+							tracing::warn!(target: "cartridge", "pipe handler failed: {error}");
+						}
+					});
+				}
+			};
+			if relay(&ctx, &value, answer).await {
 				continue;
 			}
 			let Some(f) = &f else { continue };

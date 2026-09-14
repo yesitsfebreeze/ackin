@@ -547,16 +547,21 @@ async fn a_pipe_wakes_the_node_from_outside() {
 	cartridge(
 		dir.path(),
 		"piped",
-		json!({"name": "piped", "entry": "init.lua", "events": {"path": {}, "seen": {}}, "listen": ["path", "seen"], "grant": {"exec": ["/bin/sh"]}}),
+		json!({"name": "piped", "entry": "init.lua", "events": {"path": {}, "seen": {}, "echo": {}}, "listen": ["path", "seen", "echo"], "grant": {"exec": ["/bin/sh"]}}),
 		r#"local seen = {}
 		local path = cartridge.pipe(function(line) table.insert(seen, line) end)
 		cartridge.listen("path", function() return path end)
+		cartridge.listen("echo", function(data) return data end)
 		cartridge.listen("seen", function() return seen end)"#,
 	);
 	profile(dir.path(), &["piped"]);
 	let host = boot(dir.path()).await;
 	let path = host.bail("path", json!(null)).await.unwrap().unwrap();
-	std::fs::write(path.as_str().unwrap(), "{\"n\":1}\nplain\n").unwrap();
+	std::fs::write(
+		path.as_str().unwrap(),
+		"{\"n\":1}\nplain\n{\"ask\":\"a\",\"bail\":\"echo\",\"args\":\"hi\"}\n",
+	)
+	.unwrap();
 	let mut seen = json!([]);
 	for _ in 0..50 {
 		seen = host
@@ -564,12 +569,15 @@ async fn a_pipe_wakes_the_node_from_outside() {
 			.await
 			.unwrap()
 			.unwrap_or_default();
-		if seen.as_array().is_some_and(|s| s.len() == 2) {
+		if seen.as_array().is_some_and(|s| s.len() == 3) {
 			break;
 		}
 		tokio::time::sleep(Duration::from_millis(20)).await;
 	}
-	assert_eq!(seen, json!([{"n": 1}, "plain"]));
+	assert_eq!(
+		seen,
+		json!([{"n": 1}, "plain", {"ask": "a", "result": "hi"}])
+	);
 	host.stop().await;
 }
 
