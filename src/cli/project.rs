@@ -22,10 +22,17 @@ pub(crate) struct Project {
 /// typed in a subdirectory joins the runtime already serving that project
 /// instead of starting a second one beside it.
 pub(crate) fn locate(dir: Option<PathBuf>, yolo: bool) -> Result<Project> {
-	let dir = absolute(&dir.unwrap_or_else(loader::builtin));
+	// Cartridges are found under the project itself unless `--dir` names another root.
+	let dir = dir.map(|dir| absolute(&dir));
 	let root = loader::root();
+	let dir = dir.unwrap_or_else(|| root.clone());
 	std::env::set_current_dir(&root).map_err(|e| Error::file(&root, e))?;
 	let profile = loader::profile();
+	// An interactive command offers to trust its project instead of only refusing.
+	use std::io::IsTerminal;
+	if std::io::stdin().is_terminal() && root.join(&profile).join("init.lua").is_file() {
+		super::trust::ask(&root)?;
+	}
 	// Here, because `settle` turns an error from these files into a warning.
 	for name in ["init.lua", "config.lua"] {
 		let file = root.join(&profile).join(name);

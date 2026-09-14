@@ -58,7 +58,7 @@ pub fn main() -> ExitCode {
 				catalog,
 			} => {
 				let root = std::env::current_dir()?;
-				let dir = root.join(cli.dir.unwrap_or_else(cartridge::loader::builtin));
+				let dir = cli.dir.map_or_else(|| root.clone(), |dir| root.join(dir));
 				let ask = setup::Ask {
 					from,
 					with,
@@ -68,7 +68,12 @@ pub fn main() -> ExitCode {
 				runtime.block_on(setup::setup(&root, &dir, ask))
 			}
 			// Before `locate`, which reads the files this approves.
-			Command::Trust { path, revoke, list } => trust::run(path.as_deref(), revoke, list),
+			Command::Trust {
+				path,
+				revoke,
+				list,
+				ask,
+			} => trust::run(path.as_deref(), revoke, list, ask),
 			command => {
 				let project = project::locate(cli.dir, cli.yolo)?;
 				runtime.block_on(run(command, &project))

@@ -165,6 +165,15 @@ pub fn record(dir: &Path) -> Result<Record> {
 	Ok(record)
 }
 
+/// The files under a directory `verify` would refuse right now.
+pub fn pending(dir: &Path) -> Result<Vec<PathBuf>> {
+	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
+	let mut found = Vec::new();
+	collect(&project, &mut found)?;
+	found.retain(|file| verify(file).is_err());
+	Ok(found)
+}
+
 /// Forget a directory. `false` when it was not trusted.
 pub fn revoke(dir: &Path) -> Result<bool> {
 	let dir = dir.canonicalize().map_err(|e| Error::file(dir, e))?;

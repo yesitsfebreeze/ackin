@@ -1,5 +1,6 @@
 //! `cartridge trust`: record, revoke or list what this machine will run.
 
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -8,7 +9,7 @@ use cartridge::{trust, Error, Result};
 
 use super::{fail, FAILED};
 
-pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool) -> Result<ExitCode> {
+pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool, ask: bool) -> Result<ExitCode> {
 	if revoke && list {
 		return Err(Error::Argument(
 			"--revoke and --list ask for different things".into(),
@@ -37,6 +38,12 @@ pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool) -> Result<ExitC
 			dir.display()
 		)));
 	}
+	if ask {
+		return Ok(match self::ask(&dir)? {
+			true => ExitCode::SUCCESS,
+			false => fail(FAILED, format!("{} is not trusted", dir.display())),
+		});
+	}
 	let record = trust::record(&dir)?;
 	println!(
 		"trusted {}: {} files",
@@ -44,4 +51,53 @@ pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool) -> Result<ExitC
 		record.files.len()
 	);
 	Ok(ExitCode::SUCCESS)
+}
+
+/// Whether every file under `dir` is trusted, asking on the terminal when one
+/// is not. The question goes to stderr so a command's stdout stays its answer;
+/// without a terminal nothing is asked and the answer is no.
+pub(crate) fn ask(dir: &Path) -> Result<bool> {
+	let pending = trust::pending(dir)?;
+	if pending.is_empty() {
+		return Ok(true);
+	}
+	if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+		return Ok(false);
+	}
+	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
+	let mut err = std::io::stderr();
+	let _ = writeln!(
+		err,
+		"{} has {} untrusted or changed file(s); trusting lets them run with your permissions:",
+		project.display(),
+		pending.len()
+	);
+	for file in pending.iter().take(10) {
+		let _ = writeln!(
+			err,
+			"  {}",
+			file.strip_prefix(&project).unwrap_or(file).display()
+		);
+	}
+	if pending.len() > 10 {
+		let _ = writeln!(err, "  … and {} more", pending.len() - 10);
+	}
+	let _ = write!(err, "Trust {}? [y/N] ", project.display());
+	let _ = err.flush();
+	let mut answer = String::new();
+	std::io::stdin()
+		.lock()
+		.read_line(&mut answer)
+		.map_err(|e| Error::file("stdin", e))?;
+	if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+		return Ok(false);
+	}
+	let record = trust::record(&project)?;
+	let _ = writeln!(
+		err,
+		"trusted {}: {} files",
+		record.project.display(),
+		record.files.len()
+	);
+	Ok(true)
 }

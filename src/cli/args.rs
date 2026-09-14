@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 	disable_help_subcommand = true
 )]
 pub(crate) struct Cli {
-	/// Directory containing bundled cartridges (each with cartridge.json)
+	/// Cartridge root: entry paths in init.lua resolve against it (default: the project)
 	#[arg(long, global = true)]
 	pub(crate) dir: Option<PathBuf>,
 	/// Automatic execution: bypass tool policy and skip resolver provenance recording
@@ -132,6 +132,9 @@ pub(crate) enum Command {
 		/// Print every directory this machine trusts
 		#[arg(long)]
 		list: bool,
+		/// Ask on the terminal before recording, and only when something is untrusted
+		#[arg(long)]
+		ask: bool,
 	},
 	/// Start the profile and run every contract its cartridges declare; name a
 	/// cartridge to verify just that one against its own contract

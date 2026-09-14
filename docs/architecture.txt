@@ -26,7 +26,7 @@ The base loads and wires; it is not on the path of events.
 
 THE PROFILE
 
-Every folder under the cartridge root (`--dir`, default `builtin`) holding a
+Every folder under the cartridge root (`--dir`, default the project) holding a
 `cartridge.json` is installed and starts disabled. `.cartridge/init.lua`
 returns entries `{id, path, config?, disabled?}` that enable and configure
 them.

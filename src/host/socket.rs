@@ -195,7 +195,7 @@ async fn connection(
 			let token = request.params["token"].as_str().unwrap_or_default();
 			let caller = match token == host.host_token() {
 				true => Some(Caller::Host),
-				false => host.known(token).then_some(Caller::Cartridge),
+				false => host.caller(token).map(|_| Caller::Cartridge),
 			};
 			match caller {
 				Some(caller) => {

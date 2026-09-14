@@ -9,7 +9,6 @@ fn info(id: &str, events: &[&str], needs: &[&str], listen: &[&str]) -> Cartridge
 			path: id.into(),
 			config: serde_json::Value::Null,
 			disabled: false,
-			inject: Vec::new(),
 		},
 		needs: strings(needs),
 		events: strings(events),

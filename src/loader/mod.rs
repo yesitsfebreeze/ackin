@@ -104,11 +104,6 @@ pub fn profile() -> PathBuf {
 	PathBuf::from(".cartridge")
 }
 
-/// Cartridges are loaded from `builtin` unless `--dir` is supplied.
-pub fn builtin() -> PathBuf {
-	PathBuf::from("builtin")
-}
-
 /// The nearest directory at or above the working directory whose `.cartridge`
 /// holds an `init.lua`, or the working directory itself.
 pub fn root() -> PathBuf {

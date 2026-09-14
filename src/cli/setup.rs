@@ -421,8 +421,7 @@ pub(crate) fn write(
 		 -- `cartridge settings` use for the entry. An entry may also carry\n\
 		 -- `config` and `disabled`.\n\
 		 return {{\n",
-		dir.file_name()
-			.map_or("builtin".into(), |n| n.to_string_lossy())
+		dir.file_name().map_or(".".into(), |n| n.to_string_lossy())
 	);
 	for (name, _) in installed {
 		init.push_str(&format!("\t{{ id = {name:?}, path = {name:?} }},\n"));
