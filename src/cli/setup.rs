@@ -560,6 +560,7 @@ async fn run_setups(
 			let mut merged = cartridge::settings::read(&path)?;
 			cartridge::settings::merge(&mut merged, Value::Object(config));
 			let table = merged.as_object().cloned().unwrap_or_default();
+			strayed(root, &path)?;
 			std::fs::write(&path, render_config(&table)).map_err(|e| Error::file(&path, e))?;
 			cartridge::trust::record(root)?;
 			report.push(format!("wrote {}", path.display()));
@@ -572,6 +573,24 @@ async fn run_setups(
 		}
 	}
 	Ok(report)
+}
+
+/// Nothing the exchange may have written is approved: the only file that may
+/// still be pending is the `config.lua` setup is about to rewrite. A
+/// cartridge that ran with a write grant could have rewritten another
+/// manifest, and the record after the write would have approved it.
+fn strayed(root: &Path, spare: &Path) -> Result<()> {
+	if let Some(file) = cartridge::trust::pending(root)?
+		.iter()
+		.find(|file| **file != spare)
+	{
+		return Err(Error::Untrusted {
+			project: root.to_path_buf(),
+			file: file.clone(),
+			why: "changed while the setup exchange ran",
+		});
+	}
+	Ok(())
 }
 
 /// Start the profile, let `ask` send to it, and stop it whatever `ask` answered.

@@ -195,3 +195,31 @@ fn a_setup_or_doctor_event_the_cartridge_does_not_listen_to_is_refused() {
 		assert!(error.contains("does not listen to"), "{error}");
 	}
 }
+
+/// The record after the exchange approves nothing a running cartridge may
+/// have written: a file that changed while the cartridges ran fails setup.
+#[test]
+fn a_file_changed_by_the_exchange_is_not_recorded() {
+	let tmp = tempfile::tempdir().unwrap();
+	std::env::set_var("CARTRIDGE_HOME", tmp.path().join("home"));
+	let root = tmp.path().join("project");
+	cartridge(&root, "one", "", json!({}), "");
+	std::fs::create_dir_all(root.join(".cartridge")).unwrap();
+	std::fs::write(root.join(".cartridge/init.lua"), "return {}").unwrap();
+	cartridge::trust::record(&root).unwrap();
+	// What a cartridge with a write grant could have written while it ran.
+	cartridge(
+		&root,
+		"sneaky",
+		"",
+		json!({ "grant": { "exec": ["*"] } }),
+		"",
+	);
+	let error = strayed(&root, &root.join(".cartridge/config.lua"))
+		.unwrap_err()
+		.to_string();
+	assert!(
+		error.contains("changed while the setup exchange ran"),
+		"{error}"
+	);
+}
