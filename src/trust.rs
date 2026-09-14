@@ -115,6 +115,22 @@ pub fn verify(path: &Path) -> Result<()> {
 	checked(&file, &digest(&file)?)
 }
 
+/// Whether the file sits under a directory the walk never records, between the
+/// project root and the file, so `cartridge trust` cannot fix its refusal.
+/// Directories above the project — a tempdir's `.tmp…`, a home's dotfiles —
+/// are not project source.
+fn unwalked(project: &Path, file: &Path) -> bool {
+	file.strip_prefix(project).is_ok_and(|rel| {
+		rel.ancestors().skip(1).any(|dir| {
+			let name = dir
+				.file_name()
+				.map_or(String::new(), |n| n.to_string_lossy().into_owned());
+			["target", "node_modules", ".git"].contains(&name.as_str())
+				|| (name.starts_with('.') && name != ".cartridge")
+		})
+	})
+}
+
 /// The canonical file against every record above it.
 fn checked(file: &Path, digest: &str) -> Result<()> {
 	let mut refusal = None;
@@ -132,8 +148,16 @@ fn checked(file: &Path, digest: &str) -> Result<()> {
 		};
 		refusal.get_or_insert((record.project, why));
 	}
-	let (project, why) =
-		refusal.unwrap_or_else(|| (nearest_project(file), "is in no trusted project"));
+	let never_records =
+		"is under a directory `cartridge trust` never records; move it or link its folder";
+	let project = refusal
+		.as_ref()
+		.map_or_else(|| nearest_project(file), |(project, _)| project.clone());
+	let why = match refusal {
+		Some((_, why)) if !unwalked(&project, file) => why,
+		_ if unwalked(&project, file) => never_records,
+		_ => "is in no trusted project",
+	};
 	Err(Error::Untrusted {
 		project,
 		file: file.to_path_buf(),
@@ -230,15 +254,47 @@ pub fn pending(dir: &Path) -> Result<Vec<PathBuf>> {
 	Ok(found)
 }
 
-/// Forget a directory. `false` when it was not trusted.
-pub fn revoke(dir: &Path) -> Result<bool> {
-	let dir = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
-	let at = record_path(&dir)?;
-	match std::fs::remove_file(&at) {
-		Ok(()) => Ok(true),
-		Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-		Err(e) => Err(Error::file(&at, e)),
+/// The canonical spelling of a path that may no longer exist: the deepest
+/// existing ancestor resolved, the rest joined on, so a deleted `/var/…`
+/// still matches the record `/private/var/…`.
+fn resolved(dir: &Path) -> Result<PathBuf> {
+	if let Ok(canonical) = dir.canonicalize() {
+		return Ok(canonical);
 	}
+	let mut rest = Vec::new();
+	let mut existing = dir.to_path_buf();
+	while let Some(name) = existing.file_name() {
+		match existing.canonicalize() {
+			Ok(canonical) => {
+				let mut out = canonical;
+				for part in rest.iter().rev() {
+					out.push(part);
+				}
+				return Ok(out);
+			}
+			Err(_) => {
+				rest.push(name.to_owned());
+				existing.pop();
+			}
+		}
+	}
+	std::path::absolute(dir).map_err(|e| Error::file(dir, e))
+}
+
+/// Forget a directory and every record beneath it, without needing the
+/// directory on disk — a deleted project is untrusted by its absolute
+/// spelling. Zero when nothing matched.
+pub fn revoke(dir: &Path) -> Result<usize> {
+	let want = resolved(dir)?;
+	let mut gone = 0;
+	for record in list()? {
+		if record.project == want || record.project.starts_with(&want) {
+			std::fs::remove_file(record_path(&record.project)?)
+				.map_err(|e| Error::file(&record.project, e))?;
+			gone += 1;
+		}
+	}
+	Ok(gone)
 }
 
 /// Every directory this machine trusts, by path.

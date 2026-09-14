@@ -208,3 +208,44 @@ fn an_untrusted_bare_lua_entry_is_refused_at_its_resolve() {
 		.to_string();
 	assert!(refused.contains("is in no trusted project"), "{refused}");
 }
+
+/// A deleted project is still untrusted: revoke works without the directory.
+#[test]
+fn a_deleted_project_can_still_be_untrusted() {
+	let dir = project(&[(".cartridge/init.lua", "return {}")]);
+	let canonical = dir.path().canonicalize().unwrap();
+	record(dir.path()).unwrap();
+	let inside = dir.keep();
+	std::fs::remove_dir_all(&inside).unwrap();
+	assert!(revoke(&inside).unwrap() >= 1);
+	assert!(list()
+		.unwrap()
+		.iter()
+		.all(|record| record.project != canonical));
+}
+
+/// Revoking a project takes its nested records with it.
+#[test]
+fn revoking_a_project_takes_its_nested_records() {
+	let dir = project(&[(".cartridge/init.lua", "return {}"), ("cart/init.lua", "")]);
+	record(&dir.path().join("cart")).unwrap();
+	record(dir.path()).unwrap();
+	revoke(dir.path()).unwrap();
+	let refused = verify(&dir.path().join("cart/init.lua")).unwrap_err();
+	assert!(refused.contains("run `cartridge trust"), "{refused}");
+}
+
+/// A file under a directory the walk never records is told the one action
+/// that works, not a `cartridge trust` that cannot fix it.
+#[test]
+fn a_file_under_a_skipped_directory_names_the_real_dead_end() {
+	let dir = project(&[(".cartridge/init.lua", "return {}"), ("target/x.lua", "")]);
+	record(dir.path()).unwrap();
+	let refused = verify(&dir.path().join("target/x.lua")).unwrap_err();
+	assert!(
+		refused
+			.to_string()
+			.contains("never records; move it or link its folder"),
+		"{refused}"
+	);
+}

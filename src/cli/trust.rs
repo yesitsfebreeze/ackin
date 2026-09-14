@@ -21,22 +21,37 @@ pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool, ask: bool) -> R
 		}
 		return Ok(ExitCode::SUCCESS);
 	}
-	let dir = path.map_or_else(cartridge::loader::root, Path::to_path_buf);
+	let dir = match path {
+		// A named path is the person naming what to trust.
+		Some(path) => path.to_path_buf(),
+		None => {
+			let dir = cartridge::loader::root();
+			// A stray `cartridge trust` outside any project must not hash a home directory.
+			if !dir.join(".cartridge/init.lua").is_file() && !dir.join(MANIFEST).is_file() {
+				return Err(Error::Argument(format!(
+					"{}: neither a project (.cartridge/init.lua) nor a cartridge ({MANIFEST})",
+					dir.display()
+				)));
+			}
+			dir
+		}
+	};
 	if revoke {
 		return Ok(match trust::revoke(&dir)? {
-			true => {
+			1 => {
 				println!("revoked {}", dir.display());
 				ExitCode::SUCCESS
 			}
-			false => fail(FAILED, format!("{} was not trusted", dir.display())),
+			0 => fail(FAILED, format!("{} was not trusted", dir.display())),
+			gone => {
+				println!(
+					"revoked {} and {} record(s) beneath it",
+					dir.display(),
+					gone - 1
+				);
+				ExitCode::SUCCESS
+			}
 		});
-	}
-	// A stray `cartridge trust` outside any project must not hash a home directory.
-	if !dir.join(".cartridge/init.lua").is_file() && !dir.join(MANIFEST).is_file() {
-		return Err(Error::Argument(format!(
-			"{}: neither a project (.cartridge/init.lua) nor a cartridge ({MANIFEST})",
-			dir.display()
-		)));
 	}
 	if ask {
 		return Ok(match self::ask(&dir)? {
@@ -101,3 +116,7 @@ pub(crate) fn ask(dir: &Path) -> Result<bool> {
 	);
 	Ok(true)
 }
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/src/cli/trust.rs"]
+mod tests;

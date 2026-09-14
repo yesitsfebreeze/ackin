@@ -797,4 +797,4 @@ impl Prompt {
 
 #[cfg(test)]
 #[path = "../../.cartridge/tests/unit/src/cli/setup.rs"]
-mod tests;
+pub(crate) mod tests;

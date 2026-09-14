@@ -2,7 +2,7 @@ use super::*;
 
 /// `$CARTRIDGE_HOME` is process-global: the tests that point it somewhere
 /// take turns, so one test's store is never another's mid-run.
-fn trust_home() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn trust_home() -> std::sync::MutexGuard<'static, ()> {
 	static TURNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 	TURNS.lock().unwrap()
 }
