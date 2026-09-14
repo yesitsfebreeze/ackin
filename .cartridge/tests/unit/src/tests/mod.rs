@@ -1,5 +1,6 @@
 mod host;
 mod ledger;
+mod node;
 mod settings;
 
 use std::path::{Path, PathBuf};

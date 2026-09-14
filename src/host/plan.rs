@@ -17,6 +17,9 @@ pub struct Plan {
 	pub name: String,
 	pub root: PathBuf,
 	pub entry: PathBuf,
+	/// The entry's SHA-256 as the base verified it, hex — handed to the node,
+	/// which refuses bytes that no longer match.
+	pub entry_sha256: String,
 	pub events: BTreeMap<String, Event>,
 	pub needs: Vec<String>,
 	pub listen: Vec<String>,
@@ -109,6 +112,7 @@ impl Host {
 			name: declared.name.clone(),
 			root,
 			entry: declared.entry.clone(),
+			entry_sha256: declared.entry_sha256.clone(),
 			events: declared.events.clone(),
 			needs,
 			listen,

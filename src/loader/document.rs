@@ -324,6 +324,9 @@ pub(super) fn classify(path: &Path) -> PathBuf {
 /// has no document and declares through the table it returns.
 pub(crate) struct Declared {
 	pub(crate) entry: PathBuf,
+	/// The entry's SHA-256 as the base verified it, hex — what the node
+	/// re-checks before it loads the bytes.
+	pub(crate) entry_sha256: String,
 	pub(crate) name: String,
 	pub(crate) sources: Vec<PathBuf>,
 	pub(crate) events: std::collections::BTreeMap<String, Event>,
@@ -354,6 +357,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 			.into_owned();
 		return Ok(Declared {
 			entry: path.clone(),
+			entry_sha256: crate::trust::digest(&path)?,
 			name,
 			sources: vec![path],
 			events: Default::default(),
@@ -372,6 +376,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		sources.push(ui.canonicalize().map_err(|e| Error::file(&ui, e))?);
 	}
 	Ok(Declared {
+		entry_sha256: crate::trust::digest(&entry)?,
 		entry,
 		name: manifest.name,
 		sources,

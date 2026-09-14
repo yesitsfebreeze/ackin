@@ -23,6 +23,7 @@ use crate::transport::cartridge::{self, Ctx, CONNECT_TIMEOUT_ENV, HOST_TOKEN_ENV
 pub const ENTRY_ENV: &str = "CARTRIDGE_ENTRY";
 pub const ROOT_ENV: &str = "CARTRIDGE_ROOT";
 pub const LISTEN_ENV: &str = "CARTRIDGE_LISTEN";
+pub const ENTRY_SHA256_ENV: &str = "CARTRIDGE_ENTRY_SHA256";
 
 static RUNTIME: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
 
@@ -126,6 +127,19 @@ pub async fn main() -> Result<ExitCode> {
 	Ok(ExitCode::SUCCESS)
 }
 
+/// The entry's bytes, re-checked against the SHA-256 the base verified when it
+/// planned the cartridge: a file edited since is refused, not loaded.
+pub(crate) fn entry_bytes(entry: &Path, expected: &str) -> mlua::Result<String> {
+	let bytes = std::fs::read(entry).map_err(mlua::Error::external)?;
+	if crate::trust::digest_bytes(&bytes) != expected {
+		return Err(mlua::Error::external(format!(
+			"{} changed since the base verified it; run `cartridge trust`, then `cartridge reload`",
+			entry.display()
+		)));
+	}
+	String::from_utf8(bytes).map_err(mlua::Error::external)
+}
+
 /// Run `init.lua` with the config the base handed over, as a coroutine, so its
 /// top level may send events too.
 async fn apply(lua: Lua, ctx: Ctx, entry: PathBuf, config: Value) -> cartridge::Result<()> {
@@ -133,7 +147,8 @@ async fn apply(lua: Lua, ctx: Ctx, entry: PathBuf, config: Value) -> cartridge::
 		let global: Table = lua.globals().get("cartridge")?;
 		global.set("name", ctx.name())?;
 		global.set("config", lua.to_value(&config)?)?;
-		let source = std::fs::read_to_string(&entry).map_err(mlua::Error::external)?;
+		let expected = std::env::var(ENTRY_SHA256_ENV).map_err(mlua::Error::external)?;
+		let source = entry_bytes(&entry, &expected)?;
 		let returned: mlua::Value = lua
 			.load(source)
 			.set_name(entry.to_string_lossy())

@@ -171,6 +171,20 @@ fn a_relative_or_empty_home_is_refused_rather_than_trust_disabling() {
 	}
 }
 
+/// `read` hashes the bytes it returns: a file that changed after it was
+/// trusted is refused by the same check, not by a second read of the disk.
+#[test]
+fn read_refuses_a_file_that_changed_after_it_was_trusted() {
+	let dir = project(&[("x.lua", "return {}\n")]);
+	record(dir.path()).unwrap();
+	crate::tests::write(dir.path(), "x.lua", "return { {} }\n");
+	let refused = read(&dir.path().join("x.lua")).unwrap_err();
+	assert!(
+		refused.contains("has changed since it was trusted"),
+		"{refused}"
+	);
+}
+
 /// A dotfiles setup symlinks the global config outside the home; the home
 /// exemption must accept the file as the base spells it, not only as the
 /// kernel resolves it.

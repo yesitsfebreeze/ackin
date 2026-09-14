@@ -73,8 +73,12 @@ serves the cartridge on its own socket. Its stdin closes when the base goes
 away; its stderr is recorded. When a node fails to start, the error carries the
 last lines it wrote.
 
-A node does not check trust: the base verified its manifest and entry before
-spawning it, and the sandbox does not let it read the store.
+A node reads no trust store: the base hands it the SHA-256 of the entry it
+verified, and the node refuses an entry whose bytes no longer match. The
+node's sandbox grant is what keeps it away from the store, not the check. The
+one trust read left in a node is its own settling of host settings — it reads
+a `config.lua` it can reach, and warns and uses declared defaults when it
+cannot.
 
 Each base run has a directory under `$XDG_RUNTIME_DIR/cartridge` or
 `/tmp/cartridge-<uid>` holding one socket per node, stable for the run, and

@@ -3,8 +3,8 @@
 //! `cartridge.json`, because the manifest carries the grant. The digest is the
 //! file's bytes alone, so `shasum -a 256 <file>` reproduces any stored value.
 //!
-//! A node does not verify: it runs inside a grant the base verified, and its
-//! sandbox cannot read the store.
+//! A node reads no store: the base hands it the digest of the entry it
+//! verified, and the node refuses an entry whose bytes no longer match.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -70,10 +70,16 @@ fn record_path(dir: &Path) -> Result<PathBuf> {
 	Ok(store()?.join(format!("{key}.json")))
 }
 
+/// The bytes' SHA-256, lowercase hex.
+pub fn digest_bytes(bytes: &[u8]) -> String {
+	hex(&Sha256::digest(bytes))
+}
+
 /// The file's SHA-256, lowercase hex.
 pub fn digest(path: &Path) -> Result<String> {
-	let bytes = std::fs::read(path).map_err(|e| Error::file(path, e))?;
-	Ok(hex(&Sha256::digest(bytes)))
+	Ok(digest_bytes(
+		&std::fs::read(path).map_err(|e| Error::file(path, e))?,
+	))
 }
 
 /// The project a refusal should name: the nearest ancestor holding a profile,
@@ -87,19 +93,30 @@ fn nearest_project(file: &Path) -> PathBuf {
 		.to_path_buf()
 }
 
+/// Whether the file is the person's own: under the home as written or as
+/// resolved. As-written matters because a dotfiles setup symlinks its config
+/// elsewhere, and the paths here are spelled by the base itself.
+fn own(path: &Path, file: &Path) -> Result<bool> {
+	let home = home()?;
+	Ok(
+		path.starts_with(&home)
+			|| file.starts_with(home.canonicalize().as_deref().unwrap_or(&home)),
+	)
+}
+
 /// Refuse a file no trusted directory above it recorded with its current hash.
 /// Any ancestor's record authorises, so a nested record never shadows a fresher
 /// outer one.
 pub fn verify(path: &Path) -> Result<()> {
 	let file = path.canonicalize().map_err(|e| Error::file(path, e))?;
-	let home = home()?;
-	// The home both ways, as written and as resolved: a dotfiles setup symlinks
-	// its config elsewhere, and the paths here are spelled by the base itself.
-	if path.starts_with(&home) || file.starts_with(home.canonicalize().as_deref().unwrap_or(&home))
-	{
+	if own(path, &file)? {
 		return Ok(());
 	}
-	let digest = digest(&file)?;
+	checked(&file, &digest(&file)?)
+}
+
+/// The canonical file against every record above it.
+fn checked(file: &Path, digest: &str) -> Result<()> {
 	let mut refusal = None;
 	for dir in file.ancestors().skip(1) {
 		let at = record_path(dir)?;
@@ -108,22 +125,30 @@ pub fn verify(path: &Path) -> Result<()> {
 		};
 		let record: Record = serde_json::from_str(&text)
 			.map_err(|e| Error::Settings(format!("{}: {e}", at.display())))?;
-		let why = match record.files.get(&file) {
-			Some(known) if *known == digest => return Ok(()),
+		let why = match record.files.get(file) {
+			Some(known) if known == digest => return Ok(()),
 			Some(_) => "has changed since it was trusted",
 			None => "is not in this project's trust record",
 		};
 		refusal.get_or_insert((record.project, why));
 	}
 	let (project, why) =
-		refusal.unwrap_or_else(|| (nearest_project(&file), "is in no trusted project"));
-	Err(Error::Untrusted { project, file, why })
+		refusal.unwrap_or_else(|| (nearest_project(file), "is in no trusted project"));
+	Err(Error::Untrusted {
+		project,
+		file: file.to_path_buf(),
+		why,
+	})
 }
 
-/// A file's text, once it is trusted.
+/// A file's text, once it is trusted — hashed once, for the bytes it returns.
 pub fn read(path: &Path) -> Result<String> {
-	verify(path)?;
-	std::fs::read_to_string(path).map_err(|e| Error::file(path, e))
+	let bytes = std::fs::read(path).map_err(|e| Error::file(path, e))?;
+	let file = path.canonicalize().map_err(|e| Error::file(path, e))?;
+	if !own(path, &file)? {
+		checked(&file, &digest_bytes(&bytes))?;
+	}
+	String::from_utf8(bytes).map_err(|e| Error::file(path, std::io::Error::other(e)))
 }
 
 /// Every file the trust set names, lexically: nothing is evaluated, no link is

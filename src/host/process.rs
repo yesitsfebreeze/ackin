@@ -43,6 +43,7 @@ pub(super) async fn start(
 		settings.startup_timeout_secs.to_string(),
 	)
 	.env(crate::node::ENTRY_ENV, &plan.entry)
+	.env(crate::node::ENTRY_SHA256_ENV, &plan.entry_sha256)
 	.env(crate::node::ROOT_ENV, &plan.root)
 	.env(
 		crate::node::LISTEN_ENV,

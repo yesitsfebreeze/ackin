@@ -10,6 +10,7 @@ fn plan(id: &str, events: &[(&str, Option<u64>)], needs: &[&str], listen: &[&str
 		name: id.into(),
 		root: PathBuf::new(),
 		entry: PathBuf::new(),
+		entry_sha256: String::new(),
 		events: events
 			.iter()
 			.map(|(name, timeout_ms)| {
