@@ -40,9 +40,14 @@ node_modules/
 
 # Local live service database and generated web artifacts
 /.cartridge/live-data/
+/.cartridge/live-service/
 /.cartridge/docs/**/.next/
 /.cartridge/docs/**/.source/
 /.cartridge/docs/**/out/
+
+# Per-profile session journals (proxy and MCP endpoints).
+/.cartridge/proxy-sessions/
+/.cartridge/mcp-sessions/
 
 # Mutable overlay and workspace page stores
 /.cartridge/gitfs/
