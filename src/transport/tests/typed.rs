@@ -158,22 +158,6 @@ mod cwd_tag_tests {
 		assert_eq!(a.len(), 16, "tag is 16 hex chars");
 		assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
 	}
-
-	#[test]
-	fn for_root_includes_the_tag() {
-		let dir = std::env::current_dir().unwrap();
-		let ep = Endpoint::for_root("test", &dir);
-		assert!(
-			ep.display().contains(&format!("test-{}", path_tag(&dir))),
-			"endpoint scoped by the root's tag"
-		);
-	}
-
-	#[test]
-	fn parse_round_trips_display() {
-		let ep = Endpoint::scoped("test-parse");
-		assert_eq!(Endpoint::parse(&ep.display()).display(), ep.display());
-	}
 }
 
 // Two spellings of a root that does not exist yet must tag the same.
@@ -191,9 +175,9 @@ fn a_root_that_does_not_exist_yet_tags_the_same_from_every_spelling() {
 	let round_about = root.join("sibling").join("..").join("store");
 
 	assert_eq!(
-		Endpoint::for_root("test", &absent).display(),
-		Endpoint::for_root("test", &round_about).display(),
-		"two spellings of one absent root must bind one socket, or a daemon and its client miss each other"
+		path_tag(&absent),
+		path_tag(&round_about),
+		"two spellings of one absent root must tag the same, or a daemon and its client miss each other"
 	);
 }
 
@@ -208,9 +192,9 @@ fn the_tag_is_the_same_before_and_after_the_root_is_created() {
 		"this test needs a root whose spelling differs from its canonical form"
 	);
 
-	let before = Endpoint::for_root("test", &dir).display();
+	let before = path_tag(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
-	let after = Endpoint::for_root("test", &dir).display();
+	let after = path_tag(&dir);
 
 	assert_eq!(
 		before, after,

@@ -329,52 +329,7 @@ pub enum Endpoint {
 	NamedPipe(String),
 }
 
-// Unix `sun_path` ceiling — a path at or past this breaks the bind with
-// "path must be shorter than SUN_LEN"; conservative by design.
-#[cfg(unix)]
-const SUN_LEN_MAX: usize = 100;
-
 impl Endpoint {
-	/// The endpoint `<prefix>-<tag>` for a root directory: every process that
-	/// names the same root, under any spelling, resolves the same socket.
-	pub fn for_root(prefix: &str, root: &std::path::Path) -> Self {
-		Self::scoped(&format!("{prefix}-{}", path_tag(root)))
-	}
-
-	// Reconstruct from the wire form produced by `display()`.
-	pub fn parse(s: &str) -> Self {
-		#[cfg(unix)]
-		{
-			Endpoint::Unix(PathBuf::from(s))
-		}
-		#[cfg(windows)]
-		{
-			Endpoint::NamedPipe(s.to_string())
-		}
-	}
-
-	/// A per-user endpoint named `name`: `$XDG_RUNTIME_DIR/<name>.sock` when that
-	/// path is short enough, `/tmp/<name>-<user>.sock` otherwise.
-	pub fn scoped(name: &str) -> Self {
-		#[cfg(unix)]
-		{
-			let user = std::env::var("USER").unwrap_or_else(|_| "default".into());
-			let fallback = PathBuf::from(format!("/tmp/{name}-{user}.sock"));
-			let path = std::env::var_os("XDG_RUNTIME_DIR")
-				.map(PathBuf::from)
-				.map(|d| d.join(format!("{name}.sock")))
-				// Fall back to /tmp when XDG_RUNTIME_DIR would exceed SUN_LEN.
-				.filter(|p| p.as_os_str().len() < SUN_LEN_MAX)
-				.unwrap_or(fallback);
-			Endpoint::Unix(path)
-		}
-		#[cfg(windows)]
-		{
-			let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".into());
-			Endpoint::NamedPipe(format!(r"\\.\pipe\{name}-{user}"))
-		}
-	}
-
 	pub fn display(&self) -> String {
 		match self {
 			#[cfg(unix)]
