@@ -41,40 +41,19 @@ pub fn host_specs() -> &'static Specs {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Host {
-	pub stream_history_events: usize,
-	pub stream_history_bytes: usize,
-	pub subscriber_headroom: usize,
-	pub outbox_queue: usize,
 	pub lifecycle_queue: usize,
-	pub lifecycle_drain_ms: u64,
 	pub startup_timeout_secs: u64,
-	pub startup_bytes: usize,
-	pub discovery_bytes: usize,
 	pub shutdown_timeout_secs: u64,
 	pub verify_timeout_secs: u64,
 	pub watch_debounce_ms: u64,
-	pub daemon_wait_attempts: u32,
-	pub daemon_wait_ms: u64,
 	pub mcp_reply_queue: usize,
 	pub proxy_key_bytes: usize,
 	pub sandbox_error_chars: usize,
-	pub observation_content_bytes: usize,
-	pub observation_cache_entries: usize,
-	pub observation_actors_bytes: usize,
-	pub observation_actors_max: usize,
-	pub observation_source_chars: usize,
-	pub observation_key_chars: usize,
 	pub diagnostics_max_bytes: u64,
 	pub lua_memory_bytes: usize,
 }
 
 impl Host {
-	/// A full subscriber queue: a replay of everything retained, plus the
-	/// headroom the join, a gap event and a lag notice need.
-	pub fn subscriber_events(&self) -> usize {
-		self.stream_history_events + self.subscriber_headroom
-	}
-
 	pub fn startup_timeout(&self) -> Duration {
 		Duration::from_secs(self.startup_timeout_secs)
 	}
@@ -89,14 +68,6 @@ impl Host {
 
 	pub fn watch_debounce(&self) -> Duration {
 		Duration::from_millis(self.watch_debounce_ms)
-	}
-
-	pub fn lifecycle_drain(&self) -> Duration {
-		Duration::from_millis(self.lifecycle_drain_ms)
-	}
-
-	pub fn daemon_wait(&self) -> Duration {
-		Duration::from_millis(self.daemon_wait_ms)
 	}
 }
 

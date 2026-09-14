@@ -3,9 +3,8 @@
 
 use std::process::ExitCode;
 
+use cartridge::host::Host;
 use cartridge::loader::CartridgeInfo;
-use cartridge::lua::Host;
-use cartridge::runtime::Runtime;
 use cartridge::{Error, Result};
 
 use super::{Project, FAILED};
@@ -20,8 +19,7 @@ fn exit(problems: usize) -> ExitCode {
 }
 
 pub(crate) fn list(project: &Project) -> Result<ExitCode> {
-	// `--yolo` is rejected before dispatch for every command but run and daemon.
-	let host = Host::new(Runtime::new(), &project.dir, &project.profile);
+	let host = Host::new(&project.dir, &project.profile, false)?;
 	let cartridges = host.manifest().map_err(|e| {
 		Error::Profile(format!(
 			"{}: {e}",
@@ -40,7 +38,7 @@ pub(crate) fn ledger(project: &Project) -> ExitCode {
 
 fn deps(all: &[CartridgeInfo], cartridge: &CartridgeInfo, depth: usize, stack: &mut Vec<String>) {
 	let pad = "  ".repeat(depth);
-	for key in &cartridge.inject {
+	for key in &cartridge.needs {
 		let provider = all
 			.iter()
 			.find(|p| !p.entry.disabled && p.provide.iter().any(|k| k == key));
@@ -74,8 +72,8 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 		if !p.provide.is_empty() {
 			line.push_str(&format!("  provides {}", p.provide.join(", ")));
 		}
-		if !p.export.is_empty() {
-			line.push_str(&format!("  exports {}", p.export.join(", ")));
+		if !p.on.is_empty() {
+			line.push_str(&format!("  on {}", p.on.join(", ")));
 		}
 		// What it asked for is what it gets and the wall it hits, so it is listed
 		// next to what it provides rather than in a second place.
@@ -122,9 +120,6 @@ fn ledger_lines(ledger: &cartridge::ledger::Ledger) -> usize {
 		}
 		if !e.provide.is_empty() {
 			line.push_str(&format!("  provides {}", e.provide.join(", ")));
-		}
-		if !e.export.is_empty() {
-			line.push_str(&format!("  exports {}", e.export.join(", ")));
 		}
 		if let Some(why) = &e.unread {
 			line.push_str(&format!("  error: {why}"));

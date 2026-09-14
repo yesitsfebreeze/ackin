@@ -15,30 +15,10 @@ path = "src/lib.rs"
 name = "cartridge"
 path = "src/main.rs"
 
-# Built by process tests as a real SDK child, not a public usage example.
+# A process cartridge the host tests start: speaks the transport protocol.
 [[example]]
-name = "rpc_fixture"
-path = ".cartridge/tests/unit/src/tests/fixtures/rpc_fixture.rs"
-
-# A cartridge that hosts rpc_fixture as its own child: the recursion fixture.
-[[example]]
-name = "nested_fixture"
-path = ".cartridge/tests/unit/src/tests/fixtures/nested_fixture.rs"
-
-# Provides `lua` as a process, the isolated alternate provider in composition tests.
-[[example]]
-name = "lua_fixture"
-path = ".cartridge/tests/unit/src/tests/fixtures/lua_fixture.rs"
-
-# A resolver chain node: stays up, re-enters the binary for its dependent.
-[[example]]
-name = "chain_fixture"
-path = ".cartridge/tests/unit/src/tests/fixtures/chain_fixture.rs"
-
-# Provides a tool and announces to the graph: the announce regression's peer.
-[[example]]
-name = "tool_fixture"
-path = ".cartridge/tests/unit/src/tests/fixtures/tool_fixture.rs"
+name = "echo_fixture"
+path = ".cartridge/tests/unit/src/tests/fixtures/echo_fixture.rs"
 
 [dependencies]
 tokio = { version = "1.53", features = ["full"] }
@@ -46,7 +26,8 @@ futures = "0.3"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+transport = { path = "transport" }
+libc = "0.2"
 thiserror = "2"
 mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde", "async"] }
 tracing = "0.1"
@@ -57,7 +38,6 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 [dev-dependencies]
 tempfile = "3"
-# The evidence tests drive deadlines on a paused clock rather than sleeping.
 tokio = { version = "1.53", features = ["full", "test-util"] }
 
 [lints.rust]
@@ -65,6 +45,7 @@ warnings = "deny"
 
 # Keep the runtime and its isolated worktrees independent of a containing workspace.
 [workspace]
+members = ["transport", "transport/macros"]
 
 [profile.dev]
 debug = 0

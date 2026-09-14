@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
 	name = "cartridge",
-	about = "cartridges on a socket: run in the back, handle the events",
+	about = "a host for cartridges: programs wired together over local sockets",
 	// `help` is a subcommand of ours: the manual of what is composed, not clap's usage text.
 	disable_help_subcommand = true
 )]
@@ -25,6 +25,7 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+	/// Start the profile and serve the host socket until stopped
 	Daemon,
 	/// Start the harness proxy and run an agent against it: `cartridge launch claude -- -p hi`
 	Launch {
@@ -37,29 +38,13 @@ pub(crate) enum Command {
 	/// Serve the profile's tools to an MCP client over this terminal's stdio:
 	/// `claude mcp add cartridge -- cartridge mcp`
 	Mcp,
-	/// Load a profile, call one service in the foreground, and dispose it
+	/// Start the profile, call one service, and stop it
 	Run {
 		key: String,
 		#[arg(default_value = "null")]
 		args: String,
 	},
-	Send {
-		name: String,
-		#[arg(default_value = "null")]
-		data: String,
-	},
-	/// Publish one event on a stream channel
-	Publish {
-		channel: String,
-		#[arg(default_value = "null")]
-		data: String,
-	},
-	/// Subscribe to a stream channel and print every event on it as it arrives
-	Follow {
-		channel: String,
-	},
-	Tail,
-	/// Call a provided key with one JSON argument and print the reply
+	/// Call a provided key on the running host with one JSON argument
 	Call {
 		key: String,
 		#[arg(default_value = "null")]
@@ -68,17 +53,27 @@ pub(crate) enum Command {
 		#[arg(long)]
 		trace: Option<String>,
 	},
-	Reload,
-	Status,
-	/// Enter, leave or report debug mode on the running host: `cartridge debug on`
-	Debug {
-		#[arg(default_value = "status", value_parser = ["on", "off", "status"])]
-		state: String,
+	/// Send an event to its listeners on the running host and print their answers
+	Send {
+		name: String,
+		#[arg(default_value = "null")]
+		data: String,
 	},
+	/// Print every event on a channel: `lifecycle`, or `<cartridge>.<channel>`
+	Follow {
+		channel: String,
+		/// Replay retained events after this sequence number first
+		#[arg(long)]
+		since: Option<u64>,
+	},
+	/// Every cartridge of the running host and its state
+	Status,
+	/// Reload the profile, or restart one cartridge
+	Reload { cartridge: Option<String> },
+	/// Stop the running host
+	Stop,
+	/// The host socket of this project
 	Socket,
-	/// Unlink the socket files no listener answers on, left by runtimes that
-	/// were killed rather than stopped
-	Sweep,
 	/// Cartridges of the profile and what each one needs, resolved to its provider
 	List,
 	/// Every cartridge installed under the cartridge root, and what each need binds to
@@ -95,45 +90,24 @@ pub(crate) enum Command {
 		#[arg(long)]
 		json: bool,
 	},
-	/// Every tunable value this profile has: the host's own and each
-	/// cartridge's, with what it is set to and which file settled it.
-	/// Name a key or a cartridge to narrow it: `cartridge settings host`,
-	/// `cartridge settings agent.max_steps`
+	/// Every tunable value this profile has, with what it is set to and which
+	/// file settled it: `cartridge settings host`, `cartridge settings agent.max_steps`
 	Settings {
 		/// A cartridge id, or one dotted key under it. Absent lists everything
 		what: Option<String>,
 		/// Print the listing as JSON instead of a table
 		#[arg(long)]
 		json: bool,
-		/// Print a commented `config.lua` carrying every key at its current
-		/// value, ready to save as `~/.cartridge/config.lua` or the project's
+		/// Print a commented `config.lua` carrying every key at its current value
 		#[arg(long)]
 		template: bool,
 	},
-	Up {
-		key: String,
-	},
-	/// Launch one node of a chain and hand off: resolve it against the fresh
-	/// ledger, read its program, and exec into it. A node coming up enters
-	/// this, not a person
-	Enter {
-		node: String,
-		/// The node paths still to launch after this one, in chain order
-		#[arg(long, default_value = "[]")]
-		rest: String,
-	},
-	/// Load the profile and run every contract its cartridges declare; name a
-	/// cartridge to verify just that one, in isolation, against its own contract
+	/// Start the profile and run every contract its cartridges declare; name a
+	/// cartridge to verify just that one against its own contract
 	Verify {
-		/// The cartridge: a ledger path from the cartridge root, or the folder
-		/// it sits in
+		/// A ledger path from the cartridge root, or the folder it sits in
 		cartridge: Option<String>,
 	},
-	/// Run one chain node of a Lua-entry cartridge in-host. The re-entry
-	/// execs into this, so a node's program is the host itself; a person
-	/// never invokes it, and the ledger's env protocol is the only way in
-	#[command(hide = true)]
-	Node,
 }
 
 impl Cli {

@@ -1,19 +1,27 @@
-//! The commands that compose a host in this process: a foreground `run`, an
-//! agent `launch`, the `mcp` bridge, the `daemon`, and `verify`.
+//! Commands that start a host in this process: `run`, `launch`, `mcp`,
+//! `daemon` and `verify`.
 
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use cartridge::lua::Host;
-use cartridge::runtime::Runtime;
-use cartridge::socket;
+use cartridge::host::{socket, Host};
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
 
 use super::{fail, stopped, Project, FAILED};
 
-fn host(project: &Project) -> Arc<Host> {
-	Host::with_yolo(Runtime::new(), &project.dir, &project.profile, project.yolo)
+fn host(project: &Project) -> Result<Arc<Host>> {
+	Host::new(&project.dir, &project.profile, project.yolo)
+}
+
+/// Serve the host socket beside a foreground run, when no other host serves this project.
+fn serve_beside(host: &Arc<Host>) -> tokio::task::JoinHandle<()> {
+	let host = host.clone();
+	tokio::spawn(async move {
+		if let Err(error) = socket::serve(host).await {
+			tracing::warn!(target: "cartridge", "host socket: {error}");
+		}
+	})
 }
 
 /// Foreground process cartridges receive terminal interrupts directly: the
@@ -24,24 +32,8 @@ fn swallow_interrupts() -> tokio::task::JoinHandle<()> {
 
 pub(crate) async fn run(project: &Project, key: &str, args: Value) -> Result<ExitCode> {
 	let signals = swallow_interrupts();
-	let host = host(project);
-	// The live host also answers on its socket, so `cartridge call`, `status`
-	// and `tail` from the wrapped shell reach *this* process instead of
-	// loading a second copy of the profile. A second `run` on the same
-	// profile keeps working; only its socket is refused.
-	let served = tokio::spawn({
-		let (host, path) = (host.clone(), socket::path(&project.profile));
-		async move {
-			match socket::serve(host, &path).await {
-				// Another run already answers for this profile; that one keeps it.
-				Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {}
-				Err(e) => {
-					tracing::warn!(target: "cartridge", socket = %path.display(), "socket: {e}")
-				}
-				Ok(()) => {}
-			}
-		}
-	});
+	let host = host(project)?;
+	let served = serve_beside(&host);
 	let result = host.run(key, args).await;
 	served.abort();
 	signals.abort();
@@ -66,7 +58,7 @@ pub(crate) async fn launch(
 		);
 	}
 	let signals = swallow_interrupts();
-	let host = host(project);
+	let host = host(project)?;
 	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
 	let result = host.run_then("proxy", request, spawn).await;
 	signals.abort();
@@ -122,7 +114,7 @@ async fn spawn(launch: Value) -> Result<Value> {
 pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
 	// The client owns this process's lifetime: the pump ends at end of
 	// input and the profile is disposed on the way out.
-	let host = host(project);
+	let host = host(project)?;
 	let serve = {
 		let host = host.clone();
 		|_| async move { stdio(host).await }
@@ -196,38 +188,38 @@ fn mcp_bridge_reply(line: &str, result: Result<Value>) -> Option<Value> {
 }
 
 pub(crate) async fn daemon(project: &Project) -> Result<ExitCode> {
-	let host = host(project);
-	if let Err(e) = host.reconcile().await {
-		tracing::error!(target: "cartridge", cartridge = "init.lua", "{e}");
+	let host = host(project)?;
+	if let Err(error) = host.reconcile().await {
+		tracing::error!(target: "cartridge", cartridge = "init.lua", "{error}");
 	}
-	if let Err(e) = host.watch() {
-		tracing::error!(target: "cartridge", cartridge = "watch", "{e}");
+	let watcher = host.watch();
+	if let Err(error) = &watcher {
+		tracing::error!(target: "cartridge", "watch: {error}");
 	}
-	let path = socket::path(&project.profile);
 	tracing::info!(
 		target: "cartridge",
 		dir = %project.dir.display(),
 		profile = %project.profile.display(),
-		socket = %path.display(),
+		socket = %socket::path(&project.profile)?.display(),
 		"serving"
 	);
-	// A daemon outlives every other command, so it is the one that
-	// keeps the socket directory: the collecting runs beside the
-	// serving, off the path of anything waiting on the door to open.
-	tokio::spawn(socket::keep_swept());
-	// The stop is caught rather than taken: the socket is unlinked by a
-	// guard the serving holds, and a guard only runs on the way out of
-	// a future that was allowed to end. Killed outright there is no way
-	// out, and the next sweep is what collects the entry.
-	tokio::select! {
-		served = socket::serve(host, &path) => served?,
-		_ = stopped() => {}
+	let result = tokio::select! {
+		served = socket::serve(host.clone()) => match served {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(Error::Profile(format!("a host already serves {}", project.profile.display()))),
+			Err(error) => Err(error),
+		},
+		_ = stopped() => Ok(()),
+	};
+	if let Ok(watcher) = watcher {
+		watcher.abort();
 	}
-	Ok(ExitCode::SUCCESS)
+	host.stop().await;
+	result.map(|()| ExitCode::SUCCESS)
 }
 
 pub(crate) async fn verify(project: &Project, cartridge: Option<&str>) -> Result<ExitCode> {
-	let host = host(project);
+	let host = host(project)?;
 	let (ran, failures) = match cartridge {
 		Some(one) => host.verify_one(one).await?,
 		None => host.verify().await?,

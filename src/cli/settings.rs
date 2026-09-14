@@ -4,9 +4,8 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use cartridge::host::Host;
 use cartridge::loader;
-use cartridge::lua::Host;
-use cartridge::runtime::Runtime;
 use cartridge::settings::{self, Spec, Specs};
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
@@ -19,7 +18,7 @@ pub(crate) fn settings(
 	as_json: bool,
 	template: bool,
 ) -> Result<ExitCode> {
-	let host = Host::new(Runtime::new(), &project.dir, &project.profile);
+	let host = Host::new(&project.dir, &project.profile, false)?;
 	let entries = host.settings().map_err(|e| {
 		Error::Profile(format!(
 			"{}: {e}",

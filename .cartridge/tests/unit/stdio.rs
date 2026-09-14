@@ -22,7 +22,7 @@ fn mcp_bridge_keeps_notifications_silent_and_successes_intact() {
 	] {
 		assert!(mcp_bridge_reply(
 			&value.to_string(),
-			Err(cartridge::Error::Gone("unavailable"))
+			Err(cartridge::Error::Remote("unavailable".into()))
 		)
 		.is_none());
 	}
@@ -32,7 +32,7 @@ fn mcp_bridge_keeps_notifications_silent_and_successes_intact() {
 		Some(success)
 	);
 	assert!(mcp_bridge_reply("notification", Ok(Value::Null)).is_none());
-	let parse = mcp_bridge_reply("not-json", Err(cartridge::Error::Gone("unavailable"))).unwrap();
+	let parse = mcp_bridge_reply("not-json", Err(cartridge::Error::Remote("unavailable".into()))).unwrap();
 	assert_eq!(parse["error"]["code"], -32700);
 	assert!(parse["id"].is_null());
 }

@@ -1,15 +1,4 @@
-//! The one error type the host speaks.
-//!
-//! Every fallible host operation answers with [`Error`], so a caller can match
-//! on *what* failed — a document that will not read, a peer that went away, a
-//! service that is not provided — instead of parsing a sentence. The text a
-//! variant renders is still the sentence a person reads, on the CLI and on the
-//! wire: the wire carries error text, not variants, so an error that crosses a
-//! process boundary comes back as [`Error::Remote`] on the other side.
-//!
-//! The SDK keeps its own `Result<T, String>`: a cartridge author's handler
-//! answers with text that travels the wire, and `From<Error> for String` lets
-//! `?` carry a host error into that answer unchanged.
+//! The host's error type. Errors cross the wire as text and come back as [`Error::Remote`].
 
 use std::path::{Path, PathBuf};
 
@@ -30,11 +19,7 @@ pub enum Error {
 	#[error(transparent)]
 	Lua(#[from] mlua::Error),
 	#[error(transparent)]
-	Runtime(#[from] crate::runtime::Error),
-	#[error(transparent)]
 	Watch(#[from] notify::Error),
-	#[error(transparent)]
-	Refusal(#[from] crate::resolver::Refusal),
 	/// A cartridge document that will not read, or declares what the format
 	/// refuses. The path names the document, not the tree around it.
 	#[error("{path}: {reason}")]
@@ -55,29 +40,20 @@ pub enum Error {
 	/// The text a peer answered a request with.
 	#[error("{0}")]
 	Remote(String),
-	/// The peer a request was for is no longer there.
-	#[error("{0}")]
-	Gone(&'static str),
 	#[error("`{0}` is not provided")]
 	NotProvided(String),
 	/// A service a foreground run needed never became active.
 	#[error("service `{key}` unavailable: {why}")]
 	Unavailable { key: String, why: String },
-	/// A replacement the reload transaction refused.
+	/// A reload that could not be done.
 	#[error("{0}")]
 	Reload(String),
-	/// A bridge call the profile's grant or the owner's state refuses.
-	#[error("{0}")]
-	Bridge(&'static str),
 	/// A contract the caller broke: too many contributors, a budget of nothing.
 	#[error("{0}")]
 	Invalid(&'static str),
 	/// A command-line argument that does not parse.
 	#[error("invalid argument: {0}")]
 	Argument(String),
-	/// A wire frame neither end recognises.
-	#[error("unknown message {0}")]
-	UnknownMessage(serde_json::Value),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -120,8 +96,7 @@ impl Error {
 	}
 }
 
-/// A host error as a handler's answer: the SDK speaks text, and `?` on a host
-/// call inside a handler carries the error text unchanged.
+/// A host error as a handler's text answer.
 impl From<Error> for String {
 	fn from(error: Error) -> Self {
 		error.to_string()

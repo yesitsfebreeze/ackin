@@ -14,9 +14,8 @@ use std::io::{IsTerminal, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use cartridge::host::Host;
 use cartridge::loader::{self, CartridgeInfo};
-use cartridge::lua::Host;
-use cartridge::runtime::Runtime;
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
 
@@ -28,7 +27,7 @@ const HOST_ABOUT: &str =
 	"the runtime itself: what a cartridge is, how one is written, how this composition is read";
 
 pub(crate) fn help(project: &Project, what: &str, as_json: bool) -> Result<ExitCode> {
-	let host = Host::new(Runtime::new(), &project.dir, &project.profile);
+	let host = Host::new(&project.dir, &project.profile, false)?;
 	let cartridges = host.manifest().map_err(|e| {
 		Error::Profile(format!(
 			"{}: {e}",
@@ -564,8 +563,8 @@ fn declarations(c: &CartridgeInfo, document: &Result<loader::Cartridge>, dir: &P
 	for (label, keys) in [
 		("provides", &doc.provide),
 		("needs", &doc.needs),
-		("injected", &c.inject),
-		("exports", &doc.export),
+		("on", &doc.on),
+		("wired", &c.needs),
 	] {
 		if !keys.is_empty() {
 			let _ = writeln!(out, "{label}: {}", keys.join(", "));

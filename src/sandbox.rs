@@ -15,7 +15,8 @@
 //! network, other programs — is allowed only where the grant names it.
 //!
 //! **The empty grant is the tightest policy.** A cartridge that declares
-//! nothing can run, talk on the stdio wire, and reach nothing else.
+//! nothing can run, serve and reach sockets in its host's socket directory,
+//! and reach nothing else.
 //!
 //! **What the OS on this platform cannot express.** `grant.net` names hosts,
 //! and `sandbox-exec` accepts only `*` and `localhost` in a remote filter, so
@@ -181,7 +182,7 @@ fn literal(path: &Path) -> String {
 /// The profile text for one cartridge: what it declared, plus the plumbing a
 /// child needs to exist. Every line the grant does not ask for is absent, and
 /// `deny default` is what remains.
-pub fn profile(grant: &Grant, root: &Path, binary: &Path) -> String {
+pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>) -> String {
 	let mut profile = String::from("(version 1)\n(deny default)\n");
 	// Paths the OS resolves through symlinks must be named canonically: a
 	// grant written through `/tmp` would never match the file it names.
@@ -243,8 +244,32 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path) -> String {
 	if !grant.net.is_empty() {
 		profile.push_str("(allow network*)\n(allow system-socket)\n");
 	}
-	// The wire itself: pipes are not files, and a child that talks to the host
-	// through stdio needs no write grant for that. What it needs is here.
+	if let Some(sockets) = sockets {
+		let mut spellings = vec![sockets.to_path_buf()];
+		spellings.extend(sockets.canonicalize());
+		spellings.dedup();
+		let mut ancestors: Vec<String> = spellings
+			.iter()
+			.flat_map(|path| path.ancestors().skip(1))
+			.map(|path| format!("(literal {})", literal(path)))
+			.collect();
+		ancestors.sort();
+		ancestors.dedup();
+		let within: Vec<String> = spellings
+			.iter()
+			.map(|path| format!("(subpath {})", literal(path)))
+			.collect();
+		let within = within.join(" ");
+		// Socket filters only match the canonical spelling; a symlinked one voids the rule.
+		let canonical = format!(
+			"(subpath {})",
+			literal(spellings.last().expect("a spelling"))
+		);
+		profile.push_str(&format!(
+			"(allow file-read* {})\n(allow file-read* file-write* {within})\n(allow system-socket)\n(allow network-bind (local unix-socket {canonical}))\n(allow network-outbound (remote unix-socket {canonical}))\n",
+			ancestors.join(" ")
+		));
+	}
 	profile.push_str("(allow sysctl-read)\n(allow mach-lookup)\n(allow process-fork)\n");
 	profile
 }
@@ -256,6 +281,7 @@ pub fn command(
 	cmd: &[String],
 	grant: &Grant,
 	root: &Path,
+	sockets: Option<&Path>,
 ) -> std::io::Result<std::process::Command> {
 	let binary = cmd.first().ok_or_else(|| {
 		std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty cartridge command")
@@ -263,7 +289,7 @@ pub fn command(
 	#[cfg(target_os = "macos")]
 	{
 		let binary = Path::new(binary);
-		let text = profile(grant, root, binary);
+		let text = profile(grant, root, binary, sockets);
 		// The profile travels on the command line, so no file is written and no
 		// file has to outlive the spawn. `ps` shows the policy; that is a
 		// property of `sandbox-exec`, not a leak of what the cartridge declared.
@@ -273,28 +299,17 @@ pub fn command(
 	}
 	#[cfg(target_os = "linux")]
 	{
-		let _ = binary;
+		let _ = (binary, sockets);
 		linux::command(cmd, grant, root)
 	}
 	#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 	{
-		let _ = (binary, cmd, grant, root);
+		let _ = (binary, cmd, grant, root, sockets);
 		Err(std::io::Error::new(
 			std::io::ErrorKind::Unsupported,
 			"no sandbox mechanism on this platform: a cartridge process is not spawned unconfined",
 		))
 	}
-}
-
-/// Spawn a confined child with the stdio wire and ownership used by the host.
-pub fn spawn(cmd: &[String], grant: &Grant, root: &Path) -> std::io::Result<tokio::process::Child> {
-	let mut command = tokio::process::Command::from(command(cmd, grant, root)?);
-	command
-		.stdin(std::process::Stdio::piped())
-		.stdout(std::process::Stdio::piped())
-		.stderr(std::process::Stdio::piped())
-		.kill_on_drop(true)
-		.spawn()
 }
 
 #[cfg(test)]

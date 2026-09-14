@@ -1,8 +1,0 @@
-[
-  { "name": "null", "value": null },
-  { "name": "false", "value": false },
-  { "name": "empty-array", "value": [] },
-  { "name": "empty-object", "value": {} },
-  { "name": "unicode", "value": "nvim · 日本語 · 🦀 · é\nsecond line" },
-  { "name": "nested", "value": { "false": false, "null": null, "array": [], "object": {}, "values": [0, "", null, false] } }
-]

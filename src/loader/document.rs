@@ -44,19 +44,15 @@ pub struct Cartridge {
 	/// A cartridge that declares its keys carries no fallbacks of its own.
 	#[serde(default)]
 	pub settings: crate::settings::Specs,
-	/// Keys this cartridge offers. Private to its own subtree unless a parent
-	/// re-exports them: two cartridges may provide the same key without
-	/// colliding so long as neither subtree passes it into the other.
+	/// Keys this cartridge offers.
 	#[serde(default)]
 	pub provide: Vec<String>,
-	/// Keys this cartridge asks for. Resolved against its own subtree first,
-	/// then outward.
+	/// Keys this cartridge asks for.
 	#[serde(default)]
 	pub needs: Vec<String>,
-	/// Keys provided somewhere inside this cartridge's subtree that it passes
-	/// outward under its own name. The second naming the nesting rule costs.
+	/// Events this cartridge listens to.
 	#[serde(default)]
-	pub export: Vec<String>,
+	pub on: Vec<String>,
 	/// The capability request: the same declaration the resolver grants and the
 	/// sandbox confines to. Absent means nothing is asked for, which is the
 	/// tightest policy and not the loosest.
@@ -75,7 +71,7 @@ pub struct Command {
 
 /// What a cartridge asks the machine for. Read twice — once to grant, once to
 /// confine — out of this one document, so there is no second policy file.
-#[derive(Default, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Grant {
 	/// Filesystem paths readable by this cartridge, relative to its own folder
@@ -209,15 +205,11 @@ impl Cartridge {
 				return Err(at(&format!("duplicate provide declaration `{k}`")));
 			}
 		}
-		for k in &self.export {
-			key("export", k)?;
-			if self.provide.contains(k) {
-				return Err(at(&format!(
-					"`{k}` is provided here, so it is not re-exported from inside"
-				)));
-			}
-			if !seen.insert(k.as_str()) {
-				return Err(at(&format!("duplicate export declaration `{k}`")));
+		let mut heard = std::collections::HashSet::new();
+		for k in &self.on {
+			key("on", k)?;
+			if !heard.insert(k.as_str()) {
+				return Err(at(&format!("duplicate on declaration `{k}`")));
 			}
 		}
 		let mut asked = std::collections::HashSet::new();
@@ -255,66 +247,6 @@ impl Cartridge {
 /// The document's name on disk. A folder is a cartridge exactly when it holds
 /// one, and every reader of the format agrees on this one spelling.
 pub const MANIFEST: &str = "cartridge.json";
-
-/// The layout rule, stated once: **a nested cartridge is a direct child
-/// directory of its parent's folder holding a `cartridge.json`.** One level and
-/// no deeper — `outer/inner/cartridge.json` is nested in `outer`, while
-/// `outer/vendor/inner/cartridge.json` is nested in `outer/vendor` and is
-/// hidden from `outer` until `outer/vendor` passes its key on. Nothing here
-/// descends, because descending would make a grandchild's subtree visible to a
-/// grandparent that never named it, which is the rule's whole point.
-///
-/// Sorted, so what a subtree offers does not depend on directory order.
-pub(super) fn nested(root: &Path) -> Vec<PathBuf> {
-	let Ok(dir) = std::fs::read_dir(root) else {
-		return Vec::new();
-	};
-	let mut manifests: Vec<PathBuf> = dir
-		.flatten()
-		.map(|e| e.path().join(MANIFEST))
-		.filter(|m| m.is_file())
-		.collect();
-	manifests.sort();
-	manifests
-}
-
-impl Cartridge {
-	/// What this cartridge's own subtree offers it: every nested cartridge's
-	/// `provide`, plus whatever each of those passes on from deeper in. One
-	/// level at a time, because a nested cartridge's own subtree is hidden from
-	/// everything outside it — including from this cartridge's parent.
-	pub fn offered(root: &Path) -> Result<Vec<String>> {
-		let mut keys = Vec::new();
-		for manifest in nested(root) {
-			// The child is read as a document and not resolved: what it offers is a
-			// declaration, and a child whose Lua entry is missing has still made it.
-			let child = Self::document(&manifest)?;
-			keys.extend(child.provide);
-			keys.extend(child.export);
-		}
-		Ok(keys)
-	}
-
-	/// Every re-export names a key the subtree actually offers. This is the
-	/// second naming the nesting rule costs, and the check that it was paid.
-	/// Crate-visible so the ledger's read runs it too: one validation, one
-	/// verdict, so the two listings refuse the same trees.
-	pub(crate) fn passed_on(&self, root: &Path, manifest: &Path) -> Result<()> {
-		if self.export.is_empty() {
-			return Ok(());
-		}
-		let offered = Self::offered(root)?;
-		for key in &self.export {
-			if !offered.contains(key) {
-				return Err(Error::document(
-					manifest,
-					format!("`{key}` is passed on, but nothing inside this cartridge offers it"),
-				));
-			}
-		}
-		Ok(())
-	}
-}
 
 impl Grant {
 	fn check(&self, at: &dyn Fn(&str) -> Error) -> Result<()> {
@@ -367,45 +299,27 @@ pub(super) fn classify(path: &Path) -> PathBuf {
 	path.join(MANIFEST)
 }
 
-/// What the document says the *entry* is and declares, with every file it names
-/// resolved. A bare Lua entry has no document, so it declares nothing and the
-/// entry stays the only source.
-///
-/// `export` and `grant` are not here: they are read by the listing, which must
-/// be able to read them off a document whose files are not all in place, and
-/// that is [`document`]'s job rather than this one's.
+/// What an entry declares, with every file it names resolved. A bare Lua entry
+/// has no document and declares through the table it returns.
 pub(crate) struct Declared {
 	pub(crate) entry: PathBuf,
 	pub(crate) name: String,
 	pub(crate) sources: Vec<PathBuf>,
 	pub(crate) provide: Vec<String>,
 	pub(crate) needs: Vec<String>,
+	pub(crate) on: Vec<String>,
 	pub(crate) config: serde_json::Value,
-	/// What this cartridge contributes to the configuration. Travels with the
-	/// document so the value a component is handed is already settled against
-	/// it, wherever the component was loaded from.
 	pub(crate) settings: crate::settings::Specs,
+	pub(crate) grant: Grant,
 }
 
-/// What a profile entry's document declares, read from the document and its own
-/// subtree alone. Narrower than [`resolve`] on purpose: no Lua entry is
-/// resolved and no declared `ui` file is looked for, so an `Err` here means the
-/// **document** could not be read — never that the tree around it is
-/// incomplete, and never that the cartridge asked for nothing.
-///
-/// A bare `.lua` path has no document, so it declares nothing and that is not
-/// an error.
-pub(crate) fn document(path: &Path) -> Result<(Vec<String>, Grant)> {
+/// The grant a profile entry's document declares, without resolving its files.
+pub(crate) fn document(path: &Path) -> Result<Grant> {
 	let path = normalize(&classify(path));
 	if path.extension().is_some_and(|ext| ext == "lua") {
-		return Ok((Vec::new(), Grant::default()));
+		return Ok(Grant::default());
 	}
-	let cartridge = Cartridge::document(&path)?;
-	let root = path
-		.parent()
-		.ok_or_else(|| Error::document(&path, "no cartridge folder"))?;
-	cartridge.passed_on(root, &path)?;
-	Ok((cartridge.export, cartridge.grant))
+	Ok(Cartridge::document(&path)?.grant)
 }
 
 pub(crate) fn resolve(path: &Path) -> Result<Declared> {
@@ -422,13 +336,14 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 			sources: vec![path],
 			provide: Vec::new(),
 			needs: Vec::new(),
+			on: Vec::new(),
 			config: serde_json::Value::Null,
 			settings: Default::default(),
+			grant: Grant::default(),
 		});
 	}
 	let (manifest, entry) = Cartridge::read(&path)?;
 	let root = path.parent().expect("manifest has a folder");
-	manifest.passed_on(root, &path)?;
 	let mut sources = vec![path.clone(), entry.clone()];
 	if let Some(ui) = &manifest.ui {
 		let ui = root.join(ui);
@@ -440,7 +355,9 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		sources,
 		provide: manifest.provide,
 		needs: manifest.needs,
+		on: manifest.on,
 		config: manifest.config,
 		settings: manifest.settings,
+		grant: manifest.grant,
 	})
 }

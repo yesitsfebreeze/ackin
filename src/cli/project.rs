@@ -25,12 +25,7 @@ pub(crate) fn locate(dir: Option<PathBuf>, yolo: bool) -> Result<Project> {
 	let dir = absolute(&dir.unwrap_or_else(loader::builtin));
 	let root = loader::root();
 	std::env::set_current_dir(&root).map_err(|e| Error::file(&root, e))?;
-	// One user profile, one composition: `mcp`, `launch` and `run` differ by the
-	// entry point they call into this host, not by the cartridges it loads.
 	let profile = loader::profile();
-	// Settle the host's own settings against the profile that was just
-	// resolved, before anything reads one. Everything downstream — including an
-	// SDK child that has only a working directory — then reads this one answer.
 	cartridge::settings::settle(&profile);
 	Ok(Project { dir, profile, yolo })
 }
@@ -40,9 +35,4 @@ pub(crate) fn locate(dir: Option<PathBuf>, yolo: bool) -> Result<Project> {
 /// and a directory that does not exist yet still has an address.
 fn absolute(path: &Path) -> PathBuf {
 	std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-/// The binary a node re-enters: this invocation's own image.
-pub(crate) fn exe() -> PathBuf {
-	std::env::current_exe().expect("a running binary knows its own image")
 }

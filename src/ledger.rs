@@ -1,34 +1,9 @@
-//! The ledger: every cartridge installed under one root, derived from the
-//! filesystem rather than from a hand-kept list.
-//!
-//! **Installing is putting a tree where the ledger looks; uninstalling is
-//! taking it away.** Nothing between the two edits a list, because a list that
-//! must be edited is a second place for the truth to live.
-//!
-//! The ledger is a **namespace of subtrees, not a flat table.** An entry is
-//! identified by its [`Installed::path`] from the root — never by its bare
-//! name — so two cartridges may provide the same key without colliding. What a
-//! cartridge can see is its own subtree first, then its parent's, outward to
-//! the root; a key deeper than one level reaches it only where every parent
-//! between re-exported it. That rule is [`crate::loader`]'s, settled with the
-//! document format; this module is the same rule applied to a whole tree
-//! instead of to one cartridge's children.
-//!
-//! **What is scanned.** A directory is a cartridge exactly when it holds a
-//! [`crate::loader::MANIFEST`]. The root's direct children are the top-level
-//! entries; a cartridge's direct children are its nested entries, one level at
-//! a time, forever. A directory that is not a cartridge is not descended into,
-//! so `outer/vendor/inner` is in no subtree at all when `outer/vendor` holds no
-//! document — the subtree a key may travel through is a chain of cartridges,
-//! and a plain folder does not extend it.
-//!
-//! **An unreadable document is still an entry.** Its `unread` says why and its
-//! declarations are empty. The read is the host's read: the document's own
-//! checks *and* the re-export check against the subtree, so the ledger refuses
-//! — as `unread` — exactly the trees the host refuses to load, and the two
-//! listings can never disagree about what reads. Absent is not the same fact
-//! as empty, and a document that would not read must not read as one that
-//! offered nothing.
+//! The ledger: every cartridge installed under one root, found on the
+//! filesystem. A directory holding a `cartridge.json` is a cartridge; its
+//! direct child directories holding one are its nested entries. An entry's
+//! identity is its path from the root. A key resolves in the asking
+//! cartridge's own subtree first, then outward to the root. A document that
+//! will not read is still an entry, with `unread` saying why.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -53,8 +28,6 @@ pub struct Installed {
 	/// the-manifest's "satisfies its parent's needs and nothing else" names
 	/// the graph outside the parent, not the siblings within it.
 	pub provide: Vec<String>,
-	/// Inner keys passed outward under this cartridge's name.
-	pub export: Vec<String>,
 	/// Keys asked for, resolved outward from here by [`Ledger::resolve`].
 	pub needs: Vec<String>,
 	/// Why the document would not read, when it would not.
@@ -67,13 +40,8 @@ impl Installed {
 		self.path.rsplit_once('/').map(|(head, _)| head)
 	}
 
-	/// What this entry makes visible to whatever contains it: its own keys plus
-	/// the inner ones it passes on. `export` is validated on the ledger's read
-	/// the same way the host validates it — [`Cartridge::passed_on`], against the
-	/// subtree at document-read time — so a re-export here names something real,
-	/// and a document the host refuses to load carries `unread` here too.
 	pub fn offers(&self) -> impl Iterator<Item = &String> {
-		self.provide.iter().chain(self.export.iter())
+		self.provide.iter()
 	}
 }
 
@@ -241,26 +209,15 @@ fn descend(dir: &Path, scope: &str, into: &mut BTreeMap<String, Installed>) {
 	}
 }
 
-/// The document as data. `Cartridge::document` is used rather than
-/// `Cartridge::read`, on the same grounds the manifest listing uses it: a
-/// cartridge whose Lua entry is missing has still declared what it declares,
-/// and the ledger records declarations, not evaluations. On top of the
-/// document's own checks the read runs [`Cartridge::passed_on`] — the same
-/// re-export validation the host's reader runs — so `unread` here and the
-/// host's refusal are the same verdict on the same tree.
+/// The document as data: declarations are recorded even when the Lua entry is missing.
 fn read_entry(folder: &Path, path: String) -> Installed {
 	let manifest = folder.join(MANIFEST);
-	let read = Cartridge::document(&manifest).and_then(|doc| {
-		doc.passed_on(folder, &manifest)?;
-		Ok(doc)
-	});
-	match read {
+	match Cartridge::document(&manifest) {
 		Ok(doc) => Installed {
 			path,
 			dir: folder.to_path_buf(),
 			name: doc.name,
 			provide: doc.provide,
-			export: doc.export,
 			needs: doc.needs,
 			unread: None,
 		},
@@ -269,7 +226,6 @@ fn read_entry(folder: &Path, path: String) -> Installed {
 			dir: folder.to_path_buf(),
 			name: String::new(),
 			provide: Vec::new(),
-			export: Vec::new(),
 			needs: Vec::new(),
 			unread: Some(e.to_string()),
 		},
