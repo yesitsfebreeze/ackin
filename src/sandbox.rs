@@ -8,11 +8,19 @@
 //! confined on the running platform is refused, never spawned unconfined.
 //!
 //! **What is implicit.** A child cannot exist without reading its own binary,
-//! its interpreter and the system runtime, so every profile allows exactly
-//! that: the executed binary, the interpreter its shebang names, the cartridge
-//! folder it was declared in, and the runtime directories dyld reads. That is
-//! the machine's own plumbing, not a capability. Everything else — writes,
-//! network, other programs — is allowed only where the grant names it.
+//! its interpreter, that interpreter's installation and the machine's runtime,
+//! so every profile allows exactly that: the executed binary, the interpreter
+//! its shebang names and the launcher variants the platform execs behind them,
+//! the prefix each was installed under, the cartridge folder, the directories
+//! on the way to it and to the working directory, and the system runtime —
+//! loader, system libraries, ICU, timezone database — in both spellings,
+//! written and canonical. That is the machine's own plumbing, not a
+//! capability. Everything else — writes, network, other programs — is allowed
+//! only where the grant names it.
+//!
+//! **What it does not cover.** An interpreter linked against other
+//! installations — a Homebrew node reaching `/opt/homebrew/opt` — is the user's
+//! package tree, granted only where `grant.read` names it.
 //!
 //! **The empty grant is the tightest policy.** A cartridge that declares
 //! nothing can run, serve and reach sockets in its host's socket directory,
@@ -136,6 +144,32 @@ fn interpreters(binary: &Path) -> Vec<PathBuf> {
 	interpreter(binary).map(with_variants).unwrap_or_default()
 }
 
+/// The installation an executable belongs to: the prefix `@executable_path/..`
+/// names, when the program sits in a `bin/`. A prefix directly under the root
+/// (`/bin/sh` → `/`, `/usr/bin/env` → `/usr`) is shared, not one program's.
+fn installation(program: &Path) -> Option<PathBuf> {
+	let dir = program.parent()?;
+	if dir.file_name()? != "bin" {
+		return None;
+	}
+	let prefix = dir.parent()?;
+	(prefix.components().count() > 2).then(|| prefix.to_path_buf())
+}
+
+/// The machine's own runtime. Named as written and canonically: `/etc` and
+/// `/var` are symlinks, and a child that cannot read its timezone database
+/// (`/etc/localtime` → `/private/var/db/timezone`) is killed before `main`.
+const RUNTIME: [&str; 7] = [
+	"/usr/lib",
+	"/System/Library",
+	// The dyld shared cache lives in the OS cryptex on macOS 13 and later.
+	"/System/Volumes/Preboot/Cryptexes",
+	"/usr/share/icu",
+	"/var/db/timezone",
+	"/dev",
+	"/etc",
+];
+
 /// The executable basename or path a grant names, resolved the way the host
 /// resolves a cartridge's own binary: the cartridge's `bin/`, then beside the
 /// running cartridge, then PATH. Unresolvable entries build no line — the OS
@@ -203,34 +237,51 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	}
 	exec.sort();
 	exec.dedup();
+	// A program's own installation is plumbing, not a capability.
+	let mut installations: Vec<PathBuf> = exec.iter().filter_map(|p| installation(p)).collect();
+	installations.sort();
+	installations.dedup();
 	// `*` is every program: a shell or a version-control client runs what it is told.
 	if grant.exec.iter().any(|program| program == "*") {
 		profile.push_str("(allow process-exec)\n");
 	} else if !exec.is_empty() {
-		let lines: Vec<String> = exec
+		let mut lines: Vec<String> = exec
 			.iter()
 			.map(|p| format!("(literal {})", literal(p)))
 			.collect();
+		lines.extend(
+			installations
+				.iter()
+				.map(|p| format!("(subpath {})", literal(p))),
+		);
 		profile.push_str(&format!("(allow process-exec {})\n", lines.join(" ")));
 	}
 	// Read: the runtime a child needs to exist, the cartridge folder it was
 	// declared in, and the paths it asked to read — a write is also a read.
 	// The root itself is a literal, not a subpath: dyld reads the root
 	// directory on the way up, and a subpath of `/` would be everything.
-	let mut read = vec![
-		PathBuf::from("/usr/lib"),
-		PathBuf::from("/System/Library"),
-		PathBuf::from("/dev"),
-		PathBuf::from("/etc"),
-	];
+	let mut read: Vec<PathBuf> = RUNTIME
+		.iter()
+		.flat_map(|path| granted_paths(path, &root))
+		.collect();
 	read.push(root.to_path_buf());
 	read.push(binary.to_path_buf());
 	for path in grant.read.iter().chain(grant.write.iter()) {
 		read.extend(granted_paths(path, &root));
 	}
+	read.extend(exec.iter().cloned());
+	read.extend(installations.iter().cloned());
 	read.sort();
 	read.dedup();
 	let mut lines = vec![format!("(literal {})", literal(Path::new("/")))];
+	// A runtime resolves its working directory by reading every directory on
+	// the way up; a literal names the directory, never its contents.
+	let cwd = std::env::current_dir().unwrap_or_else(|_| root.to_path_buf());
+	let mut walked: Vec<PathBuf> = root.ancestors().skip(1).map(Path::to_path_buf).collect();
+	walked.extend(cwd.ancestors().map(Path::to_path_buf));
+	walked.sort();
+	walked.dedup();
+	lines.extend(walked.iter().map(|p| format!("(literal {})", literal(p))));
 	lines.extend(read.iter().map(|p| format!("(subpath {})", literal(p))));
 	profile.push_str(&format!("(allow file-read* {})\n", lines.join(" ")));
 	// Write: only what the grant names, in every spelling the child may open.

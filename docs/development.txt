@@ -49,5 +49,10 @@ A listener that fails with "exceeded its budget of N Lua instructions" looped
 in Lua; a node that exited with status 70 kept looping after it. Raise
 host.lua_instruction_budget if the work is real.
 
+A runtime that cannot read something it needs before `main` dies on a signal
+with nothing on stderr — bun traps (SIGTRAP), dyld aborts (SIGABRT). On macOS,
+`log stream --predicate 'senderImagePath CONTAINS "Sandbox"'` while the
+cartridge starts names the denied path.
+
 A command stopping with "is in no trusted project" or "has changed since it
 was trusted" names a file to read before `cartridge trust`.

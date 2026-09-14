@@ -121,6 +121,11 @@ its stdin; it emits and publishes with `{"emit": …}` and `{"publish": …}` li
 (transport.txt, PROTOCOL LINES). Every other line goes to `on_line`. Its stderr
 is recorded by the base. Its executable must be in the cartridge's `grant.exec`.
 
+The base allows that executable's own installation with it — the prefix a
+program in a `bin/` was installed under. An interpreter that reaches other
+installations (a Homebrew `node` reaching /opt/homebrew/opt) needs that tree
+in `grant.read`.
+
 MANIFEST FIELDS
 
 name and entry are required; entry is a relative .lua path inside the folder.

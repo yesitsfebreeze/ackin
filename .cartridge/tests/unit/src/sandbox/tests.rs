@@ -118,3 +118,69 @@ fn a_script_names_its_interpreter() {
 		"{text}"
 	);
 }
+
+/// A program reaches its own installation prefix: `@executable_path/..` is
+/// plumbing, not a capability, and the empty grant still runs the program.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_interpreter_reaches_its_own_installation() {
+	use std::os::unix::fs::PermissionsExt;
+	let fixture = tempfile::tempdir().unwrap();
+	let directory = fixture.path().canonicalize().unwrap();
+	let prefix = directory.join("fake");
+	std::fs::create_dir_all(prefix.join("bin")).unwrap();
+	std::fs::create_dir_all(prefix.join("lib")).unwrap();
+	std::fs::write(prefix.join("lib/data.txt"), "runtime\n").unwrap();
+	let tool = prefix.join("bin/tool");
+	// Shell builtins only: the empty grant cannot exec cat or dirname.
+	std::fs::write(
+		&tool,
+		"#!/bin/sh\nread -r line < \"${0%/bin/tool}/lib/data.txt\" && echo \"$line\"\n",
+	)
+	.unwrap();
+	std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+	let root = directory.join("cart");
+	std::fs::create_dir(&root).unwrap();
+	let output = command(
+		&[tool.display().to_string()],
+		&Grant::default(),
+		&root,
+		None,
+	)
+	.unwrap()
+	.output()
+	.unwrap();
+	assert!(output.status.success(), "{:?}", output);
+	assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "runtime");
+}
+
+/// The prefix stops at a system directory: `/usr/bin/env` shares `/usr`, it
+/// does not make the whole of it one program's installation.
+#[test]
+fn the_prefix_stops_at_a_system_directory() {
+	let shared = profile(&Grant::default(), &root(), Path::new("/usr/bin/env"), None);
+	assert!(
+		!shared.contains("(subpath \"/usr\")"),
+		"/usr is shared, not one program's: {shared}"
+	);
+	let own = profile(
+		&Grant::default(),
+		&root(),
+		Path::new("/opt/x/bin/tool"),
+		None,
+	);
+	assert!(own.contains("(subpath \"/opt/x\")"), "{own}");
+}
+
+/// The runtime is named canonically: `/etc` and `/var` are symlinks, and a
+/// clause written through a symlinked prefix matches nothing.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_runtime_is_named_canonically() {
+	let text = profile(&Grant::default(), &root(), Path::new("/bin/tool"), None);
+	assert!(
+		text.contains("(subpath \"/private/var/db/timezone\")"),
+		"{text}"
+	);
+	assert!(text.contains("(subpath \"/private/etc\")"), "{text}");
+}
