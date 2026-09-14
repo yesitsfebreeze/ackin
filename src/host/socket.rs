@@ -5,7 +5,7 @@
 //! granted `status`, `snapshot` and `cartridges`; the host token everything.
 //!   status                        -> [{id, state, error, waiting, events, needs, listen, socket}]
 //!   snapshot                      -> {host_pid, profile, cartridge_root, entries}
-//!   cartridges                    -> [{id, dir}]
+//!   cartridges                    -> [{id, dir, generation, listen}]
 //!   bail {name, data}             -> the first listener's answer, or null
 //!   emit {name, data}             -> [{from, data} | {from, error}]
 //!   reload {cartridge?}           -> {}

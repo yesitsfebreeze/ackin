@@ -679,7 +679,14 @@ impl Host {
 			slots
 				.iter()
 				.filter(|s| s.running.is_some())
-				.map(|s| json!({ "id": s.entry.id, "dir": s.entry.file(&self.dir).parent() }))
+				.map(|s| {
+					json!({
+						"id": s.entry.id,
+						"dir": s.entry.file(&self.dir).parent(),
+						"generation": s.generation,
+						"listen": s.plan.as_ref().map(|p| p.listen.clone()).unwrap_or_default(),
+					})
+				})
 				.collect(),
 		)
 	}
