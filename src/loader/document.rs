@@ -322,6 +322,7 @@ pub(super) fn classify(path: &Path) -> PathBuf {
 
 /// What an entry declares, with every file it names resolved. A bare Lua entry
 /// has no document and declares through the table it returns.
+#[derive(Debug)]
 pub(crate) struct Declared {
 	pub(crate) entry: PathBuf,
 	/// The entry's SHA-256 as the base verified it, hex — what the node

@@ -197,3 +197,14 @@ fn a_global_config_symlinked_out_of_the_home_still_passes() {
 	verify(&link).unwrap();
 	let _ = std::fs::remove_file(&link);
 }
+
+/// The bare-Lua branch of `resolve` passes the gate: an untrusted entry is
+/// refused before it is evaluated.
+#[test]
+fn an_untrusted_bare_lua_entry_is_refused_at_its_resolve() {
+	let dir = project(&[("x.lua", "return {}")]);
+	let refused = crate::loader::resolve(&dir.path().join("x.lua"))
+		.unwrap_err()
+		.to_string();
+	assert!(refused.contains("is in no trusted project"), "{refused}");
+}

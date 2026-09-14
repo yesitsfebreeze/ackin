@@ -27,3 +27,16 @@ fn naming_the_table_fills_the_keys_inside_it() {
 	let settled = apply(&specs(), json!({"owner": {}}), "memory").unwrap();
 	assert_eq!(settled["owner"], json!({"timeout_ms": 30000}));
 }
+
+/// The project config is a gated read: an untrusted one is refused where the
+/// layer is evaluated, not only in the trust tests.
+#[test]
+fn an_untrusted_project_config_is_refused_at_its_read() {
+	crate::tests::home();
+	let dir = tempfile::tempdir().unwrap();
+	crate::tests::write(dir.path(), "config.lua", "return {}");
+	let refused = crate::settings::read(&dir.path().join("config.lua"))
+		.unwrap_err()
+		.to_string();
+	assert!(refused.contains("is in no trusted project"), "{refused}");
+}

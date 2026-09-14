@@ -798,3 +798,16 @@ done
 	assert_eq!(answer["result"], "hello helper");
 	host.stop().await;
 }
+
+/// The refusal the whole design rests on, tested where it is enforced: a
+/// profile no one trusted fails `entries`, naming the file and the command.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_untrusted_profile_is_refused_where_it_is_enforced() {
+	super::home();
+	let dir = tempfile::tempdir().unwrap();
+	write(dir.path(), ".cartridge/init.lua", "return {}");
+	let host = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();
+	let refused = host.entries().unwrap_err().to_string();
+	assert!(refused.contains("is in no trusted project"), "{refused}");
+	assert!(refused.contains("cartridge trust"), "{refused}");
+}
