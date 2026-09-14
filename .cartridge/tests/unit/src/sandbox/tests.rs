@@ -184,3 +184,17 @@ fn the_runtime_is_named_canonically() {
 	);
 	assert!(text.contains("(subpath \"/private/etc\")"), "{text}");
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn an_async_spawn_is_confined_like_the_synchronous_one() {
+	let (fixture, root, cmd) = wall_fixture();
+	let output =
+		tokio::process::Command::from(command(&cmd, &Grant::default(), &root, None).unwrap())
+			.output()
+			.await
+			.unwrap();
+	assert!(output.status.success(), "{:?}", output);
+	assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "denied");
+	assert!(!fixture.path().join("outside").exists());
+}

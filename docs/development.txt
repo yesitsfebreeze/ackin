@@ -14,6 +14,12 @@ with `cartridge.spawn`. Nodes run inside the sandbox, so the tests exercise it t
 The tests point `$CARTRIDGE_HOME` at a temp directory and record trust for
 each temp project; nothing skips the check.
 
+The security properties have their own regression tests: the sandbox denying
+a write and an exec the grant did not name, one cartridge's globals being
+invisible to another, the socket directory and socket modes, and the owner,
+type and peer checks on both ends of a connection. The macOS-only ones are
+cfg-gated.
+
 RUNNING
 
   cartridge --dir <cartridge root> run <event> '<json>'

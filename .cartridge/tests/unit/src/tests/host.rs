@@ -985,3 +985,59 @@ async fn a_lifecycle_subscriber_that_falls_behind_is_disconnected() {
 	assert!(peer.is_closed(), "a lagging subscriber kept its connection");
 	drop(tx);
 }
+
+/// An exec the grant did not name is denied by the sandbox, so the node
+/// fails rather than running a helper unconfined.
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_spawn_the_grant_did_not_name_is_denied() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"echoer",
+		json!({"name": "echoer", "entry": "init.lua", "events": {"echo": {}}, "listen": ["echo"]}),
+		r#"local cat = cartridge.spawn({"/bin/cat"})
+		cartridge.listen("echo", function(data) return cat:request({ data = data }) end)"#,
+	);
+	profile(dir.path(), &["echoer"]);
+	let host = boot(dir.path()).await;
+	assert_eq!(
+		status(&host, "echoer").state,
+		State::Failed,
+		"an exec the grant did not name must be denied by the sandbox"
+	);
+	host.stop().await;
+}
+
+/// Each cartridge runs in its own interpreter: a global one sets is
+/// invisible to another.
+#[tokio::test(flavor = "multi_thread")]
+async fn one_cartridge_cannot_see_anothers_globals() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"leaker",
+		json!({"name": "leaker", "entry": "init.lua", "events": {"leak": {}}, "listen": ["leak"]}),
+		r#"SECRET = "leaked"
+		cartridge.listen("leak", function() return SECRET end)"#,
+	);
+	cartridge(
+		dir.path(),
+		"peeker",
+		json!({"name": "peeker", "entry": "init.lua", "events": {"peek": {}}, "listen": ["peek"]}),
+		r#"cartridge.listen("peek", function() return tostring(SECRET) end)"#,
+	);
+	profile(dir.path(), &["leaker", "peeker"]);
+	let host = boot(dir.path()).await;
+	assert_eq!(
+		host.bail("leak", json!({})).await.unwrap(),
+		Some(json!("leaked")),
+		"the leaker must be running, or this proves nothing"
+	);
+	assert_eq!(
+		host.bail("peek", json!({})).await.unwrap(),
+		Some(json!("nil")),
+		"each cartridge runs in its own interpreter"
+	);
+	host.stop().await;
+}
