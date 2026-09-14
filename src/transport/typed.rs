@@ -1,8 +1,8 @@
 //! Typed request/response channels over any adapter: the Adapter seam, the
 //! newline-JSON codec, their errors, the channel pairing them, and the local
 //! endpoints (per-user unix sockets, Windows named pipes) processes find each
-//! other with. A `service!`-generated pair and [`crate::transport::rpc::Peer`] speak
-//! through this without knowing the wire.
+//! other with. [`crate::transport::rpc::Peer`] speaks through this without
+//! knowing the wire.
 
 // ==== [error] ====
 

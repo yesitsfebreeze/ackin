@@ -2,7 +2,7 @@
 //! the declaration, the document's `config`, `~/.cartridge/config.lua`, the
 //! project's `.cartridge/config.lua`, and the profile entry's `config`.
 //! The declaration format lives in [`crate::transport::settings`]; the host's own keys
-//! are declared in `settings.json` and read through [`host`].
+//! are declared in `.cartridge/settings.json` and read through [`host`].
 
 mod files;
 mod host;
