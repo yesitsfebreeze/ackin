@@ -303,6 +303,38 @@ async fn the_host_socket_answers_the_command_line() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_cartridge_asks_the_host_what_only_the_host_knows() {
+	let dir = tempfile::tempdir().unwrap();
+	write(dir.path(), "provider.lua", PROVIDER);
+	write(
+		dir.path(),
+		"curious.lua",
+		r#"return {provide={"ask"}, apply=function(ctx)
+			ctx:provide("ask", function()
+				local cartridges = ctx:host("cartridges")
+				local snapshot = ctx:host("snapshot")
+				local ok, refused = pcall(function() return ctx:host("bridge.status") end)
+				return {count=#cartridges, entries=#snapshot.entries, bridge=ok, refused=tostring(refused)}
+			end)
+		end}"#,
+	);
+	profile(
+		dir.path(),
+		r#"{id="provider", path="provider.lua"}, {id="curious", path="curious.lua"}"#,
+	);
+	let host = boot(dir.path()).await;
+	let answer = host.call("ask", json!(null)).await.unwrap();
+	assert_eq!(answer["count"], 2);
+	assert_eq!(answer["entries"], 2);
+	assert_eq!(answer["bridge"], false);
+	assert!(
+		answer["refused"].as_str().unwrap().contains("not granted"),
+		"{answer}"
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn verify_calls_every_declared_contract() {
 	let dir = tempfile::tempdir().unwrap();
 	write(

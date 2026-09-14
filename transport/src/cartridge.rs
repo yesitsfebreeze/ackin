@@ -35,6 +35,9 @@ pub struct Directory {
 	pub events: BTreeMap<String, Vec<Address>>,
 	#[serde(default)]
 	pub accept: BTreeMap<String, Grant>,
+	/// The host's socket, for the questions only the host can answer.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub host: Option<Address>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,6 +251,20 @@ impl Ctx {
 				json!({ "key": key, "args": args, "trace": trace_of(&Value::Null) }),
 			)
 			.await?)
+	}
+
+	/// Ask the host: `status`, `snapshot`, `cartridges`, and where granted, `bridge.status` and `bridge.call`.
+	pub async fn host(&self, method: &str, params: Value) -> Result<Value> {
+		let address = self
+			.state
+			.directory
+			.read()
+			.expect("directory lock")
+			.host
+			.clone()
+			.ok_or_else(|| "no host address in the directory".to_owned())?;
+		let peer = self.client(&address).await?;
+		Ok(peer.call(method, params).await?)
 	}
 
 	fn listeners(&self, name: &str) -> Vec<Address> {

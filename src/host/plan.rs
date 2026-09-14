@@ -223,7 +223,14 @@ pub(crate) fn directory(
 	providers: &HashMap<String, String>,
 ) -> Directory {
 	let by_id: HashMap<&str, &Arc<Plan>> = plans.iter().map(|p| (p.id.as_str(), p)).collect();
-	let mut directory = Directory::default();
+	let mut directory = Directory {
+		host: Some(Address {
+			cartridge: "host".into(),
+			socket: host.inner_socket(),
+			token: host.token(&plan.id, "host", Scope::Call),
+		}),
+		..Directory::default()
+	};
 	for key in &plan.needs {
 		if let Some(provider) = providers.get(key) {
 			directory.needs.insert(

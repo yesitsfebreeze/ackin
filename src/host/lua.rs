@@ -168,6 +168,17 @@ impl UserData for LuaCtx {
 				lua.to_value(&out)
 			},
 		);
+		methods.add_async_method(
+			"host",
+			|lua, this, (method, params): (String, mlua::Value)| async move {
+				let out = this
+					.ctx
+					.host(&method, json(&lua, params)?)
+					.await
+					.map_err(external)?;
+				lua.to_value(&out)
+			},
+		);
 		methods.add_method("emit", |lua, this, (name, data): (String, mlua::Value)| {
 			this.ctx.emit(&name, json(lua, data)?);
 			Ok(())

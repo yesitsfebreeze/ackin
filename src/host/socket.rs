@@ -1,8 +1,14 @@
 //! Where sockets live, and the host's own socket: the same JSON-RPC wire the
 //! cartridges speak, for the command line.
 //!
-//! Methods, after `auth {token}`:
+//! Methods, after `auth {token}`. A cartridge's token (from its directory) is
+//! granted `status`, `snapshot` and `cartridges`, and `bridge.*` where its
+//! profile entry sets `bridge = true`; the host token is granted everything.
 //!   status                        -> [{id, state, error, waiting, provide, needs, on, socket}]
+//!   snapshot                      -> {host_pid, profile, cartridge_root, entries}
+//!   cartridges                    -> [{id, dir}]
+//!   bridge.status                 -> [{id, generation, module, services}]
+//!   bridge.call {owner, generation, key, args}
 //!   call {key, args, trace?}      -> the provider's answer
 //!   emit {name, data}             -> [{from, data} | {from, error}]
 //!   reload {cartridge?}           -> {}
@@ -106,8 +112,32 @@ pub(crate) fn file_name(id: &str) -> String {
 	format!("{readable}-{}.sock", &hash[..6])
 }
 
-/// Serve the host socket until the host is asked to stop. Returns `Ok(false)`
-/// when another host already serves this project.
+pub(crate) async fn listen(path: &Path) -> Result<transport::typed::LocalListener> {
+	let _ = std::fs::remove_file(path);
+	match transport::typed::bind(&transport::typed::Endpoint::Unix(path.to_path_buf())).await {
+		Ok(transport::typed::BindOutcome::Bound(listener)) => Ok(listener),
+		Ok(transport::typed::BindOutcome::AlreadyRunning) => Err(Error::Remote(format!(
+			"{} is already served",
+			path.display()
+		))),
+		Err(error) => Err(Error::Remote(format!("{}: {error}", path.display()))),
+	}
+}
+
+/// Answer cartridges on the host's inner socket for as long as the host lives.
+pub(crate) async fn accept(
+	host: std::sync::Weak<Host>,
+	mut listener: transport::typed::LocalListener,
+) {
+	while let Ok(adapter) = listener.accept().await {
+		let Some(host) = host.upgrade() else { break };
+		let (stop, _) = mpsc::channel(1);
+		tokio::spawn(connection(host, adapter, stop));
+	}
+}
+
+/// Serve the project's host socket for the command line until asked to stop.
+/// Returns `Ok(false)` when another host already serves this project.
 pub async fn serve(host: Arc<Host>) -> Result<bool> {
 	let path = path(&host.profile)?;
 	let mut listener =
@@ -146,46 +176,109 @@ fn write_private(path: &Path, text: &str) -> Result<()> {
 		.map_err(|e| Error::file(path, e))
 }
 
+#[derive(Clone)]
+enum Caller {
+	Host,
+	Cartridge(String),
+}
+
 async fn connection(
 	host: Arc<Host>,
 	adapter: transport::typed::LocalAdapter,
 	stop: mpsc::Sender<()>,
 ) {
 	let (peer, mut incoming) = Peer::spawn(adapter, Some(1 << 26));
-	let authenticated = match incoming.recv().await {
-		Some(Incoming::Request(request))
-			if request.method == "auth" && request.params["token"] == host.host_token() =>
-		{
-			request.reply(Ok(json!({ "cartridge": "host" })));
-			true
+	let caller = match incoming.recv().await {
+		Some(Incoming::Request(request)) if request.method == "auth" => {
+			let token = request.params["token"].as_str().unwrap_or_default();
+			let caller = match token == host.host_token() {
+				true => Some(Caller::Host),
+				false => host.caller(token).map(Caller::Cartridge),
+			};
+			match caller {
+				Some(caller) => {
+					request.reply(Ok(json!({ "cartridge": "host" })));
+					Some(caller)
+				}
+				None => {
+					request.reply(Err(rpc::Error::new(rpc::UNAUTHORIZED, "unknown token")));
+					None
+				}
+			}
 		}
 		Some(Incoming::Request(request)) => {
 			request.reply(Err(rpc::Error::new(
 				rpc::UNAUTHORIZED,
-				"authenticate first with the host token",
+				"authenticate first",
 			)));
-			false
+			None
 		}
-		_ => false,
+		_ => None,
 	};
-	if !authenticated {
+	let Some(caller) = caller else {
 		peer.close();
 		peer.flushed().await;
 		return;
-	}
+	};
 	while let Some(message) = incoming.recv().await {
 		if let Incoming::Request(request) = message {
-			tokio::spawn(handle(host.clone(), peer.clone(), request, stop.clone()));
+			tokio::spawn(handle(
+				host.clone(),
+				peer.clone(),
+				caller.clone(),
+				request,
+				stop.clone(),
+			));
 		}
 	}
 }
 
-async fn handle(host: Arc<Host>, peer: Peer, request: Request, stop: mpsc::Sender<()>) {
+fn handle(
+	host: Arc<Host>,
+	peer: Peer,
+	caller: Caller,
+	request: Request,
+	stop: mpsc::Sender<()>,
+) -> futures::future::BoxFuture<'static, ()> {
+	Box::pin(answer(host, peer, caller, request, stop))
+}
+
+async fn answer(
+	host: Arc<Host>,
+	peer: Peer,
+	caller: Caller,
+	request: Request,
+	stop: mpsc::Sender<()>,
+) {
 	let params = request.params.clone();
 	let application = |e: Error| rpc::Error::application(e.to_string());
 	let method = request.method.clone();
+	let granted = match (&caller, method.as_str()) {
+		(Caller::Host, _) => true,
+		(Caller::Cartridge(_), "status" | "snapshot" | "cartridges") => true,
+		(Caller::Cartridge(id), "bridge.status" | "bridge.call") => host.bridged(id),
+		_ => false,
+	};
+	if !granted {
+		let message = format!("`{method}` is not granted to this token");
+		return request.reply(Err(rpc::Error::new(rpc::UNAUTHORIZED, message)));
+	}
 	match method.as_str() {
 		"status" => request.reply(Ok(json!(host.status()))),
+		"snapshot" => request.reply(Ok(host.snapshot())),
+		"cartridges" => request.reply(Ok(host.cartridges())),
+		"bridge.status" => request.reply(Ok(host.bridge_status())),
+		"bridge.call" => {
+			let result = host
+				.bridge_call(
+					params["owner"].as_str().unwrap_or_default(),
+					params["generation"].as_u64().unwrap_or_default(),
+					params["key"].as_str().unwrap_or_default(),
+					params["args"].clone(),
+				)
+				.await;
+			request.reply(result.map_err(application));
+		}
 		"call" => {
 			let key = params["key"].as_str().unwrap_or_default().to_owned();
 			let result = host.call(&key, params["args"].clone()).await;

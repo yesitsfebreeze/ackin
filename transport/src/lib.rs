@@ -6,12 +6,14 @@
 //! - [`cartridge`]: the cartridge side of the cartridge protocol
 //!   (docs/transport.txt in the cartridge repository), for cartridges written
 //!   in Rust.
+//! - [`settings`]: declared settings and their defaults.
 //! - [`service!`]: typed client/server pairs generated from a trait.
 
 extern crate self as transport;
 
 pub mod cartridge;
 pub mod rpc;
+pub mod settings;
 pub mod typed;
 
 pub use transport_macros::service;

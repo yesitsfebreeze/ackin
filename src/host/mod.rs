@@ -101,10 +101,14 @@ pub struct Host {
 	providers: Mutex<HashMap<String, String>>,
 	op: tokio::sync::Mutex<()>,
 	lifecycle: broadcast::Sender<Value>,
+	inner: std::sync::OnceLock<tokio::task::JoinHandle<()>>,
 }
 
 impl Drop for Host {
 	fn drop(&mut self) {
+		if let Some(task) = self.inner.get() {
+			task.abort();
+		}
 		let _ = std::fs::remove_dir_all(&self.sockets);
 	}
 }
@@ -137,6 +141,7 @@ impl Host {
 			providers: Mutex::default(),
 			op: tokio::sync::Mutex::new(()),
 			lifecycle: broadcast::channel(crate::settings::host().lifecycle_queue).0,
+			inner: std::sync::OnceLock::new(),
 		}))
 	}
 
@@ -150,6 +155,11 @@ impl Host {
 
 	pub(crate) fn host_token(&self) -> &str {
 		&self.host_token
+	}
+
+	/// The socket cartridges reach the host on.
+	pub(crate) fn inner_socket(&self) -> PathBuf {
+		self.sockets.join("host.sock")
 	}
 
 	/// The socket a cartridge serves on, stable for the life of this host.
@@ -212,6 +222,12 @@ impl Host {
 	/// Load the profile and bring the running cartridges in line with it.
 	pub async fn reconcile(self: &Arc<Self>) -> Result<()> {
 		let _op = self.op.lock().await;
+		if self.inner.get().is_none() {
+			let listener = socket::listen(&self.inner_socket()).await?;
+			let _ = self
+				.inner
+				.set(tokio::spawn(socket::accept(Arc::downgrade(self), listener)));
+		}
 		let entries = self.entries()?;
 		let planned: Vec<(Entry, Option<Result<Plan>>)> = entries
 			.into_iter()
@@ -589,6 +605,161 @@ impl Host {
 			}
 		}))
 		.await
+	}
+
+	/// The cartridge a host token was issued to.
+	pub(crate) fn caller(&self, token: &str) -> Option<String> {
+		self.edges
+			.lock()
+			.iter()
+			.find(|((_, to, _), issued)| to == "host" && *issued == token)
+			.map(|((from, _, _), _)| from.clone())
+	}
+
+	/// Enabled cartridges that are running, with their folders.
+	pub fn cartridges(&self) -> Value {
+		let slots = self.slots.lock();
+		Value::Array(
+			slots
+				.iter()
+				.filter(|s| s.running.is_some())
+				.map(|s| json!({ "id": s.entry.id, "dir": s.entry.file(&self.dir).parent() }))
+				.collect(),
+		)
+	}
+
+	/// The composition as data: every entry, its state, wiring, sources and context paths.
+	pub fn snapshot(&self) -> Value {
+		let providers = self.providers.lock().clone();
+		let slots = self.slots.lock();
+		let existing = |root: &Path, name: &str| {
+			let path = root.join(name);
+			path.exists().then_some(path)
+		};
+		let entries: Vec<Value> = slots
+			.iter()
+			.map(|slot| {
+				let file = slot.entry.file(&self.dir);
+				let root = file.parent().unwrap_or(&self.dir).to_path_buf();
+				let plan = slot.plan.as_deref();
+				let needs = plan.map(|p| p.needs.clone()).unwrap_or_default();
+				let dependencies: Vec<Value> = needs
+					.iter()
+					.map(|key| json!({ "key": key, "provider": providers.get(key) }))
+					.collect();
+				let sources: Vec<Value> = slot
+					.sources
+					.iter()
+					.map(|source| json!({ "path": source.path, "changed": source.changed() }))
+					.collect();
+				let source_reference = std::fs::read_to_string(root.join("cartridge.json"))
+					.ok()
+					.and_then(|text| serde_json::from_str::<Value>(&text).ok())
+					.and_then(|manifest| manifest["source"].as_str().map(str::to_owned));
+				let implementation = ["Cargo.toml", "package.json"]
+					.iter()
+					.any(|name| root.join(name).is_file());
+				json!({
+					"id": slot.entry.id,
+					"state": slot.state,
+					"error": slot.error,
+					"path": file,
+					"dir": root,
+					"inject": needs,
+					"provide": plan.map(|p| p.provide.clone()).unwrap_or_default(),
+					"on": plan.map(|p| p.on.clone()).unwrap_or_default(),
+					"dependencies": dependencies,
+					"sources": sources,
+					"context": {
+						"readme": existing(&root, "README.md"),
+						"memos": existing(&root, ".cartridge/memos"),
+						"tests": existing(&root, "tests"),
+						"source": root,
+						"implementation_source": implementation.then_some(&root),
+						"source_reference": source_reference,
+					},
+				})
+			})
+			.collect();
+		json!({
+			"host_pid": std::process::id(),
+			"profile": self.profile,
+			"cartridge_root": self.dir,
+			"entries": entries,
+		})
+	}
+
+	fn module(slot: &Slot) -> Option<&Path> {
+		slot.sources
+			.iter()
+			.map(|source| source.path.as_path())
+			.find(|path| {
+				path.extension()
+					.is_some_and(|e| e == "tsx" || e == "ts" || e == "js" || e == "jsx")
+			})
+	}
+
+	/// Whether the profile grants `id` the client-module bridge.
+	pub(crate) fn bridged(&self, id: &str) -> bool {
+		self.slots
+			.lock()
+			.iter()
+			.any(|s| s.entry.id == id && s.entry.config["bridge"] == true)
+	}
+
+	/// Active cartridges that ship a client module, and the services they provide.
+	pub fn bridge_status(&self) -> Value {
+		let slots = self.slots.lock();
+		Value::Array(
+			slots
+				.iter()
+				.filter(|s| s.state == State::Active)
+				.filter_map(|s| {
+					let module = Self::module(s)?;
+					Some(json!({
+						"id": s.entry.id,
+						"generation": s.generation,
+						"module": module,
+						"services": s.plan.as_ref().map(|p| p.provide.clone()).unwrap_or_default(),
+					}))
+				})
+				.collect(),
+		)
+	}
+
+	/// A client module's call into a service its own cartridge provides.
+	pub async fn bridge_call(
+		&self,
+		owner: &str,
+		generation: u64,
+		key: &str,
+		args: Value,
+	) -> Result<Value> {
+		{
+			let slots = self.slots.lock();
+			let slot = slots
+				.iter()
+				.find(|s| s.entry.id == owner)
+				.ok_or_else(|| Error::Reload("bridge owner unloaded".into()))?;
+			if slot.state != State::Active || slot.generation != generation {
+				return Err(Error::Reload(
+					"bridge generation is no longer active".into(),
+				));
+			}
+			if Self::module(slot).is_none() {
+				return Err(Error::Reload("cartridge has no client module".into()));
+			}
+			if !slot
+				.plan
+				.as_ref()
+				.is_some_and(|p| p.provide.iter().any(|k| k == key))
+			{
+				return Err(Error::Reload(
+					"a bridge client may only call services provided by its own cartridge".into(),
+				));
+			}
+		}
+		self.call(key, args).await
 	}
 
 	/// A new connection to an active cartridge, authenticated as the host.
