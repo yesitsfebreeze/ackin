@@ -411,8 +411,11 @@ async fn a_typescript_cartridge_speaks_the_same_wire() {
 		return;
 	};
 	let dir = tempfile::tempdir().unwrap();
-	let wire =
-		std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/transport/wire.ts")).unwrap();
+	let wire = std::fs::read_to_string(concat!(
+		env!("CARGO_MANIFEST_DIR"),
+		"/src/transport/wire.ts"
+	))
+	.unwrap();
 	write(dir.path(), "ts/wire.ts", &wire);
 	write(
 		dir.path(),

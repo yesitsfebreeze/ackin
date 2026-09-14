@@ -9,7 +9,7 @@ BUILD AND TEST
 
 The host tests start real cartridges: Lua cartridges, a Rust process cartridge
 built from .cartridge/tests/unit/src/tests/fixtures/echo_fixture.rs, and, when
-Bun is installed, a TypeScript cartridge using transport/wire.ts. Process
+Bun is installed, a TypeScript cartridge using src/transport/wire.ts. Process
 cartridges run inside the sandbox, so the tests exercise it too.
 
 RUNNING

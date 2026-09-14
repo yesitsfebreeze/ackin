@@ -26,7 +26,7 @@ futures = "0.3"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-transport = { path = "transport" }
+transport = { path = "src/transport" }
 libc = "0.2"
 thiserror = "2"
 mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde", "async"] }
@@ -45,7 +45,7 @@ warnings = "deny"
 
 # Keep the runtime and its isolated worktrees independent of a containing workspace.
 [workspace]
-members = ["transport", "transport/macros"]
+members = ["src/transport", "src/transport/macros"]
 
 [profile.dev]
 debug = 0

@@ -1,8 +1,8 @@
 # Transport: how cartridges talk
 
 The protocol between the host and every cartridge, and between cartridges.
-transport/ implements it in Rust (src/cartridge.rs for the cartridge side) and
-transport/wire.ts in TypeScript. MCP is how coding agents reach the tools from
+src/transport/ implements it in Rust (src/cartridge.rs for the cartridge side)
+and src/transport/wire.ts in TypeScript. MCP is how coding agents reach the tools from
 outside; this document is everything inside.
 
 ROLES

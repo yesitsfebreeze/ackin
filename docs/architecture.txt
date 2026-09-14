@@ -20,7 +20,8 @@ The host loads and wires; it is not on the path of calls or events.
   src/settings/   settings files and the host's own settings
   src/trace.rs    trace ids and the diagnostics sink
   src/cli/        the command line
-  transport/      the protocol crate: JSON-RPC peer, sockets, the cartridge side, settings
+  src/transport/  the protocol crate, re-exported as `cartridge::transport`: JSON-RPC
+                  peer, sockets, the cartridge side, settings, and wire.ts for TypeScript
 
 THE PROFILE
 

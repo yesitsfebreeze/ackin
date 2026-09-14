@@ -242,7 +242,11 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 		profile.push_str(&format!("(allow file-write* {})\n", writes.join(" ")));
 	}
 	// Terminals: a cartridge that may write devices may open and drive a pseudo-terminal.
-	if grant.write.iter().any(|path| path == "/" || path.starts_with("/dev")) {
+	if grant
+		.write
+		.iter()
+		.any(|path| path == "/" || path.starts_with("/dev"))
+	{
 		profile.push_str("(allow pseudo-tty)\n(allow file-ioctl)\n");
 	}
 	// Network is all or nothing on this platform: a nonempty `net` allows

@@ -48,8 +48,9 @@ cargo build --release
 cargo test --workspace
 ```
 
-The workspace holds the host and `transport/`, the protocol crate cartridges
-written in Rust depend on. `transport/wire.ts` is the same protocol for
+`src/transport/` is the protocol: a crate of its own, so cartridges written in
+Rust depend on it without the host, and re-exported by the host as
+`cartridge::transport`. `src/transport/wire.ts` is the same protocol for
 TypeScript cartridges.
 
 ## Usage

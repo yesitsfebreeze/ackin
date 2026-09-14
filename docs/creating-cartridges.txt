@@ -62,7 +62,7 @@ reaches.
 In Rust, depend on the transport crate:
 
   [dependencies]
-  transport = { path = "../cartridge.ctg/transport" }
+  transport = { path = "../cartridge.ctg/src/transport" }
   tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
   serde_json = "1"
 
@@ -78,7 +78,7 @@ In Rust, depend on the transport crate:
 `Ctx` has the same operations as the Lua ctx: provide, call, on, emit, bail,
 parallel, gather, notify, publish, subscribe, host, on_dispose, needs, name.
 
-In TypeScript, copy transport/wire.ts into the cartridge:
+In TypeScript, copy src/transport/wire.ts into the cartridge:
 
   import { Wire } from "./wire";
   const wire = new Wire();
