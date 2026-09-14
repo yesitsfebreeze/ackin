@@ -55,7 +55,7 @@ fn trust(dir: &Path) {
 
 async fn boot(dir: &Path) -> Arc<Host> {
 	node_binary();
-	let host = Host::new(dir, dir.join(".cartridge"), false).unwrap();
+	let host = Host::new(dir, dir.join(".cartridge")).unwrap();
 	host.reconcile().await.unwrap();
 	host
 }
@@ -128,7 +128,10 @@ async fn a_schema_only_change_reaches_a_sender_that_already_validated() {
 	trust(dir.path());
 	host.replace("greeter").await.unwrap();
 	// The warmed sender must validate against the new schema, not the old one.
-	let error = host.bail("greet", json!({"name": "you"})).await.unwrap_err();
+	let error = host
+		.bail("greet", json!({"name": "you"}))
+		.await
+		.unwrap_err();
 	assert!(error.contains("rejected by its schema"), "{error}");
 	assert_eq!(
 		host.bail("greet", json!({"other": "you"})).await.unwrap(),
@@ -669,7 +672,7 @@ async fn verify_sends_every_declared_contract() {
 	);
 	profile(dir.path(), &["checked"]);
 	node_binary();
-	let host = Host::new(dir.path(), dir.path().join(".cartridge"), false).unwrap();
+	let host = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();
 	assert_eq!(host.verify().await.unwrap(), (1, Vec::new()));
 }
 
@@ -687,7 +690,7 @@ async fn grant_paths_name_the_project_and_settings() {
 		"",
 	);
 	profile(dir.path(), &["store"]);
-	let host = Host::new(dir.path(), dir.path().join(".cartridge"), false).unwrap();
+	let host = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();
 	let entry = host
 		.entries()
 		.unwrap()
