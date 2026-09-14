@@ -28,6 +28,7 @@ TROUBLESHOOTING
   cartridge status                  every cartridge, its state, error and what it waits for
   cartridge follow lifecycle        state changes as they happen
   cartridge follow <id>.error       failures of one cartridge's listeners
+  cartridge doctor                  every cartridge's own answer to whether it is healthy
   cartridge list                    the profile and what each need binds to
   cartridge settings <id>           a cartridge's settled configuration
 

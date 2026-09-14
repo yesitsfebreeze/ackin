@@ -25,6 +25,28 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+	/// Make the working directory a project: choose which of the cartridges
+	/// found take part, link or clone them under the cartridge root, and write
+	/// the `.cartridge/init.lua` that names them. Asks on a terminal
+	Setup {
+		/// A directory holding cartridge folders to choose from; repeatable.
+		/// Absent: the cartridge root, or the terminal is asked
+		#[arg(long)]
+		from: Vec<PathBuf>,
+		/// Take these cartridges by name, without asking
+		#[arg(long, value_delimiter = ',')]
+		with: Vec<String>,
+		/// Take every cartridge offered, without asking
+		#[arg(long)]
+		yes: bool,
+		/// The catalog of known repositories to offer; absent,
+		/// `~/.cartridge/catalog.json` (or `$CARTRIDGE_HOME/catalog.json`)
+		#[arg(long)]
+		catalog: Option<PathBuf>,
+	},
+	/// Ask every composed cartridge that declares a `doctor` event whether it
+	/// is healthy here, and say which are not
+	Doctor,
 	/// Start the profile and serve the host socket until stopped
 	Daemon,
 	/// Start the harness proxy and run an agent against it: `cartridge launch claude -- -p hi`

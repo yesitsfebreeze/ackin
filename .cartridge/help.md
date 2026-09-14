@@ -8,6 +8,7 @@ sandboxed node with the `cartridge` global injected.
 
 ## Use
 
+- `cartridge setup`: make this directory a project; `cartridge doctor`: ask each cartridge whether it is healthy.
 - `cartridge help [<id>[/<file>[#<section>]]]`: the documentation of the host and every cartridge.
 - `cartridge list`: the profile and what each need binds to.
 - `cartridge settings [<id>|<id>.<key>]`: every setting and the file that settled it.

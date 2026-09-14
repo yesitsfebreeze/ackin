@@ -268,7 +268,7 @@ fn nested(value: &Value, specs: &Specs, prefix: &str, depth: usize) {
 
 /// A name Lua can take bare, or the bracketed string form for one it cannot —
 /// `live-record` is a key, not an identifier.
-fn lua_key(key: &str) -> String {
+pub(crate) fn lua_key(key: &str) -> String {
 	let bare = !key.is_empty()
 		&& !key.starts_with(|c: char| c.is_ascii_digit())
 		&& key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
@@ -278,7 +278,7 @@ fn lua_key(key: &str) -> String {
 	}
 }
 
-fn lua_value(value: &Value) -> String {
+pub(crate) fn lua_value(value: &Value) -> String {
 	match value {
 		Value::Null => "nil".to_owned(),
 		Value::Bool(b) => b.to_string(),

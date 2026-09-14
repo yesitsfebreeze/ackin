@@ -7,6 +7,7 @@ mod listing;
 mod manual;
 mod project;
 mod settings;
+mod setup;
 
 use std::process::ExitCode;
 
@@ -44,13 +45,33 @@ pub fn main() -> ExitCode {
 			.block_on(cartridge::node::main())
 			.unwrap_or_else(|error| fail(FAILED, error));
 	}
-	let outcome = cli
-		.check()
-		.and_then(|()| project::locate(cli.dir.clone(), cli.yolo))
-		.and_then(|project| {
-			let runtime = tokio::runtime::Runtime::new()?;
-			runtime.block_on(run(cli.command, &project))
-		});
+	let outcome = cli.check().and_then(|()| {
+		let runtime = tokio::runtime::Runtime::new()?;
+		match cli.command {
+			// Setup is what makes a project, so it runs where it was typed
+			// rather than in a project above it.
+			Command::Setup {
+				from,
+				with,
+				yes,
+				catalog,
+			} => {
+				let root = std::env::current_dir()?;
+				let dir = root.join(cli.dir.unwrap_or_else(cartridge::loader::builtin));
+				let ask = setup::Ask {
+					from,
+					with,
+					yes,
+					catalog,
+				};
+				runtime.block_on(setup::setup(&root, &dir, ask))
+			}
+			command => {
+				let project = project::locate(cli.dir, cli.yolo)?;
+				runtime.block_on(run(command, &project))
+			}
+		}
+	});
 	outcome.unwrap_or_else(|error| fail(code_of(&error), error))
 }
 
@@ -79,6 +100,8 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 		}
 		Command::Follow { channel, since } => client::follow(project, &channel, since).await,
 		Command::Node => cartridge::node::main().await,
+		Command::Doctor => setup::doctor(project).await,
+		Command::Setup { .. } => unreachable!("setup runs before a project is located"),
 		Command::Status => client::ask(project, "status", Value::Null).await,
 		Command::Reload { cartridge } => {
 			client::ask(project, "reload", json!({ "cartridge": cartridge })).await

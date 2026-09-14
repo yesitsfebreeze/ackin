@@ -10,6 +10,8 @@
 //!   "ui": "ui/index.ts",
 //!   "selftest": "store.check",  // an event it listens to, proving behaviour
 //!   "integration": "store.wire",// an event it listens to, proving wiring
+//!   "setup": "store.setup",     // an event it listens to, sent by `cartridge setup`
+//!   "doctor": "store.doctor",   // an event it listens to, sent by `cartridge doctor`
 //!   "source": "https://…",
 //!   "settings": { "max_bytes": {"type": "integer", "default": 67108864, "min": 1024, "doc": "Read budget."} },
 //!   "events": { "store.changed": {"description": "…", "schema": {"type": "object"}} },

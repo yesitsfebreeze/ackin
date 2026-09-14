@@ -52,6 +52,8 @@ cargo test --workspace
 ## Usage
 
 ```sh
+cartridge setup                   # make this directory a project: choose cartridges, write .cartridge/init.lua
+cartridge doctor                  # ask every composed cartridge whether it is healthy here
 cartridge run <event> '<json>'    # start the profile, send, print the first answer, stop
 cartridge daemon                  # start the profile and keep it running
 cartridge call <event> '<json>'   # send on the running base, print the first answer
@@ -64,6 +66,13 @@ cartridge settings [<id>]         # every setting and the file that settled it
 cartridge verify [<cartridge>]    # send the contracts cartridges declare
 cartridge help [<address>]        # the documentation of the base and every cartridge
 ```
+
+`cartridge setup` offers the cartridge folders under the cartridge root (or
+`--from <dir>`) and the repositories named in `~/.cartridge/catalog.json`
+(`{"<name>": {"repository": "<url>", "description": "…"}}`), links or clones
+the chosen ones under the root, writes `.cartridge/init.lua`, and sends each a
+`setup` event it declares so it can ask what this project must decide.
+`--with a,b` or `--yes` take cartridges without asking.
 
 `cartridge mcp` and `cartridge launch` start the profile and hand this terminal
 to the cartridges that listen to `mcp` and `proxy`.

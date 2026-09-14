@@ -117,6 +117,8 @@ name and entry are required; entry is a relative .lua path inside the folder.
   config          author defaults laid over the declared ones
   selftest        an event in `listen` that proves the cartridge's behaviour
   integration     an event in `listen` that proves its wiring to a real dependency
+  setup           an event in `listen` that `cartridge setup` sends after installing it
+  doctor          an event in `listen` that `cartridge doctor` sends
   commands        label -> {argv, cwd, description?}; documentation, never run by the base
   binary          executable basename when it differs from the folder
   ui              a JavaScript or TypeScript client module inside the folder
@@ -131,6 +133,19 @@ CONTRACTS
 `integration` event to its cartridge with null; an error or `false` fails.
 `cartridge verify <id>` starts only that cartridge and what its needs resolve
 to in the ledger.
+
+SETUP AND DOCTOR
+
+`cartridge setup` sends the `setup` event {answers, interactive} and reads back
+an object: `ask` is a list of {key, prompt, default?} put to the person, whose
+answers join `answers` on the next send; `config` is the table written under
+the entry's id in .cartridge/config.lua; `done` (or an empty `ask`) ends the
+exchange; `note` is printed. Without a terminal every question takes its
+default, and one without a default stops the exchange.
+
+`cartridge doctor` sends the `doctor` event {} to every enabled cartridge that
+declares one and expects {ok, problems}; any `ok` false, error or other answer
+fails the command.
 
 THE HELP PAGE
 

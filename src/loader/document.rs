@@ -27,6 +27,13 @@ pub struct Cartridge {
 	pub selftest: Option<String>,
 	/// A contract: an event this cartridge listens to that proves its wiring.
 	pub integration: Option<String>,
+	/// An event this cartridge listens to that `cartridge setup` sends after
+	/// installing it, to ask what this project must decide and take back the
+	/// configuration to write. The exchange is described in `cli/setup.rs`.
+	pub setup: Option<String>,
+	/// An event this cartridge listens to that `cartridge doctor` sends to ask
+	/// whether it is healthy here: `{"ok": bool, "problems": [text]}`.
+	pub doctor: Option<String>,
 	/// Repository URL or other retrieval reference when source is not installed.
 	pub source: Option<String>,
 	/// The cartridge's own configuration, carried by the document. The ledger
@@ -233,6 +240,8 @@ impl Cartridge {
 		for (field, contract) in [
 			("selftest", &self.selftest),
 			("integration", &self.integration),
+			("setup", &self.setup),
+			("doctor", &self.doctor),
 		] {
 			if let Some(k) = contract {
 				if !self.listen.contains(k) {
