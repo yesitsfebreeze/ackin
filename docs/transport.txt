@@ -1,0 +1,180 @@
+# Transport: how cartridges talk
+
+Status: the transport crate (transport/) implements the wire and the
+cartridge side; the host and the cartridges are not ported yet. This replaces the stdio process wire
+(src/cartridge.rs), the socket protocol (src/socket.rs) and the Rust SDK
+(src/sdk.rs). MCP stays the interface coding agents use from outside; this
+document is everything inside.
+
+ROLES
+
+The host loads and wires. It is never on the path of a call or an event.
+
+  - reads .cartridge/init.lua and every cartridge.json
+  - settles settings (declaration, ~/.cartridge/config.lua, .cartridge/config.lua)
+  - resolves each need to the cartridge providing it
+  - binds one socket per cartridge and starts the cartridge on it
+  - mints the tokens that make isolation real
+  - hands every cartridge its directory, and a new one when the composition changes
+  - watches sources, reloads, disposes
+
+A cartridge is a transport server on its own socket. It serves the keys it
+provides and the events it listens to, and it calls the cartridges it needs
+directly. It may be written in any language. A Lua cartridge is served by the
+host in-process on the same terms; its authors never see the wire.
+
+Registration is always Lua. A process cartridge's init.lua is one line:
+
+  return cartridge.process("my-binary")
+
+WIRE
+
+JSON-RPC 2.0, one object per line, UTF-8, no newline inside an object, over a
+Unix socket (a named pipe on Windows). A request has "id"; a notification does
+not. Requests travel from the side that connected to the side that accepted;
+notifications travel from the server only (stream delivery). One connection
+carries many requests at once; replies match by id, in any order.
+
+Error codes:
+  -32700 parse error        -32601 unknown method    -32602 bad params
+  -32000 application error  -32001 unauthorized      -32002 key not provided
+
+Any JSON-RPC library works. The Rust implementation is the `transport` crate.
+
+STARTUP
+
+1. The host picks the cartridge's socket path, <runtime dir>/<cartridge id>.sock
+   inside a 0700 directory of this host run, removes whatever is left there, and
+   starts the process with two variables:
+     CARTRIDGE_SOCKET                the path to bind and serve
+     CARTRIDGE_HOST_TOKEN            the token the host will authenticate with
+     CARTRIDGE_CONNECT_TIMEOUT_SECS  how long to retry reaching another cartridge
+   The path is the same for every start of that cartridge in one host run, so a
+   restart changes nothing any other cartridge holds.
+2. The cartridge binds the path (mode 0600) and accepts. The host connects as
+   soon as the path answers, authenticates, and calls `apply`.
+3. The cartridge answers `apply` once it is ready to serve. No answer within
+   host.startup_timeout_secs fails it.
+4. stdin stays open for the life of the cartridge; end of file means the host is
+   gone and the cartridge exits. stdout is unused. stderr lines are the
+   cartridge's diagnostics and the host records them.
+
+There is no `hello`. What a cartridge provides, needs and listens to is in its
+cartridge.json, readable before anything runs.
+
+ISOLATION
+
+A cartridge reaches another only through a key it declared in `needs`, or by
+emitting an event another declared in `on`. The host enforces this with
+tokens, one per edge:
+
+  - a call token lets its holder `call` the keys it needs from the target, and
+    subscribe to the target's channels
+  - an event token lets its holder send `event` for the names the target listens to
+  - the host token allows everything, including `apply`, `directory` and `dispose`
+
+A connection's first request is `auth {token}`; anything else first is
+refused with -32001 and the connection closed. The server checks every later
+request against that token's grant. Tokens are random, per host run, and
+arrive only through CARTRIDGE_HOST_TOKEN, `apply` and `directory`.
+
+RELOAD
+
+A reload is a stop and a start: `dispose`, wait for the process to exit, start
+it again on the same path with the same tokens. A call made while a cartridge is
+down fails to connect; the caller's library retries the connection until
+host.startup_timeout_secs has passed, then fails the call. A call in flight when
+the connection breaks fails and is never replayed.
+
+DIRECTORY
+
+The directory is what one cartridge knows of the rest. It arrives in `apply`
+and again, whole, in a `directory` request whenever it changes.
+
+  {
+    "needs":  { "router": {"cartridge": "router", "socket": "/…/router.sock", "token": "…"} },
+    "events": { "session.start": [ {"cartridge": "agent", "socket": "…", "token": "…"} ] },
+    "accept": { "…token…": {"from": "agent", "scope": "call", "names": ["router"]} }
+  }
+
+`needs` is keyed by need. `events` lists, per event any cartridge listens to,
+the listeners in composition order (init.lua order); any cartridge may emit any
+event. `accept` is what this cartridge's own server lets in: `names` are the keys
+a call token may call, or the events an event token may send. The host token is
+not listed; it is CARTRIDGE_HOST_TOKEN.
+
+METHODS A CARTRIDGE SERVES
+
+  auth        {token}                     -> {cartridge}
+  apply       {name, config, directory}   -> {}          host only
+  directory   {directory}                 -> {}          host only
+  call        {key, args, trace?}         -> any
+  event       {name, data, trace?}        -> any | null  null means "no answer"
+  subscribe   {channel, since?}           -> {seq}
+  unsubscribe {channel}                   -> {}
+  dispose     {}                          -> {}          host only; exit after answering
+
+Stream delivery is the notification
+  channel {channel, seq, kind, data}      kind: data | subscribe | unsubscribe | error
+
+EVENTS
+
+The emitter dispatches; the host is not involved. From the directory's
+listeners for a name:
+
+  emit      send to all, do not wait
+  bail      send in order, stop at the first non-null answer
+  parallel  send to all, wait, fail if any failed
+  gather    send to all, wait, keep every non-null answer with its sender
+
+A listener that fails publishes the failure on its own `error` channel; the
+emitter is not the party that broke.
+
+STREAMS
+
+A channel belongs to the cartridge that publishes it. On the wire it is named
+without the owner, because the socket already is the owner; people and the CLI
+write <cartridge>.<channel>. The publisher keeps a bounded replay buffer and
+serves `subscribe` with `since`: every retained event with a greater `seq`, then
+live delivery. Subscribing takes a call token for the publisher. The host serves
+the channel `lifecycle` on its own socket: state transitions and failures of
+every cartridge.
+
+TRACES
+
+A request that carries "trace" keeps it on every request it causes. A
+request without one gets one minted by the first cartridge that handles it.
+
+CLI
+
+`cartridge call`, `status` and `follow` connect to the host's own socket with
+the host token read from .cartridge/runtime (0600) and speak the same wire.
+
+LUA CARTRIDGES
+
+The Lua surface does not change shape:
+
+  ctx:provide(key, fn)       served as `call`
+  ctx.<need>(args)           a `call` over the need's token
+  ctx:on(name, fn)           served as `event`; name must be in cartridge.json "on"
+  ctx:emit / bail / parallel / gather
+  ctx:publish(channel, data) / ctx:subscribe(target, channel, fn)
+
+MANIFEST CHANGES
+
+  added    "on": ["event.name", …]      events this cartridge listens to
+  removed  "export", nested cartridges  unused by every cartridge
+
+REMOVED FROM THE HOST
+
+  src/sdk.rs and its fixtures           replaced by the transport crate
+  hello discovery                        cartridge.json declares it
+  generation switch, reload handshake,   a reload is a stop and a start
+  resume
+  send                                   a published channel covers it
+  meta / intercept, isolate / realms     no cartridge uses them
+  bridge, snapshot, cartridges,          host queries a cartridge served through
+  injections, versions                   the host socket; injections live in the directory
+  fabric, graph, evidence, observation   cartridge concerns; a graph is a `gather`
+                                         over an event the owning cartridge names
+  cartridge::settings as a Rust API      a cartridge reads config from `apply`

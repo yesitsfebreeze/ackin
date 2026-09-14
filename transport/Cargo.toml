@@ -1,0 +1,36 @@
+[package]
+name = "transport"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+rust-version = "1.89"
+description = "Local JSON-RPC 2.0 over Unix sockets and named pipes, and the cartridge side of the cartridge protocol."
+
+[dependencies]
+transport-macros = { path = "macros" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.53", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
+futures = "0.3"
+thiserror = "2"
+getrandom = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.53", features = ["full", "test-util"] }
+
+[lints.rust]
+warnings = "deny"
+
+# Its own workspace, so it builds the same inside or beside any other.
+[workspace]
+members = ["macros"]
