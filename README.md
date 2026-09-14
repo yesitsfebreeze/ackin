@@ -104,6 +104,10 @@ you review it and run `cartridge trust`.
 `cartridge mcp` and `cartridge launch` start the profile and hand this terminal
 to the cartridges that listen to `mcp` and `proxy`.
 
+Ctrl-C or a terminate stops a foreground command and every cartridge it
+started, with the programs those cartridges spawned; while `launch`'s agent
+runs, Ctrl-C is the agent's.
+
 ## Writing a cartridge
 
 See [docs/creating-cartridges.txt](docs/creating-cartridges.txt).

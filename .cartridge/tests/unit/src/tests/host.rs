@@ -1041,3 +1041,118 @@ async fn one_cartridge_cannot_see_anothers_globals() {
 	);
 	host.stop().await;
 }
+
+/// Stopping a cartridge kills the whole group it leads, so a program it
+/// started does not outlive it.
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_cartridge_takes_its_programs_along() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"parent",
+		json!({"name": "parent", "entry": "init.lua",
+			"events": {"pid": {}}, "listen": ["pid"], "grant": {"exec": ["*"]}}),
+		r#"local pid = 0
+local sh = cartridge.spawn({"/bin/sh", "-c", "/bin/sleep 300 & echo $!; wait"})
+sh:on_line(function(line) pid = tonumber(line) end)
+cartridge.listen("pid", function() return pid end)"#,
+	);
+	profile(dir.path(), &["parent"]);
+	let host = boot(dir.path()).await;
+	let mut pid = 0;
+	for _ in 0..100 {
+		pid = host
+			.bail("pid", json!(null))
+			.await
+			.unwrap()
+			.and_then(|v| v.as_i64())
+			.unwrap_or(0);
+		if pid > 0 {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+	assert!(pid > 0, "the program never reported its child");
+	host.stop().await;
+	let pid = pid as libc::pid_t;
+	// SAFETY: signal 0 only checks that the process exists.
+	let gone = (0..100).any(|_| {
+		std::thread::sleep(Duration::from_millis(20));
+		let alive = unsafe { libc::kill(pid, 0) };
+		alive != 0
+	});
+	if !gone {
+		unsafe { libc::kill(pid, libc::SIGKILL) };
+	}
+	assert!(gone, "a program's child outlived its cartridge");
+}
+
+/// A run the host was asked to stop returns `Stopped` and stops its nodes,
+/// rather than waiting out the event deadline.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_request_ends_a_foreground_run() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"stuck",
+		json!({"name": "stuck", "entry": "init.lua",
+			"events": {"hang": {}}, "listen": ["hang"], "grant": {"exec": ["/bin/sleep"]}}),
+		r#"local sleeper = cartridge.spawn({"/bin/sleep", "60"}, {timeout_ms = 60000})
+cartridge.listen("hang", function() return sleeper:request({}) end)"#,
+	);
+	profile(dir.path(), &["stuck"]);
+	let host = boot(dir.path()).await;
+	let run = tokio::spawn({
+		let host = host.clone();
+		async move { host.run("hang", json!(null)).await }
+	});
+	host.stop_signal().cancel();
+	let ended = tokio::time::timeout(Duration::from_secs(10), run)
+		.await
+		.expect("a stopped run returns")
+		.unwrap();
+	assert!(matches!(ended, Err(crate::Error::Stopped)), "{ended:?}");
+	assert_ne!(status(&host, "stuck").state, State::Active);
+}
+
+/// `mcp` answers a terminate by stopping its profile and exiting, without
+/// waiting for the client to close stdin.
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminated_mcp_exits_with_its_input_still_open() {
+	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"tools",
+		json!({"name": "tools", "entry": "init.lua", "events": {"mcp": {}}, "listen": ["mcp"]}),
+		r#"cartridge.listen("mcp", function() return {ok = true} end)"#,
+	);
+	profile(dir.path(), &["tools"]);
+	node_binary();
+	let mut mcp = tokio::process::Command::new(built(&["--bin", "cartridge"]))
+		.args(["--dir", ".", "mcp"])
+		.current_dir(dir.path())
+		.stdin(std::process::Stdio::piped())
+		.stdout(std::process::Stdio::piped())
+		.stderr(std::process::Stdio::null())
+		.kill_on_drop(true)
+		.spawn()
+		.unwrap();
+	let mut input = mcp.stdin.take().unwrap();
+	input
+		.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n")
+		.await
+		.unwrap();
+	let mut lines = tokio::io::BufReader::new(mcp.stdout.take().unwrap()).lines();
+	tokio::time::timeout(Duration::from_secs(60), lines.next_line())
+		.await
+		.expect("mcp serves")
+		.unwrap();
+	// SAFETY: only signals the child this test spawned.
+	unsafe { libc::kill(mcp.id().unwrap() as libc::pid_t, libc::SIGTERM) };
+	let exited = tokio::time::timeout(Duration::from_secs(20), mcp.wait()).await;
+	drop(input);
+	assert!(exited.is_ok(), "mcp held its exit on an open stdin");
+}

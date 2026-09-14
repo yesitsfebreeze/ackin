@@ -96,7 +96,12 @@ fn dispatch() -> ExitCode {
 				}
 			}
 			let runtime = tokio::runtime::Runtime::new()?;
-			runtime.block_on(run(command, &project))
+			let outcome = runtime.block_on(run(command, &project));
+			// Nodes are stopped by now; `mcp`'s read of stdin would hold a
+			// dropped runtime's blocking thread, so the runtime is left to die
+			// with the process instead.
+			runtime.shutdown_background();
+			outcome
 		}
 	});
 	outcome.unwrap_or_else(|error| fail(code_of(&error), error))
@@ -156,21 +161,4 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 
 fn json_arg(s: &str) -> Result<Value> {
 	serde_json::from_str(s).map_err(|e| Error::Argument(format!("JSON expected: {e}")))
-}
-
-/// An interrupt from the terminal or a terminate from a supervisor.
-pub(crate) async fn stopped() {
-	use tokio::signal::unix::{signal, SignalKind};
-	let terminate = async {
-		match signal(SignalKind::terminate()) {
-			Ok(mut term) => {
-				term.recv().await;
-			}
-			Err(_) => futures::future::pending().await,
-		}
-	};
-	tokio::select! {
-		_ = tokio::signal::ctrl_c() => {}
-		_ = terminate => {}
-	}
 }

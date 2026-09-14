@@ -82,6 +82,14 @@ Lua instructions". The budget counts Lua instructions, not a host call Lua is
 waiting on, and a cartridge that catches its own refusal and keeps running
 leaves the process with status 70.
 
+Each node leads its own process group, and the programs it spawns join it.
+Stopping a node disposes it, closes its stdin, waits shutdown_timeout_secs,
+and kills the whole group, so nothing a cartridge started outlives it. The
+terminal's signals reach the base, not the nodes: an interrupt or a terminate
+stops `run`, `launch`, `mcp`, `daemon`, `verify` and `doctor` the way
+`cartridge stop` does. While `launch`'s agent runs, the interrupt is the
+agent's.
+
 A node reads no trust store: the base hands it the SHA-256 of the entry it
 verified, and the node refuses an entry whose bytes no longer match. The
 node's sandbox grant is what keeps it away from the store, not the check. The

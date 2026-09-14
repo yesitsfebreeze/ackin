@@ -121,6 +121,10 @@ its stdin; it emits and publishes with `{"emit": …}` and `{"publish": …}` li
 (transport.txt, PROTOCOL LINES). Every other line goes to `on_line`. Its stderr
 is recorded by the base. Its executable must be in the cartridge's `grant.exec`.
 
+`kill()` ends the program. A program runs in its cartridge's process group and
+is killed with it when the cartridge stops; one that starts a session or group
+of its own leaves that group and is not.
+
 The base allows that executable's own installation with it — the prefix a
 program in a `bin/` was installed under. An interpreter that reaches other
 installations (a Homebrew `node` reaching /opt/homebrew/opt) needs that tree

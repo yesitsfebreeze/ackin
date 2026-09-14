@@ -36,7 +36,7 @@ impl Host {
 		Fut: std::future::Future<Output = Result<serde_json::Value>>,
 	{
 		let mut watcher = None;
-		let result = async {
+		let body = async {
 			self.reconcile().await?;
 			watcher = Some(self.watch()?);
 			self.settled(crate::settings::host().verify_timeout()).await;
@@ -51,8 +51,11 @@ impl Host {
 				Err(error) => return Err(error),
 			};
 			then(reply).await
-		}
-		.await;
+		};
+		let result = tokio::select! {
+			result = body => result,
+			() = self.stopped() => Err(Error::Stopped),
+		};
 		if let Some(watcher) = watcher {
 			watcher.abort();
 		}
@@ -164,25 +167,32 @@ impl Host {
 		self: &Arc<Self>,
 		contracts: Vec<Contract>,
 	) -> Result<(usize, Vec<String>)> {
-		let mut failures = Vec::new();
-		self.reconcile().await?;
-		if !self.settled(crate::settings::host().verify_timeout()).await {
-			failures.push(format!(
-				"profile did not settle: {}",
-				stalled(&self.status()).join("; ")
-			));
-		}
-		for (id, key) in &contracts {
-			match self.send_to(id, key, serde_json::Value::Null).await {
-				Ok(serde_json::Value::Bool(false)) => {
-					failures.push(format!("{id} contract `{key}` returned false"))
-				}
-				Ok(_) => {}
-				Err(e) => failures.push(format!("{id} contract `{key}`: {e}")),
+		let body = async {
+			let mut failures = Vec::new();
+			self.reconcile().await?;
+			if !self.settled(crate::settings::host().verify_timeout()).await {
+				failures.push(format!(
+					"profile did not settle: {}",
+					stalled(&self.status()).join("; ")
+				));
 			}
-		}
+			for (id, key) in &contracts {
+				match self.send_to(id, key, serde_json::Value::Null).await {
+					Ok(serde_json::Value::Bool(false)) => {
+						failures.push(format!("{id} contract `{key}` returned false"))
+					}
+					Ok(_) => {}
+					Err(e) => failures.push(format!("{id} contract `{key}`: {e}")),
+				}
+			}
+			Ok(failures)
+		};
+		let result = tokio::select! {
+			result = body => result,
+			() = self.stopped() => Err(Error::Stopped),
+		};
 		self.stop().await;
-		Ok((contracts.len(), failures))
+		result.map(|failures| (contracts.len(), failures))
 	}
 }
 

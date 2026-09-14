@@ -166,7 +166,7 @@ impl Host {
 	}
 
 	/// Asked to stop, by the command line.
-	pub(crate) fn stop_signal(&self) -> tokio_util::sync::CancellationToken {
+	pub fn stop_signal(&self) -> tokio_util::sync::CancellationToken {
 		self.stop.clone()
 	}
 

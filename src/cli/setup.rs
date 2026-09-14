@@ -605,15 +605,18 @@ where
 	F: FnOnce() -> Fut,
 	Fut: std::future::Future<Output = Result<T>>,
 {
-	let result = async {
+	let body = async {
 		host.reconcile().await?;
 		// A cartridge still starting when the budget runs out answers with an
 		// error of its own, which says more than a timeout here would.
 		host.settled(cartridge::settings::host().verify_timeout())
 			.await;
 		ask().await
-	}
-	.await;
+	};
+	let result = tokio::select! {
+		result = body => result,
+		() = host.stopped() => Err(cartridge::Error::Stopped),
+	};
 	host.stop().await;
 	result
 }
@@ -640,7 +643,7 @@ fn answer(id: &str, question: &Value, default: &Value) -> Result<Value> {
 /// `doctor`: every composed cartridge that declares a `doctor` event is asked
 /// whether it is healthy here, and the answers are printed one per line.
 pub(crate) async fn doctor(project: &Project) -> Result<ExitCode> {
-	let host = Host::new(&project.dir, &project.profile)?;
+	let host = super::host::host(project, None)?;
 	let composed = host
 		.entries()
 		.map_err(|e| Error::Profile(format!("{}: {e}", project.profile.join(INIT).display())))?;

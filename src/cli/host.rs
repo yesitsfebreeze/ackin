@@ -8,10 +8,42 @@ use cartridge::host::{socket, Host};
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
 
-use super::{fail, stopped, Project, FAILED};
+use super::{fail, Project, FAILED};
 
-fn host(project: &Project) -> Result<Arc<Host>> {
-	Host::new(&project.dir, &project.profile)
+/// Nodes lead their own process groups, so the terminal signals this process
+/// alone: a terminate stops the host, and so does an interrupt unless a program
+/// holds the terminal (`launch`'s agent), which the terminal signals itself.
+pub(crate) fn host(
+	project: &Project,
+	foreground: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<Arc<Host>> {
+	let host = Host::new(&project.dir, &project.profile)?;
+	stop_on_signals(host.stop_signal(), foreground)?;
+	Ok(host)
+}
+
+fn stop_on_signals(
+	stop: tokio_util::sync::CancellationToken,
+	foreground: Option<Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<()> {
+	use std::sync::atomic::Ordering;
+	use tokio::signal::unix::{signal, SignalKind};
+	let mut interrupt = signal(SignalKind::interrupt())?;
+	let mut terminate = signal(SignalKind::terminate())?;
+	tokio::spawn(async move {
+		loop {
+			tokio::select! {
+				_ = terminate.recv() => break,
+				_ = interrupt.recv() => {
+					if !foreground.as_ref().is_some_and(|held| held.load(Ordering::SeqCst)) {
+						break;
+					}
+				}
+			}
+		}
+		stop.cancel();
+	});
+	Ok(())
 }
 
 /// Serve the host socket beside a foreground run, when no other host serves this project.
@@ -24,19 +56,11 @@ fn serve_beside(host: &Arc<Host>) -> tokio::task::JoinHandle<()> {
 	})
 }
 
-/// Foreground process cartridges receive terminal interrupts directly: the
-/// host swallows its own so the child sees the signal and the host sees EOF.
-fn swallow_interrupts() -> tokio::task::JoinHandle<()> {
-	tokio::spawn(async { while tokio::signal::ctrl_c().await.is_ok() {} })
-}
-
 pub(crate) async fn run(project: &Project, key: &str, args: Value) -> Result<ExitCode> {
-	let signals = swallow_interrupts();
-	let host = host(project)?;
+	let host = host(project, None)?;
 	let served = serve_beside(&host);
 	let result = host.run(key, args).await;
 	served.abort();
-	signals.abort();
 	match result? {
 		value if !value.is_null() => println!("{value}"),
 		_ => {}
@@ -50,11 +74,20 @@ pub(crate) async fn launch(
 	model: String,
 	args: Vec<String>,
 ) -> Result<ExitCode> {
-	let signals = swallow_interrupts();
-	let host = host(project)?;
+	let foreground = Arc::new(std::sync::atomic::AtomicBool::new(false));
+	let host = host(project, Some(foreground.clone()))?;
 	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
-	let result = host.run_then("proxy", request, spawn).await;
-	signals.abort();
+	let result = host
+		.run_then("proxy", request, move |launch| {
+			let foreground = foreground.clone();
+			async move {
+				foreground.store(true, std::sync::atomic::Ordering::SeqCst);
+				let status = spawn(launch).await;
+				foreground.store(false, std::sync::atomic::Ordering::SeqCst);
+				status
+			}
+		})
+		.await;
 	let status = result?;
 	Ok(ExitCode::from(
 		status.as_i64().unwrap_or(1).clamp(0, 255) as u8
@@ -110,6 +143,9 @@ async fn spawn(launch: Value) -> Result<Value> {
 			command.env(k, v.as_str().unwrap_or_default());
 		}
 	}
+	// A launch stopped under a running agent takes it down, rather than leave
+	// it on the terminal without its proxy.
+	command.kill_on_drop(true);
 	let status = command
 		.status()
 		.await
@@ -120,7 +156,7 @@ async fn spawn(launch: Value) -> Result<Value> {
 pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
 	// The client owns this process's lifetime: the pump ends at end of
 	// input and the profile is disposed on the way out.
-	let host = host(project)?;
+	let host = host(project, None)?;
 	let serve = {
 		let host = host.clone();
 		|_| async move { stdio(host).await }
@@ -195,7 +231,7 @@ fn mcp_bridge_reply(line: &str, result: Result<Value>) -> Option<Value> {
 }
 
 pub(crate) async fn daemon(project: &Project) -> Result<ExitCode> {
-	let host = host(project)?;
+	let host = host(project, None)?;
 	if let Err(error) = host.reconcile().await {
 		tracing::error!(target: "cartridge", cartridge = "init.lua", "{error}");
 	}
@@ -216,7 +252,7 @@ pub(crate) async fn daemon(project: &Project) -> Result<ExitCode> {
 			Ok(false) => Err(Error::Profile(format!("a host already serves {}", project.profile.display()))),
 			Err(error) => Err(error),
 		},
-		_ = stopped() => Ok(()),
+		_ = host.stopped() => Ok(()),
 	};
 	if let Ok(watcher) = watcher {
 		watcher.abort();
@@ -226,7 +262,7 @@ pub(crate) async fn daemon(project: &Project) -> Result<ExitCode> {
 }
 
 pub(crate) async fn verify(project: &Project, cartridge: Option<&str>) -> Result<ExitCode> {
-	let host = host(project)?;
+	let host = host(project, None)?;
 	let (ran, failures) = match cartridge {
 		Some(one) => host.verify_one(one).await?,
 		None => host.verify().await?,
@@ -241,3 +277,7 @@ pub(crate) async fn verify(project: &Project, cartridge: Option<&str>) -> Result
 #[cfg(test)]
 #[path = "../../.cartridge/tests/unit/stdio.rs"]
 mod stdio_tests;
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/src/cli/signals.rs"]
+mod signal_tests;

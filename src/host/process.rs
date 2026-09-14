@@ -84,9 +84,15 @@ pub(super) async fn start(
 	.stdin(Stdio::piped())
 	.stdout(Stdio::null())
 	.stderr(Stdio::piped())
+	.process_group(0)
 	.kill_on_drop(true)
 	.spawn()
 	.map_err(|e| Error::process(&plan.id, e))?;
+	let group = Group(
+		child
+			.id()
+			.ok_or_else(|| Error::process(&plan.id, "exited as it was spawned"))? as libc::pid_t,
+	);
 	let stdin = child.stdin.take();
 	let tail = Arc::new(std::sync::Mutex::new(
 		std::collections::VecDeque::<String>::new(),
@@ -153,6 +159,7 @@ pub(super) async fn start(
 	let (stop_tx, stop_rx) = oneshot::channel::<()>();
 	let (id, weak) = (plan.id.clone(), Arc::downgrade(host));
 	let monitor = tokio::spawn(async move {
+		let _group = group;
 		let exited = tokio::select! {
 			status = child.wait() => Some(status),
 			_ = stop_rx => None,
@@ -188,4 +195,17 @@ pub(super) async fn start(
 			})
 		}),
 	})
+}
+
+/// A node's process group: the node leads it and what it spawns joins it.
+/// Dropped, it kills every member; killing the node alone leaves its programs
+/// running with the node's stderr open.
+struct Group(libc::pid_t);
+
+impl Drop for Group {
+	fn drop(&mut self) {
+		// SAFETY: killpg only sends a signal. The id names no other group while a
+		// member lives, and the guard drops as soon as its leader is reaped.
+		unsafe { libc::killpg(self.0, libc::SIGKILL) };
+	}
 }
