@@ -265,7 +265,11 @@ impl Ctx {
 
 	/// Replace the directory; cached validators of the old one go with it.
 	pub(crate) fn set_directory(&self, directory: Directory) {
-		*self.state.directory.write().expect("directory lock") = directory;
+		// One lock over both: a validator being compiled against the old
+		// directory holds the read lock until it is cached, so the clear below
+		// cannot land between that compile and its insertion.
+		let mut held = self.state.directory.write().expect("directory lock");
+		*held = directory;
 		self.state
 			.validators
 			.lock()
@@ -275,14 +279,18 @@ impl Ctx {
 
 	/// Refuse an event nobody declared, or a payload its schema rejects.
 	pub fn validate(&self, name: &str, data: &Value) -> Result<()> {
-		let schema = {
-			let directory = self.state.directory.read().expect("directory lock");
-			let entry = directory
-				.events
-				.get(name)
-				.ok_or_else(|| format!("`{name}` is not an event any cartridge declares"))?;
-			entry.schema.clone()
-		};
+		// The directory stays read-locked until the compiled validator is in the
+		// cache: `set_directory` swaps the directory and clears the cache behind
+		// the same lock, so a validator compiled from the directory being
+		// replaced can never be inserted after that clear. Both paths take
+		// directory then validators, so the order never inverts.
+		let directory = self.state.directory.read().expect("directory lock");
+		let schema = directory
+			.events
+			.get(name)
+			.ok_or_else(|| format!("`{name}` is not an event any cartridge declares"))?
+			.schema
+			.clone();
 		let Some(schema) = schema else {
 			return Ok(());
 		};

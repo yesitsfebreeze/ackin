@@ -47,10 +47,7 @@ pub fn read(path: &Path) -> Result<Json> {
 /// The global file laid under the project file: the configuration as the files
 /// on this machine state it, before any declaration fills it in.
 pub fn layers(descriptor: &Path) -> Result<Json> {
-	let mut out = match global_path() {
-		Ok(path) => read(&path)?,
-		Err(e) => return Err(e),
-	};
+	let mut out = read(&global_path()?)?;
 	merge(&mut out, read(&project_path(descriptor))?);
 	Ok(out)
 }

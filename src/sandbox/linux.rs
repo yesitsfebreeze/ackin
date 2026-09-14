@@ -188,9 +188,14 @@ fn rules(policy: &Policy) -> crate::Result<Vec<PathBeneath<PathFd>>> {
 			&policy.read,
 			AccessFs::from_read(ABI::V1) & !AccessFs::Execute,
 		),
+		// The ruleset handles every right up to V9, so a write grant must carry
+		// them all or the kernel denies what nothing granted back: `Refer` since
+		// V2, `Truncate` since V3, `IoctlDev` since V5 — the terminal devices
+		// below — and `ResolveUnix` since V9, without which a node cannot reach
+		// the socket directory it was granted.
 		(
 			&policy.write,
-			AccessFs::from_all(ABI::V1) & !AccessFs::Execute,
+			AccessFs::from_all(ABI::V9) & !AccessFs::Execute,
 		),
 		// Execute alone gets EACCES: the program and the loader must be readable.
 		(&policy.exec, AccessFs::Execute | AccessFs::ReadFile),
