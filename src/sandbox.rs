@@ -201,7 +201,10 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	}
 	exec.sort();
 	exec.dedup();
-	if !exec.is_empty() {
+	// `*` is every program: a shell or a version-control client runs what it is told.
+	if grant.exec.iter().any(|program| program == "*") {
+		profile.push_str("(allow process-exec)\n");
+	} else if !exec.is_empty() {
 		let lines: Vec<String> = exec
 			.iter()
 			.map(|p| format!("(literal {})", literal(p)))
@@ -237,6 +240,10 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 		.collect();
 	if !writes.is_empty() {
 		profile.push_str(&format!("(allow file-write* {})\n", writes.join(" ")));
+	}
+	// Terminals: a cartridge that may write devices may open and drive a pseudo-terminal.
+	if grant.write.iter().any(|path| path == "/" || path.starts_with("/dev")) {
+		profile.push_str("(allow pseudo-tty)\n(allow file-ioctl)\n");
 	}
 	// Network is all or nothing on this platform: a nonempty `net` allows
 	// outbound connections, an empty one allows none. The hosts named in a
