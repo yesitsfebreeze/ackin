@@ -444,6 +444,14 @@ pub(crate) fn write(
 			&mut done,
 		)?;
 	}
+	// Choosing is the approval: what setup wrote and linked starts next.
+	let project = cartridge::trust::record(root)?.project;
+	for (_, place) in installed {
+		let place = place.canonicalize().map_err(|e| Error::file(place, e))?;
+		if !place.starts_with(&project) {
+			cartridge::trust::record(&place)?;
+		}
+	}
 	Ok(done)
 }
 
@@ -563,6 +571,7 @@ async fn run_setups(
 			cartridge::settings::merge(&mut merged, Value::Object(config));
 			let table = merged.as_object().cloned().unwrap_or_default();
 			std::fs::write(&path, render_config(&table)).map_err(|e| Error::file(&path, e))?;
+			cartridge::trust::record(root)?;
 			report.push(format!("wrote {}", path.display()));
 		} else {
 			report.push(format!(

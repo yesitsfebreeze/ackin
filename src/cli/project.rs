@@ -26,6 +26,13 @@ pub(crate) fn locate(dir: Option<PathBuf>, yolo: bool) -> Result<Project> {
 	let root = loader::root();
 	std::env::set_current_dir(&root).map_err(|e| Error::file(&root, e))?;
 	let profile = loader::profile();
+	// Here, because `settle` turns an error from these files into a warning.
+	for name in ["init.lua", "config.lua"] {
+		let file = root.join(&profile).join(name);
+		if file.is_file() {
+			cartridge::trust::verify(&file)?;
+		}
+	}
 	cartridge::settings::settle(&profile);
 	Ok(Project { dir, profile, yolo })
 }

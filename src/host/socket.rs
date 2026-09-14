@@ -164,7 +164,7 @@ impl Drop for Published {
 	}
 }
 
-fn write_private(path: &Path, text: &str) -> Result<()> {
+pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
 	use std::io::Write;
 	use std::os::unix::fs::OpenOptionsExt;
 	let _ = std::fs::remove_file(path);

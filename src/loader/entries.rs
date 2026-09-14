@@ -23,7 +23,7 @@ pub(crate) fn validate(entry: &Entry) -> Result<()> {
 
 impl Host {
 	pub(crate) fn eval<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<T> {
-		let source = std::fs::read_to_string(path).map_err(|e| Error::file(path, e))?;
+		let source = crate::trust::read(path)?;
 		let value: Table = self
 			.lua
 			.load(&source)

@@ -51,6 +51,14 @@ pub enum Error {
 	/// A contract the caller broke: too many contributors, a budget of nothing.
 	#[error("{0}")]
 	Invalid(&'static str),
+	/// A project file this machine was never told to trust, or that changed
+	/// since. The refusal names what to read and what to run afterwards.
+	#[error("{file}: {why}; review it, then run `cartridge trust {project}`")]
+	Untrusted {
+		project: PathBuf,
+		file: PathBuf,
+		why: &'static str,
+	},
 	/// A command-line argument that does not parse.
 	#[error("invalid argument: {0}")]
 	Argument(String),

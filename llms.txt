@@ -18,4 +18,5 @@ documents. Then read what the task needs:
 
 `cartridge.json` is the whole declaration: `events`, `listen`, `needs`, `grant`,
 `settings`, `contracts`. Nothing is declared anywhere
-else, and nothing is read by running the cartridge.
+else, and nothing is read by running the cartridge. A project's cartridge.json
+and *.lua files run only after `cartridge trust` records them.

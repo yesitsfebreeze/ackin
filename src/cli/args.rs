@@ -121,6 +121,18 @@ pub(crate) enum Command {
 		#[arg(long)]
 		template: bool,
 	},
+	/// Record the SHA-256 of every `*.lua` and `cartridge.json` under a project
+	/// or cartridge folder, so this machine runs it. Without a path, this project
+	Trust {
+		/// The directory; absent is the project of this working directory
+		path: Option<PathBuf>,
+		/// Forget a directory instead of recording it
+		#[arg(long)]
+		revoke: bool,
+		/// Print every directory this machine trusts
+		#[arg(long)]
+		list: bool,
+	},
 	/// Start the profile and run every contract its cartridges declare; name a
 	/// cartridge to verify just that one against its own contract
 	Verify {

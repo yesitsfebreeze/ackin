@@ -8,6 +8,7 @@ pub mod sandbox;
 pub mod settings;
 pub mod trace;
 pub mod transport;
+pub mod trust;
 
 pub use error::{Error, Result};
 

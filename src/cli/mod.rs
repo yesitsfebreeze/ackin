@@ -8,6 +8,7 @@ mod manual;
 mod project;
 mod settings;
 mod setup;
+mod trust;
 
 use std::process::ExitCode;
 
@@ -66,6 +67,8 @@ pub fn main() -> ExitCode {
 				};
 				runtime.block_on(setup::setup(&root, &dir, ask))
 			}
+			// Before `locate`, which reads the files this approves.
+			Command::Trust { path, revoke, list } => trust::run(path.as_deref(), revoke, list),
 			command => {
 				let project = project::locate(cli.dir, cli.yolo)?;
 				runtime.block_on(run(command, &project))
@@ -102,6 +105,7 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 		Command::Node => cartridge::node::main().await,
 		Command::Doctor => setup::doctor(project).await,
 		Command::Setup { .. } => unreachable!("setup runs before a project is located"),
+		Command::Trust { .. } => unreachable!("trust runs before a project is located"),
 		Command::Status => client::ask(project, "status", Value::Null).await,
 		Command::Reload { cartridge } => {
 			client::ask(project, "reload", json!({ "cartridge": cartridge })).await

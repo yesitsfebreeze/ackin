@@ -171,6 +171,8 @@ impl Cartridge {
 	/// fact about the tree rather than about the document — which is why
 	/// [`Cartridge::document`] exists beside it.
 	pub fn read(manifest: &Path) -> Result<(Cartridge, PathBuf)> {
+		// The grant and the entry take effect from here; listing a document does not.
+		crate::trust::verify(manifest)?;
 		let cartridge = Self::document(manifest)?;
 		let entry = Path::new(&cartridge.entry);
 		let root = manifest
@@ -188,6 +190,7 @@ impl Cartridge {
 				"cartridge entry escapes its folder",
 			));
 		}
+		crate::trust::verify(&entry)?;
 		if let Some(ui) = &cartridge.ui {
 			let path = Path::new(ui);
 			let resolved = root
@@ -343,6 +346,7 @@ pub(crate) fn document(path: &Path) -> Result<Grant> {
 pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 	let path = normalize(&classify(path));
 	if path.extension().is_some_and(|ext| ext == "lua") {
+		crate::trust::verify(&path)?;
 		let name = path
 			.file_stem()
 			.unwrap_or_default()

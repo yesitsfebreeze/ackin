@@ -34,6 +34,11 @@ Early (`0.1.0`). Interfaces change without notice.
 - **Profile**: `.cartridge/init.lua` lists the cartridges a project runs and
   `.cartridge/config.lua` configures them. Installed cartridges not listed
   there are known but not started.
+- **Trust**: a project runs only after `cartridge trust` records a SHA-256
+  for each of its `*.lua` files and `cartridge.json` manifests under
+  `~/.cartridge/trust`. A changed or unrecorded file is refused by name, so
+  cloning a repository never runs its code. `shasum -a 256` reproduces every
+  recorded hash.
 - **Events**: `emit`, `bail` and `gather` send an event to its listeners and
   differ in what they do with the answers. Each listener's outcome is answered,
   declined, failed, timed out or unavailable, within the event's deadline.
@@ -58,6 +63,7 @@ cargo test --workspace
 ```sh
 cartridge setup                   # make this directory a project: choose cartridges, write .cartridge/init.lua
 cartridge doctor                  # ask every composed cartridge whether it is healthy here
+cartridge trust [<dir>]           # record this project's Lua and manifests so this machine runs them
 cartridge run <event> '<json>'    # start the profile, send, print the first answer, stop
 cartridge daemon                  # start the profile and keep it running
 cartridge call <event> '<json>'   # send on the running base, print the first answer
@@ -76,7 +82,9 @@ cartridge help [<address>]        # the documentation of the base and every cart
 (`{"<name>": {"repository": "<url>", "description": "…"}}`), links or clones
 the chosen ones under the root, writes `.cartridge/init.lua`, and sends each a
 `setup` event it declares so it can ask what this project must decide.
-`--with a,b` or `--yes` take cartridges without asking.
+`--with a,b` or `--yes` take cartridges without asking. Setup records trust for
+the profile it writes and each cartridge it links or clones, because it starts
+them next.
 
 `cartridge mcp` and `cartridge launch` start the profile and hand this terminal
 to the cartridges that listen to `mcp` and `proxy`.

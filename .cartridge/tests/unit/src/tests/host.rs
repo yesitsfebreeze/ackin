@@ -24,6 +24,7 @@ fn profile(dir: &Path, ids: &[&str]) {
 		".cartridge/init.lua",
 		&format!("return {{ {} }}", entries.join(", ")),
 	);
+	trust(dir);
 }
 
 fn greeter(dir: &Path) {
@@ -44,6 +45,12 @@ fn node_binary() {
 	static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 	let bin = BIN.get_or_init(|| built(&["--bin", "cartridge"]));
 	std::env::set_var(crate::host::NODE_BIN_ENV, bin);
+}
+
+/// Approve what the test wrote, as `cartridge trust` would.
+fn trust(dir: &Path) {
+	super::home();
+	crate::trust::record(dir).unwrap();
 }
 
 async fn boot(dir: &Path) -> Arc<Host> {
@@ -464,6 +471,12 @@ async fn a_restart_keeps_its_dependents_working() {
 		"greeter/init.lua",
 		r#"cartridge.listen("greet", function(args) return "hi " .. args.name end)"#,
 	);
+	let refused = host.replace("greeter").await.unwrap_err();
+	assert!(
+		refused.contains("has changed since it was trusted"),
+		"{refused}"
+	);
+	trust(dir.path());
 	host.replace("greeter").await.unwrap();
 	assert_eq!(status(&host, "welcome").state, State::Active);
 	assert_eq!(

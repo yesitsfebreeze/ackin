@@ -17,6 +17,7 @@ The base loads and wires; it is not on the path of events.
   src/node.rs     a node: init.lua with the `cartridge` global, native modules, helpers
   src/ledger.rs   every cartridge installed under the cartridge root
   src/lua.rs      the sandboxed Lua interpreter
+  src/trust.rs    what this machine will evaluate or spawn, by SHA-256
   src/sandbox.rs  a grant compiled into an operating-system policy
   src/settings/   settings files and the base's own settings
   src/trace.rs    trace ids and the diagnostics sink
@@ -31,6 +32,14 @@ returns entries `{id, path, config?, disabled?}` that enable and configure
 them.
 `~/.cartridge/config.lua` and `.cartridge/config.lua` map entry ids to config
 laid over each entry.
+
+Nothing in a project is evaluated until `cartridge trust` has recorded a
+SHA-256 for it, in `~/.cartridge/trust` (or `$CARTRIDGE_HOME/trust`), keyed
+by the canonical directory: every `*.lua` and every `cartridge.json` under
+it, manifests included because the grant comes from them. A file passes when
+any trusted directory above it recorded its current hash. Files under
+`~/.cartridge` are the person's own. Listing a manifest takes no trust;
+planning a cartridge does.
 
 PLANNING AND CHECKS
 
@@ -63,6 +72,9 @@ serves the cartridge on its own socket. Its stdin closes when the base goes
 away; its stderr is recorded. When a node fails to start, the error carries the
 last lines it wrote.
 
+A node does not check trust: the base verified its manifest and entry before
+spawning it, and the sandbox does not let it read the store.
+
 Each base run has a directory under `$XDG_RUNTIME_DIR/cartridge` or
 `/tmp/cartridge-<uid>` holding one socket per node, stable for the run, and
 `host.sock`, the base's own socket for nodes and the command line. A base that
@@ -79,3 +91,5 @@ A changed source restarts its node: dispose, wait, start on the same socket
 with the same tokens. Other nodes keep running and reconnect. A changed
 `init.lua` or `config.lua` reconciles the profile: removed or changed entries
 stop, new ones start, and running nodes whose directory changed receive it.
+A source or profile edited after it was trusted fails with the untrusted
+refusal instead of restarting; `cartridge trust`, then `cartridge reload`.

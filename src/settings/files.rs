@@ -36,7 +36,7 @@ pub fn read(path: &Path) -> Result<Json> {
 		return Ok(json!({}));
 	}
 	let at = |e: mlua::Error| Error::Settings(format!("{}: {e}", path.display()));
-	let source = std::fs::read_to_string(path).map_err(|e| Error::file(path, e))?;
+	let source = crate::trust::read(path)?;
 	let lua = crate::lua::interpreter().map_err(at)?;
 	let value: mlua::Value = lua
 		.load(&source)

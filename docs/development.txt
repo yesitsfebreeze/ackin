@@ -11,6 +11,8 @@ The host tests start real nodes from the built `cartridge` binary: Lua
 cartridges, a Rust cartridge as a native module built from
 .cartridge/tests/unit/src/tests/fixtures/native, and a helper program started
 with `cartridge.spawn`. Nodes run inside the sandbox, so the tests exercise it too.
+The tests point `$CARTRIDGE_HOME` at a temp directory and record trust for
+each temp project; nothing skips the check.
 
 RUNNING
 
@@ -18,7 +20,10 @@ RUNNING
   cartridge --dir <cartridge root> daemon
 
 The profile is the nearest .cartridge/init.lua at or above the working
-directory. `cartridge socket` prints the project's host socket; `cartridge
+directory. Run `cartridge trust` once per checkout, and again after changing
+`.cartridge/init.lua`, `.cartridge/config.lua`, a `cartridge.json` or a
+cartridge's Lua. A linked cartridge outside the project is trusted on its
+own: `cartridge trust <its folder>`. `cartridge socket` prints the project's host socket; `cartridge
 status`, `call`, `send`, `follow`, `reload` and `stop` talk to the host serving it.
 `cartridge mcp` hands this terminal's stdio to the cartridge listening to `mcp`,
 for an MCP client such as `claude mcp add cartridge -- cartridge mcp`.
@@ -31,6 +36,7 @@ TROUBLESHOOTING
   cartridge doctor                  every cartridge's own answer to whether it is healthy
   cartridge list                    the profile and whom each cartridge's sends reach, cycles marked
   cartridge settings <id>           a cartridge's settled configuration
+  cartridge trust --list            every directory this machine will run
 
 A node that fails to start reports the last lines of its stderr in its error;
 a cartridge refused at planning says which event it names that nobody declares. Everything a cartridge writes to stderr goes to the diagnostics file
@@ -38,3 +44,6 @@ named by CARTRIDGE_DIAGNOSTICS; CARTRIDGE_LOG selects the host's own log level.
 
 A cartridge denied by the sandbox usually fails with "Operation not permitted"
 on a path or program its `grant` does not name.
+
+A command stopping with "is in no trusted project" or "has changed since it
+was trusted" names a file to read before `cartridge trust`.

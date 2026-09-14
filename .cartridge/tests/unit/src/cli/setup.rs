@@ -88,6 +88,7 @@ fn setup_offers_what_it_finds_and_the_catalog_and_filters_by_subsequence() {
 #[test]
 fn setup_links_the_chosen_writes_a_profile_the_host_reads_and_lets_a_cartridge_ask() {
 	let tmp = tempfile::tempdir().unwrap();
+	std::env::set_var("CARTRIDGE_HOME", tmp.path().join("home"));
 	let checkouts = tmp.path().join("checkouts");
 	cartridge(&checkouts, "alpha", "First.", json!({}), "");
 	// A cartridge with a setup exchange: one question with a default, then
