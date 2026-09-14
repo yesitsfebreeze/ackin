@@ -358,6 +358,32 @@ impl Ctx {
 			.collect()
 	}
 
+	/// Like [`Ctx::gather`], leaving out listeners that do not answer within `timeout`.
+	pub async fn gather_within(
+		&self,
+		name: &str,
+		data: Value,
+		timeout: Duration,
+	) -> Vec<(String, Value)> {
+		let trace = trace_of(&Value::Null);
+		let listeners = self.listeners(name);
+		let answers = futures::future::join_all(listeners.iter().map(|address| {
+			tokio::time::timeout(
+				timeout,
+				self.send_event(address, name, data.clone(), trace.clone()),
+			)
+		}))
+		.await;
+		listeners
+			.into_iter()
+			.zip(answers)
+			.filter_map(|(address, answer)| match answer {
+				Ok(Ok(value)) if !value.is_null() => Some((address.cartridge, value)),
+				_ => None,
+			})
+			.collect()
+	}
+
 	/// Emit to listeners and publish on the channel of the same name.
 	pub fn notify(&self, name: &str, data: Value) {
 		self.emit(name, data.clone());

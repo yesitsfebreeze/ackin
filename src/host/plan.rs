@@ -140,6 +140,7 @@ impl Host {
 			}
 		}
 		needs.retain(|key| !provide.contains(key));
+		let grant = self.expand_grant(&declared.grant, &config)?;
 		Ok(Plan {
 			id: entry.id.clone(),
 			name: declared.name.clone(),
@@ -149,7 +150,7 @@ impl Host {
 			needs,
 			on,
 			config,
-			grant: declared.grant.clone(),
+			grant,
 			sources,
 		})
 	}
@@ -182,6 +183,50 @@ impl Host {
 				.insert("yolo".into(), true.into());
 		}
 		Ok(config)
+	}
+
+	/// Grant paths may start with `$PROJECT`, `$HOME` or `$TMPDIR`, or be
+	/// `${config.<key>}`, a settled config value; a relative config value is
+	/// relative to the project root, where cartridges run.
+	fn expand_grant(&self, grant: &Grant, config: &serde_json::Value) -> Result<Grant> {
+		let project = self.profile.parent().unwrap_or(&self.profile).to_path_buf();
+		let expand = |path: &String| -> Result<String> {
+			if let Some(key) = path
+				.strip_prefix("${config.")
+				.and_then(|rest| rest.strip_suffix('}'))
+			{
+				let value = crate::settings::get(config, key)
+					.and_then(serde_json::Value::as_str)
+					.ok_or_else(|| {
+						Error::Profile(format!("grant `{path}` names no string setting"))
+					})?;
+				return Ok(project.join(value).to_string_lossy().into_owned());
+			}
+			let home = std::env::var("HOME").unwrap_or_default();
+			let tmp = std::env::temp_dir();
+			for (name, base) in [
+				("$PROJECT", project.to_string_lossy().into_owned()),
+				("$HOME", home),
+				(
+					"$TMPDIR",
+					tmp.to_string_lossy().trim_end_matches('/').to_owned(),
+				),
+			] {
+				if let Some(rest) = path.strip_prefix(name) {
+					if rest.is_empty() || rest.starts_with('/') {
+						return Ok(format!("{base}{rest}"));
+					}
+				}
+			}
+			Ok(path.clone())
+		};
+		let all = |paths: &[String]| paths.iter().map(expand).collect::<Result<Vec<_>>>();
+		Ok(Grant {
+			read: all(&grant.read)?,
+			write: all(&grant.write)?,
+			net: grant.net.clone(),
+			exec: all(&grant.exec)?,
+		})
 	}
 
 	pub(crate) fn token(&self, from: &str, to: &str, scope: Scope) -> String {

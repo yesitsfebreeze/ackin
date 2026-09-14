@@ -14,6 +14,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -534,7 +535,7 @@ dependencies = [
 name = "fs"
 version = "0.1.0"
 dependencies = [
- "cartridge",
+ "evidence",
  "futures",
  "globset",
  "regex",
@@ -544,6 +545,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -717,11 +719,13 @@ name = "harness"
 version = "0.1.0"
 dependencies = [
  "cartridge",
+ "evidence",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -1146,7 +1150,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "memo_cartridge"
 version = "0.1.0"
 dependencies = [
- "cartridge",
+ "evidence",
  "futures",
  "serde",
  "serde_json",
@@ -1154,6 +1158,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -1383,7 +1388,7 @@ name = "proxy"
 version = "0.1.0"
 dependencies = [
  "axum",
- "cartridge",
+ "evidence",
  "futures",
  "reqwest",
  "router",
@@ -1392,6 +1397,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -1613,13 +1619,13 @@ dependencies = [
  "axum",
  "base64",
  "bytes",
- "cartridge",
  "futures",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
+ "transport",
 ]
 
 [[package]]

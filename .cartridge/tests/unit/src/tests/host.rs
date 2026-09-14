@@ -352,6 +352,46 @@ async fn verify_calls_every_declared_contract() {
 	assert_eq!(host.verify().await.unwrap(), (1, Vec::new()));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn grant_paths_name_the_project_and_settings() {
+	let dir = tempfile::tempdir().unwrap();
+	write(
+		dir.path(),
+		"store/cartridge.json",
+		&json!({
+			"name": "store", "entry": "init.lua",
+			"settings": {"dir": {"type": "string", "default": ".cartridge/store"}},
+			"grant": {"write": ["${config.dir}", "$PROJECT/logs", "$TMPDIR/x"], "read": ["$HOME/.config"]},
+		})
+		.to_string(),
+	);
+	write(
+		dir.path(),
+		"store/init.lua",
+		"return {apply=function() end}",
+	);
+	profile(dir.path(), r#"{id="store", path="store"}"#);
+	let host = Host::new(dir.path(), dir.path().join(".cartridge"), false).unwrap();
+	let entry = host
+		.entries()
+		.unwrap()
+		.into_iter()
+		.find(|e| e.id == "store")
+		.unwrap();
+	let plan = host.plan(&entry).unwrap();
+	let project = dir.path().canonicalize().unwrap();
+	assert_eq!(
+		plan.grant.write[0],
+		project.join(".cartridge/store").display().to_string()
+	);
+	assert_eq!(
+		plan.grant.write[1],
+		project.join("logs").display().to_string()
+	);
+	assert!(!plan.grant.write[2].starts_with('$'));
+	assert!(plan.grant.read[0].ends_with("/.config") && !plan.grant.read[0].starts_with('$'));
+}
+
 #[test]
 fn a_document_refuses_a_duplicate_or_wildcard_listener() {
 	let dir = tempfile::tempdir().unwrap();

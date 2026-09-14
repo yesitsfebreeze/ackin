@@ -118,7 +118,7 @@ export class Wire {
 	private events = new Map<string, Handler>();
 	private channels = new Map<string, Channel>();
 	private clients = new Map<string, Promise<Peer>>();
-	private finalizers: (() => void)[] = [];
+	private finalizers: (() => void | Promise<void>)[] = [];
 	private server: net.Server;
 	private stopped = false;
 	name = "";
@@ -142,7 +142,8 @@ export class Wire {
 	/** Handle an event this cartridge declares in `on`; a non-null return is its answer. */
 	listen(name: string, handler: Handler): void { this.events.set(name, handler); }
 
-	onClose(cleanup: () => void): void { this.finalizers.push(cleanup); }
+	/** Runs when the cartridge stops, last registered first; the process exits once every cleanup settles. */
+	onClose(cleanup: () => void | Promise<void>): void { this.finalizers.push(cleanup); }
 
 	needs(): string[] { return Object.keys(this.directory.needs); }
 
@@ -163,7 +164,7 @@ export class Wire {
 
 	private async handle(peer: Peer, grant: Grant | "host", method: string, params: Json, reply: (r: Json, e?: RpcError) => void) {
 		const host = grant === "host";
-		const allows = (scope: "call" | "event", name: string) => host || (grant !== "host" && grant.scope === scope && grant.names.includes(name));
+		const allows = (scope: "call" | "event", name: string) => host || ((grant as Grant).scope === scope && (grant as Grant).names.includes(name));
 		const run = (handler: Handler, data: Json) => traces.run(typeof params?.trace === "string" ? params.trace : undefined, () => handler(data));
 		try {
 			switch (method) {
@@ -311,9 +312,11 @@ export class Wire {
 		if (this.stopped) return;
 		this.stopped = true;
 		this.server.close();
-		for (const client of this.clients.values()) void client.then(peer => peer.close()).catch(() => {});
-		for (const cleanup of this.finalizers.reverse()) { try { cleanup(); } catch {} }
-		setTimeout(() => process.exit(0), 50);
+		void (async () => {
+			for (const cleanup of this.finalizers.reverse()) { try { await cleanup(); } catch {} }
+			for (const client of this.clients.values()) await client.then(peer => peer.close()).catch(() => {});
+			setTimeout(() => process.exit(0), 50);
+		})();
 	}
 }
 
