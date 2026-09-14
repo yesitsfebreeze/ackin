@@ -55,7 +55,10 @@ impl Host {
 		for entry in &entries {
 			validate(entry)?;
 			if !ids.insert(&entry.id) {
-				return Err(Error::Descriptor(format!("duplicate entry id `{}`", entry.id)));
+				return Err(Error::Descriptor(format!(
+					"duplicate entry id `{}`",
+					entry.id
+				)));
 			}
 		}
 		let mut overrides = serde_json::Map::new();

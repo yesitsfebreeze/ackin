@@ -36,7 +36,7 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL, WAIT_FAILED};
+use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HLOCAL, WAIT_FAILED};
 use windows_sys::Win32::Security::Authorization::{
 	GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W,
 	GRANT_ACCESS, NO_MULTIPLE_TRUSTEE, REVOKE_ACCESS, SE_FILE_OBJECT, TRUSTEE_IS_GROUP,
@@ -47,7 +47,7 @@ use windows_sys::Win32::Security::Isolation::{
 };
 use windows_sys::Win32::Security::{
 	DeriveCapabilitySidsFromName, FreeSid, ACL, DACL_SECURITY_INFORMATION, PSID,
-	SECURITY_CAPABILITIES, SE_GROUP_ENABLED, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+	SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
 	FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
@@ -55,6 +55,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 use windows_sys::Win32::System::Console::{
 	GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
+use windows_sys::Win32::System::SystemServices::SE_GROUP_ENABLED;
 use windows_sys::Win32::System::Threading::{
 	CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
 	InitializeProcThreadAttributeList, UpdateProcThreadAttribute, WaitForSingleObject,
@@ -405,11 +406,7 @@ fn revoke(granted: &[(&Path, u32)], sid: PSID) {
 /// Create the confined child. The trampoline's own standard handles are the
 /// child's, so the host's pipes reach the node through this process without
 /// it reading a byte of them.
-fn spawn(
-	policy: &Policy,
-	sid: PSID,
-	cmd: &[String],
-) -> crate::Result<PROCESS_INFORMATION> {
+fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_INFORMATION> {
 	let fail = |what: &str| {
 		crate::Error::process(
 			"appcontainer",
@@ -425,7 +422,7 @@ fn spawn(
 		}
 		capabilities.extend(owned.iter().map(|sid| SID_AND_ATTRIBUTES {
 			Sid: *sid,
-			Attributes: SE_GROUP_ENABLED,
+			Attributes: SE_GROUP_ENABLED as u32,
 		}));
 	}
 	let mut security = SECURITY_CAPABILITIES {

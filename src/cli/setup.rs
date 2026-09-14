@@ -644,9 +644,9 @@ fn answer(id: &str, question: &Value, default: &Value) -> Result<Value> {
 /// whether it is healthy here, and the answers are printed one per line.
 pub(crate) async fn doctor(project: &Project) -> Result<ExitCode> {
 	let host = super::host::host(project, None)?;
-	let composed = host
-		.entries()
-		.map_err(|e| Error::Descriptor(format!("{}: {e}", project.descriptor.join(INIT).display())))?;
+	let composed = host.entries().map_err(|e| {
+		Error::Descriptor(format!("{}: {e}", project.descriptor.join(INIT).display()))
+	})?;
 	let mut asks = Vec::new();
 	let mut lines = Vec::new();
 	for entry in composed.iter().filter(|e| !e.disabled) {

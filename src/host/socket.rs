@@ -367,10 +367,11 @@ pub(crate) async fn forward(mut events: broadcast::Receiver<Value>, peer: Peer) 
 
 /// A connection to the host serving `descriptor`.
 pub async fn client(descriptor: &Path) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
-	let token = std::fs::read_to_string(token_path(descriptor)?).map_err(|e| Error::Unavailable {
-		key: "host".into(),
-		why: format!("no base serves {}: {e}", descriptor.display()),
-	})?;
+	let token =
+		std::fs::read_to_string(token_path(descriptor)?).map_err(|e| Error::Unavailable {
+			key: "host".into(),
+			why: format!("no base serves {}: {e}", descriptor.display()),
+		})?;
 	let socket = std::fs::read_link(path(descriptor)?).map_err(|e| Error::Unavailable {
 		key: "host".into(),
 		why: format!("no base serves {}: {e}", descriptor.display()),
