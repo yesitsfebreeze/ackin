@@ -45,7 +45,7 @@ STARTUP
 
 1. The host picks the cartridge's socket path, <runtime dir>/<cartridge id>.sock
    inside a 0700 directory of this host run, removes whatever is left there, and
-   starts the process with two variables:
+   starts the process with these variables:
      CARTRIDGE_SOCKET                the path to bind and serve
      CARTRIDGE_HOST_TOKEN            the token the host will authenticate with
      CARTRIDGE_CONNECT_TIMEOUT_SECS  how long to retry reaching another cartridge
