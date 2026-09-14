@@ -102,6 +102,42 @@ async fn a_payload_the_schema_rejects_never_reaches_the_listener() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_schema_only_change_reaches_a_sender_that_already_validated() {
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	profile(dir.path(), &["greeter"]);
+	let host = boot(dir.path()).await;
+	// Warm the validator: the good payload passes, the bad one is refused.
+	assert_eq!(
+		host.bail("greet", json!({"name": "you"})).await.unwrap(),
+		Some(json!("hello you"))
+	);
+	let error = host.bail("greet", json!({"name": 7})).await.unwrap_err();
+	assert!(error.contains("rejected by its schema"), "{error}");
+	// Only the schema changes: the event names, needs and listen stay the same.
+	cartridge(
+		dir.path(),
+		"greeter",
+		json!({
+			"name": "greeter", "entry": "init.lua",
+			"events": {"greet": {"description": "a greeting", "schema": {"type": "object", "required": ["other"], "properties": {"other": {"type": "string"}}}}},
+			"listen": ["greet"],
+		}),
+		r#"cartridge.listen("greet", function(args) return "hello " .. args.other end)"#,
+	);
+	trust(dir.path());
+	host.replace("greeter").await.unwrap();
+	// The warmed sender must validate against the new schema, not the old one.
+	let error = host.bail("greet", json!({"name": "you"})).await.unwrap_err();
+	assert!(error.contains("rejected by its schema"), "{error}");
+	assert_eq!(
+		host.bail("greet", json!({"other": "you"})).await.unwrap(),
+		Some(json!("hello you"))
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_undeclared_event_fails_the_cartridge_before_it_starts() {
 	let dir = tempfile::tempdir().unwrap();
 	cartridge(
