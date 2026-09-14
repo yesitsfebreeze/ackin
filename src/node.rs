@@ -329,9 +329,11 @@ fn install(
 	})?;
 	global.set("spawn", {
 		let ctx = ctx.clone();
-		lua.create_function(move |lua, (command, options): (mlua::Value, Option<Table>)| {
-			spawn(lua, &ctx, command, options)
-		})?
+		lua.create_function(
+			move |lua, (command, options): (mlua::Value, Option<Table>)| {
+				spawn(lua, &ctx, command, options)
+			},
+		)?
 	})?;
 	lua.globals().set("cartridge", global)
 }
@@ -399,8 +401,12 @@ async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'st
 		}
 		.boxed()
 	} else if let Some(name) = name("gather") {
-		async move { ctx.gather(&name, value["args"].clone()).await.map(|rows| json!(rows)) }
-			.boxed()
+		async move {
+			ctx.gather(&name, value["args"].clone())
+				.await
+				.map(|rows| json!(rows))
+		}
+		.boxed()
 	} else if let Some(method) = name("host") {
 		async move { ctx.host(&method, value["params"].clone()).await }.boxed()
 	} else {
