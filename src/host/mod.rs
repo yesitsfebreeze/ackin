@@ -96,6 +96,11 @@ pub struct Host {
 	sockets: PathBuf,
 	host_token: String,
 	tokens: Mutex<HashMap<(String, Option<String>), String>>,
+	/// Each node's own credential, the one its socket grants as `Host`. A node
+	/// token names authority over that node only: the host socket refuses it,
+	/// so a leaked one is worth that node's own socket, which the child holds
+	/// anyway.
+	node_tokens: Mutex<HashMap<String, String>>,
 	/// What the base sends events with: the nodes' own send path, as the host.
 	ctx: Ctx,
 	slots: Mutex<Vec<Slot>>,
@@ -139,6 +144,7 @@ impl Host {
 			),
 			host_token,
 			tokens: Mutex::default(),
+			node_tokens: Mutex::default(),
 			slots: Mutex::default(),
 			listeners: Mutex::default(),
 			op: tokio::sync::Mutex::new(()),
@@ -158,6 +164,12 @@ impl Host {
 
 	pub(crate) fn host_token(&self) -> &str {
 		&self.host_token
+	}
+
+	/// The node's own credential, minted when it was started. Empty when the
+	/// map ever misses, which it cannot: a token is written before the node is.
+	pub(crate) fn node_token(&self, id: &str) -> String {
+		self.node_tokens.lock().get(id).cloned().unwrap_or_default()
 	}
 
 	/// Asked to stop, by the command line.
@@ -740,7 +752,7 @@ impl Host {
 				why: "not active".into(),
 			});
 		}
-		connect(&self.socket(id), &self.host_token).await
+		connect(&self.socket(id), &self.node_token(id)).await
 	}
 }
 

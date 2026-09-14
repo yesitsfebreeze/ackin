@@ -330,10 +330,12 @@ pub(crate) fn host_directory(
 		let listeners = active
 			.iter()
 			.filter(|p| p.listen.iter().any(|n| n == name))
+			// The base answers bail/gather as a sender presenting the
+			// listener's own node token.
 			.map(|listener| Address {
 				cartridge: listener.id.clone(),
 				socket: host.socket(&listener.id),
-				token: host.host_token().to_owned(),
+				token: host.node_token(&listener.id),
 			})
 			.collect();
 		directory

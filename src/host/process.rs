@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::oneshot;
 
 use crate::error::{Error, Result};
-use crate::transport::cartridge::{Directory, CONNECT_TIMEOUT_ENV, HOST_TOKEN_ENV, SOCKET_ENV};
+use crate::transport::cartridge::{Directory, CONNECT_TIMEOUT_ENV, NODE_TOKEN_ENV, SOCKET_ENV};
 
 use super::{Host, Plan, Running};
 
@@ -24,6 +24,12 @@ pub(super) async fn start(
 	generation: u64,
 ) -> Result<Running> {
 	let settings = crate::settings::host();
+	// The node's own credential, minted per start: worth that node's socket
+	// only, never the host's. `replace` starts the same id again and overwrites.
+	let token = crate::transport::token();
+	host.node_tokens
+		.lock()
+		.insert(plan.id.clone(), token.clone());
 	let socket = host.socket(&plan.id);
 	let _ = std::fs::remove_file(&socket);
 	let sockets = socket.parent().map(std::path::Path::to_path_buf);
@@ -37,7 +43,7 @@ pub(super) async fn start(
 			.map_err(|e| Error::process(&plan.id, e))?,
 	)
 	.env(SOCKET_ENV, &socket)
-	.env(HOST_TOKEN_ENV, host.host_token())
+	.env(NODE_TOKEN_ENV, &token)
 	.env(
 		CONNECT_TIMEOUT_ENV,
 		settings.startup_timeout_secs.to_string(),
@@ -90,7 +96,7 @@ pub(super) async fn start(
 			));
 		}
 		if socket.exists() {
-			if let Ok(connected) = super::connect(&socket, host.host_token()).await {
+			if let Ok(connected) = super::connect(&socket, &token).await {
 				break connected;
 			}
 		}

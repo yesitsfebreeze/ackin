@@ -799,6 +799,49 @@ done
 	host.stop().await;
 }
 
+/// A node's own credential is worth its socket only: presenting it to the
+/// host socket is refused, and the host keeps serving.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_presenting_its_own_credential_is_refused_on_the_host_socket() {
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	profile(dir.path(), &["greeter"]);
+	let host = boot(dir.path()).await;
+	let token = host.node_token("greeter");
+	assert!(!token.is_empty(), "every started slot holds a node token");
+	assert_ne!(token, host.host_token());
+	let served = tokio::spawn(crate::host::socket::serve(host.clone()));
+	let socket = host.socket_path();
+	let mut refused = String::new();
+	for _ in 0..200 {
+		if let Err(error) = crate::host::connect(&socket, &token).await {
+			refused = error.to_string();
+			if refused.contains("unknown token") {
+				break;
+			}
+		}
+		tokio::time::sleep(Duration::from_millis(10)).await;
+	}
+	assert!(
+		refused.contains("unknown token"),
+		"a node token never authenticates on the host socket: {refused}"
+	);
+	// The refused connection changed nothing: the command line still connects.
+	let profile = host.profile().to_path_buf();
+	for _ in 0..100 {
+		if let Ok(connected) = crate::host::socket::client(&profile).await {
+			let (peer, _incoming) = connected;
+			let status = peer.call("status", json!(null)).await.unwrap();
+			assert_eq!(status[0]["state"], "active");
+			peer.call("stop", json!(null)).await.unwrap();
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(10)).await;
+	}
+	served.abort();
+	host.stop().await;
+}
+
 /// The refusal the whole design rests on, tested where it is enforced: a
 /// profile no one trusted fails `entries`, naming the file and the command.
 #[tokio::test(flavor = "multi_thread")]

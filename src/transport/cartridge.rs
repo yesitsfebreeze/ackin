@@ -18,7 +18,7 @@ use crate::transport::rpc::{self, Incoming, Peer, Request};
 use crate::transport::typed::{BindOutcome, Endpoint, LocalAdapter, LocalListener};
 
 pub const SOCKET_ENV: &str = "CARTRIDGE_SOCKET";
-pub const HOST_TOKEN_ENV: &str = "CARTRIDGE_HOST_TOKEN";
+pub const NODE_TOKEN_ENV: &str = "CARTRIDGE_NODE_TOKEN";
 pub const CONNECT_TIMEOUT_ENV: &str = "CARTRIDGE_CONNECT_TIMEOUT_SECS";
 
 const MAX_FRAME: usize = 64 * 1024 * 1024;

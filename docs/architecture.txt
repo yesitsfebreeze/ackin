@@ -88,14 +88,16 @@ Each base run has a directory under `$XDG_RUNTIME_DIR/cartridge` or
 serves a project links `<project tag>.sock` to it and writes its token beside
 it, 0600, so the command line finds it. The base mints a token per edge: one
 for each cartridge that may send an event to a listener, and one for each node
-to ask the base. A listener's node knows which events each token it accepts may
-send. The base sends its own events (`run`, `call`, `send`, `verify`) through
+to ask the base. Each node's own socket is opened by a token minted for it
+alone, so the base's admin token never enters a node. A listener's node knows
+which events each token it accepts may send. The base sends its own events
+(`run`, `call`, `send`, `verify`) through
 the same code the nodes send with, to active listeners only.
 
 RELOAD
 
 A changed source restarts its node: dispose, wait, start on the same socket
-with the same tokens. Other nodes keep running and reconnect. A changed
+with a fresh node token. Other nodes keep running and reconnect. A changed
 `init.lua` or `config.lua` reconciles the profile: removed or changed entries
 stop, new ones start, and running nodes whose directory changed receive it.
 A source or profile edited after it was trusted fails with the untrusted

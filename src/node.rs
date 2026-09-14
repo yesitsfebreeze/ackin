@@ -18,7 +18,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::oneshot;
 
 use crate::error::{Error, Result};
-use crate::transport::cartridge::{self, Ctx, CONNECT_TIMEOUT_ENV, HOST_TOKEN_ENV, SOCKET_ENV};
+use crate::transport::cartridge::{self, Ctx, CONNECT_TIMEOUT_ENV, NODE_TOKEN_ENV, SOCKET_ENV};
 
 pub const ENTRY_ENV: &str = "CARTRIDGE_ENTRY";
 pub const ROOT_ENV: &str = "CARTRIDGE_ROOT";
@@ -96,7 +96,9 @@ fn env(name: &str) -> Result<String> {
 /// Run this process as a node until the base disposes it or goes away.
 pub async fn main() -> Result<ExitCode> {
 	let socket = PathBuf::from(env(SOCKET_ENV)?);
-	let host_token = env(HOST_TOKEN_ENV)?;
+	// The node's own credential: what its socket grants as `Host`. It names
+	// authority over this node only, so the six variables are scrubbed below.
+	let host_token = env(NODE_TOKEN_ENV)?;
 	let entry = PathBuf::from(env(ENTRY_ENV)?);
 	let root = PathBuf::from(env(ROOT_ENV)?);
 	let listen: Vec<String> = serde_json::from_str(&env(LISTEN_ENV)?)?;
