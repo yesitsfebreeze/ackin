@@ -22,9 +22,16 @@ pub const ENTRY_ENV: &str = "CARTRIDGE_ENTRY";
 pub const ROOT_ENV: &str = "CARTRIDGE_ROOT";
 pub const ON_ENV: &str = "CARTRIDGE_ON";
 
-/// Wait for a future from inside a Lua call, which runs on a runtime thread.
+static RUNTIME: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
+
+/// Wait for a future from a Lua call: on a runtime thread inside a handler, or
+/// on a thread of a native module's own.
 fn wait<F: std::future::Future>(future: F) -> F::Output {
-	tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(future))
+	let handle = RUNTIME.get().expect("the node runtime").clone();
+	match tokio::runtime::Handle::try_current() {
+		Ok(_) => tokio::task::block_in_place(|| handle.block_on(future)),
+		Err(_) => handle.block_on(future),
+	}
 }
 
 fn external(error: String) -> mlua::Error {
@@ -52,6 +59,7 @@ pub async fn main() -> Result<ExitCode> {
 		.and_then(|secs| secs.parse().ok())
 		.map(Duration::from_secs)
 		.unwrap_or(Duration::from_secs(30));
+	let _ = RUNTIME.set(tokio::runtime::Handle::current());
 	let listener = cartridge::listen(&socket)
 		.await
 		.map_err(|e| Error::process(entry.display().to_string(), e))?;
@@ -155,13 +163,15 @@ fn install(lua: &Lua, ctx: Ctx, root: PathBuf, on: Vec<String>) -> mlua::Result<
 	global.set("emit", {
 		let ctx = ctx.clone();
 		lua.create_function(move |lua, (name, data): (String, mlua::Value)| {
-			ctx.emit(&name, json(lua, data)?).map_err(external)
+			let data = json(lua, data)?;
+			wait(async { ctx.emit(&name, data) }).map_err(external)
 		})?
 	})?;
 	global.set("notify", {
 		let ctx = ctx.clone();
 		lua.create_function(move |lua, (name, data): (String, mlua::Value)| {
-			ctx.notify(&name, json(lua, data)?).map_err(external)
+			let data = json(lua, data)?;
+			wait(async { ctx.notify(&name, data) }).map_err(external)
 		})?
 	})?;
 	global.set("bail", {
