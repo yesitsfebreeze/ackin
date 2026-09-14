@@ -9,6 +9,7 @@ mod project;
 mod settings;
 mod setup;
 mod trust;
+mod width;
 
 use std::process::ExitCode;
 

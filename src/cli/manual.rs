@@ -19,6 +19,7 @@ use cartridge::loader::{self, CartridgeInfo};
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
 
+use super::width::{cells, fit, pad};
 use super::{fail, Project, FAILED};
 
 const PAGE: &str = "help.md";
@@ -403,9 +404,9 @@ impl Manual {
 }
 
 fn print_rows(rows: &[Row]) {
-	let width = rows.iter().map(|r| r.address.len()).max().unwrap_or(0);
+	let width = rows.iter().map(|r| cells(&r.address)).max().unwrap_or(0);
 	for r in rows {
-		println!("  {:width$}  {}", r.address, r.about);
+		println!("  {}  {}", pad(&r.address, width), r.about);
 	}
 }
 
@@ -899,7 +900,7 @@ fn draw_list(level: &Level, rows: &[Row]) -> std::io::Result<()> {
 	let top = level.selected.saturating_sub(body - 1);
 	let label_width = rows
 		.iter()
-		.map(|r| r.label.chars().count())
+		.map(|r| cells(&r.label))
 		.max()
 		.unwrap_or(0)
 		.min(w / 2);
@@ -921,12 +922,12 @@ fn draw_list(level: &Level, rows: &[Row]) -> std::io::Result<()> {
 		if n == level.selected {
 			queue!(out, SetAttribute(Attribute::Reverse))?;
 		}
-		let label: String = row.label.chars().take(label_width).collect();
-		let pad = label_width - label.chars().count();
+		let label = fit(&row.label, label_width);
+		let gap = label_width.saturating_sub(cells(&label));
 		queue!(
 			out,
 			Print(fit(
-				&format!("{label}{}  {}", " ".repeat(pad), row.about),
+				&format!("{label}{}  {}", " ".repeat(gap), row.about),
 				w
 			)),
 			SetAttribute(Attribute::Reset)
@@ -1010,13 +1011,6 @@ fn view(manual: &Manual, address: &str, line: Option<usize>) -> std::io::Result<
 			_ => {}
 		}
 	}
-}
-
-/// One line cut to the terminal's width, tabs spread. Counts characters, not
-/// display cells.
-// ponytail: wide glyphs (CJK, emoji) overrun the edge; measure cells if a document carries them.
-fn fit(text: &str, width: usize) -> String {
-	text.replace('\t', "    ").chars().take(width).collect()
 }
 
 #[cfg(test)]

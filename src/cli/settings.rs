@@ -10,6 +10,7 @@ use cartridge::settings::{self, Sources, Spec, Specs};
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
 
+use super::width::{cells, fit, pad, pad_start};
 use super::{Project, FAILED};
 
 pub(crate) fn settings(
@@ -145,20 +146,20 @@ fn table(profile: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -
 /// elided past a readable width. `--json` is the un-elided answer.
 fn print_rows(rows: &[Row]) {
 	const VALUE_WIDTH: usize = 44;
-	let width = |pick: fn(&Row) -> &str| rows.iter().map(|r| pick(r).len()).max().unwrap_or(0);
+	let width = |pick: fn(&Row) -> &str| rows.iter().map(|r| cells(pick(r))).max().unwrap_or(0);
 	let (w0, w1, w3) = (width(|r| &r.key), width(|r| &r.kind), width(|r| r.source));
 	let w2 = width(|r| &r.value).min(VALUE_WIDTH);
 	for row in rows {
-		let value = match row.value.chars().count() > VALUE_WIDTH {
-			true => format!(
-				"{}…",
-				row.value.chars().take(VALUE_WIDTH - 1).collect::<String>()
-			),
+		let value = match cells(&row.value) > VALUE_WIDTH {
+			true => format!("{}…", fit(&row.value, VALUE_WIDTH - 1)),
 			false => row.value.clone(),
 		};
 		let line = format!(
-			"{:w0$}  {:w1$}  {:>w2$}  {:w3$}",
-			row.key, row.kind, value, row.source
+			"{}  {}  {}  {}",
+			pad(&row.key, w0),
+			pad(&row.kind, w1),
+			pad_start(&value, w2),
+			pad(row.source, w3)
 		);
 		match row.doc.is_empty() {
 			true => println!("{line}"),

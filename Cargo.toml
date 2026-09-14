@@ -38,6 +38,10 @@ notify = "9.0.0-rc.5"
 clap = { version = "4", features = ["derive"] }
 # The `help` picker: raw keys and the alternate screen.
 crossterm = "0.29"
+# `help` and `settings` cut and pad to terminal cells: a wide glyph is two
+# cells and a ZWJ cluster is many chars.
+unicode-width = "0.2"
+unicode-segmentation = "1.13"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
