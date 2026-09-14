@@ -63,6 +63,16 @@ declarations off cartridge.json and then this page verbatim, and `cartridge
 help` marks a cartridge without one and exits non-zero. Do not restate
 provide, needs, settings or commands on the page; the command prints them.
 
+LOCAL STATE
+
+.cartridge/.gitignore is a whitelist: `/*` ignores the folder, and one `!/name`
+line brings back each durable entry (help.md, docs/, memos/, tests/). A
+cartridge writing a new top-level store (sessions/, credentials/, logs/) needs
+no rule; it is local by default. A cartridge that keeps state inside a tracked
+folder adds its one rule below the list, with a comment naming the owner, the
+way memo adds /memos/.lock. The repository's root .gitignore says nothing
+about .cartridge.
+
 A tool's descriptor (the answer to {"op":"describe"}) may carry reads: true
 when every call only reads, or reads: [op, ...] naming the ops that do. That
 is the one place this is declared; the agent parallelises on it and the policy

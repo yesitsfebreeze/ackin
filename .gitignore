@@ -2,54 +2,11 @@
 .DS_Store
 
 /.claude/
-/.cartridge/workspace/target/
 /dist/
 /validation/
-/workspace/target/
 __pycache__/
 *.pyc
 /scratch/
-/.cartridge/memos/.lock
-/.cartridge/memos/**/.obsidian/
-# Durable Cartridge records are tracked; generated state is not.
-/target/
 node_modules/
-/.cartridge/bin/
-/.cartridge/empirical/
-/.cartridge/dev/
-/.cartridge/.state/
-**/.state/
-**/.claims/
-**/.lanes/
-**/.sessions/
-
-# Runtime stores, credentials and derived inventories.
-/.cartridge/credentials/
-/.cartridge/memory/
-/.cartridge/sessions/
-/.cartridge/live-sessions/
-/.cartridge/router/
-/.cartridge/resolver/
-/.cartridge/graphify/
-/.cartridge/graphs/
-/.cartridge/cache/
-/.cartridge/.cache/
-/.cartridge/logs/
-/.cartridge/**/probe/
 /bin/
-
-# Local live service database and generated web artifacts
-/.cartridge/live-data/
-/.cartridge/live-service/
-/.cartridge/docs/**/.next/
-/.cartridge/docs/**/.source/
-/.cartridge/docs/**/out/
-
-# Per-profile session journals (proxy and MCP endpoints).
-/.cartridge/proxy-sessions/
-/.cartridge/mcp-sessions/
-
-# Mutable overlay and workspace page stores
-/.cartridge/gitfs/
-/.cartridge/workspace-pages/
 .gstack/
