@@ -1,7 +1,7 @@
 # The project profile
 
 `init.lua` lists the cartridges this project runs; `config.lua` beside it
-configures them, keyed by entry id. Entries are `{id, path, config?, inject?,
+configures them, keyed by entry id. Entries are `{id, path, config?,
 disabled?}`, with `path` relative to the cartridge root.
 
 This repository is the base itself, not a composition, so its profile names no

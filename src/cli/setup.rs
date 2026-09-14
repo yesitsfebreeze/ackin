@@ -419,7 +419,7 @@ pub(crate) fn write(
 		 -- `cartridge setup` wrote it; edit it freely. `path` is the folder below\n\
 		 -- the cartridge root ({}); `id` is the name config.lua and\n\
 		 -- `cartridge settings` use for the entry. An entry may also carry\n\
-		 -- `inject`, `config` and `disabled`.\n\
+		 -- `config` and `disabled`.\n\
 		 return {{\n",
 		dir.file_name()
 			.map_or("builtin".into(), |n| n.to_string_lossy())

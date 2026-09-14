@@ -8,8 +8,7 @@
 //!   "commands": { "test": {"argv": ["just", "test", "store"], "cwd": "."} },
 //!   "binary": "store-bin",      // executable basename, when it differs from the folder
 //!   "ui": "ui/index.ts",
-//!   "selftest": "store.check",  // an event it listens to, proving behaviour
-//!   "integration": "store.wire",// an event it listens to, proving wiring
+//!   "contracts": ["store.check"], // events it listens to that prove it
 //!   "setup": "store.setup",     // an event it listens to, sent by `cartridge setup`
 //!   "doctor": "store.doctor",   // an event it listens to, sent by `cartridge doctor`
 //!   "source": "https://…",
@@ -44,8 +43,6 @@ pub struct Entry {
 	pub config: serde_json::Value,
 	#[serde(default)]
 	pub disabled: bool,
-	#[serde(default)]
-	pub inject: Vec<String>,
 }
 
 impl Entry {

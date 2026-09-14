@@ -668,12 +668,8 @@ impl Host {
 	}
 
 	/// The cartridge a token was issued to.
-	pub(crate) fn caller(&self, token: &str) -> Option<String> {
-		self.tokens
-			.lock()
-			.iter()
-			.find(|(_, issued)| *issued == token)
-			.map(|(id, _)| id.clone())
+	pub(crate) fn known(&self, token: &str) -> bool {
+		self.tokens.lock().values().any(|issued| issued == token)
 	}
 
 	/// Enabled cartridges that are running, with their folders.
@@ -725,7 +721,7 @@ impl Host {
 					"error": slot.error,
 					"path": file,
 					"dir": root,
-					"inject": needs,
+					"needs": needs,
 					"events": plan.map(|p| p.events.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
 					"listen": plan.map(|p| p.listen.clone()).unwrap_or_default(),
 					"dependencies": dependencies,
@@ -747,79 +743,6 @@ impl Host {
 			"cartridge_root": self.dir,
 			"entries": entries,
 		})
-	}
-
-	fn module(slot: &Slot) -> Option<&Path> {
-		slot.sources
-			.iter()
-			.map(|source| source.path.as_path())
-			.find(|path| {
-				path.extension()
-					.is_some_and(|e| e == "tsx" || e == "ts" || e == "js" || e == "jsx")
-			})
-	}
-
-	/// Whether the profile grants `id` the client-module bridge.
-	pub(crate) fn bridged(&self, id: &str) -> bool {
-		self.slots
-			.lock()
-			.iter()
-			.any(|s| s.entry.id == id && s.entry.config["bridge"] == true)
-	}
-
-	/// Active cartridges that ship a client module, and the events they answer.
-	pub fn bridge_status(&self) -> Value {
-		let slots = self.slots.lock();
-		Value::Array(
-			slots
-				.iter()
-				.filter(|s| s.state == State::Active)
-				.filter_map(|s| {
-					let module = Self::module(s)?;
-					Some(json!({
-						"id": s.entry.id,
-						"generation": s.generation,
-						"module": module,
-						"services": s.plan.as_ref().map(|p| p.listen.clone()).unwrap_or_default(),
-					}))
-				})
-				.collect(),
-		)
-	}
-
-	/// A client module's event to its own cartridge.
-	pub async fn bridge_call(
-		&self,
-		owner: &str,
-		generation: u64,
-		key: &str,
-		args: Value,
-	) -> Result<Value> {
-		{
-			let slots = self.slots.lock();
-			let slot = slots
-				.iter()
-				.find(|s| s.entry.id == owner)
-				.ok_or_else(|| Error::Reload("bridge owner unloaded".into()))?;
-			if slot.state != State::Active || slot.generation != generation {
-				return Err(Error::Reload(
-					"bridge generation is no longer active".into(),
-				));
-			}
-			if Self::module(slot).is_none() {
-				return Err(Error::Reload("cartridge has no client module".into()));
-			}
-			if !slot
-				.plan
-				.as_ref()
-				.is_some_and(|p| p.listen.iter().any(|k| k == key))
-			{
-				return Err(Error::Reload(
-					"a bridge client may only send events its own cartridge listens to".into(),
-				));
-			}
-		}
-		self.send_to(owner, key, args).await
 	}
 
 	/// A new connection to an active cartridge, authenticated as the host.

@@ -9,7 +9,7 @@ use crate::loader::{normalize, Cartridge, Entry, MANIFEST};
 
 use super::{Host, State, Status};
 
-type Contract = (String, &'static str, String);
+type Contract = (String, String);
 
 impl Host {
 	/// Wait until nothing is starting, or `timeout` passes.
@@ -134,13 +134,11 @@ impl Host {
 		}
 		let (cartridge, _) = Cartridge::read(&self.dir.join(&at).join(MANIFEST))
 			.map_err(|e| Error::Profile(format!("{at}: {e}")))?;
-		let contracts = [
-			("selftest", cartridge.selftest),
-			("integration", cartridge.integration),
-		]
-		.into_iter()
-		.filter_map(|(obligation, key)| key.map(|key| (at.clone(), obligation, key)))
-		.collect();
+		let contracts = cartridge
+			.contracts
+			.into_iter()
+			.map(|key| (at.clone(), key))
+			.collect();
 		Ok((chosen, contracts))
 	}
 
@@ -152,14 +150,12 @@ impl Host {
 				continue;
 			}
 			let (cartridge, _) = Cartridge::read(&manifest)?;
-			for (obligation, key) in [
-				("selftest", cartridge.selftest),
-				("integration", cartridge.integration),
-			] {
-				if let Some(key) = key {
-					out.push((entry.id.clone(), obligation, key));
-				}
-			}
+			out.extend(
+				cartridge
+					.contracts
+					.into_iter()
+					.map(|key| (entry.id.clone(), key)),
+			);
 		}
 		Ok(out)
 	}
@@ -176,13 +172,13 @@ impl Host {
 				stalled(&self.status()).join("; ")
 			));
 		}
-		for (id, obligation, key) in &contracts {
+		for (id, key) in &contracts {
 			match self.send_to(id, key, serde_json::Value::Null).await {
 				Ok(serde_json::Value::Bool(false)) => {
-					failures.push(format!("{id} {obligation} `{key}` returned false"))
+					failures.push(format!("{id} contract `{key}` returned false"))
 				}
 				Ok(_) => {}
-				Err(e) => failures.push(format!("{id} {obligation} `{key}`: {e}")),
+				Err(e) => failures.push(format!("{id} contract `{key}`: {e}")),
 			}
 		}
 		self.stop().await;
@@ -196,7 +192,6 @@ fn solo_entry(installed: &Installed) -> Entry {
 		path: installed.path.clone(),
 		config: serde_json::Value::Null,
 		disabled: false,
-		inject: Vec::new(),
 	}
 }
 

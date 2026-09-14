@@ -17,5 +17,5 @@ documents. Then read what the task needs:
 - [Development](docs/development.txt): building, testing and troubleshooting the base.
 
 `cartridge.json` is the whole declaration: `events`, `listen`, `needs`, `grant`,
-`settings`, contracts (`selftest`, `integration`). Nothing is declared anywhere
+`settings`, `contracts`. Nothing is declared anywhere
 else, and nothing is read by running the cartridge.

@@ -42,7 +42,6 @@ impl Host {
 				path: e.path.clone(),
 				config: serde_json::Value::Null,
 				disabled: true,
-				inject: Vec::new(),
 			})
 			.collect()
 	}
@@ -94,63 +93,7 @@ impl Host {
 				crate::settings::merge(&mut entry.config, over);
 			}
 		}
-		self.expand(&mut entries)?;
 		Ok(entries)
-	}
-
-	/// `inject = {"tool.*"}` names every declared event with that prefix another
-	/// enabled entry listens to.
-	fn expand(self: &Arc<Self>, entries: &mut [Entry]) -> Result<()> {
-		let globbed = |entry: &Entry| entry.inject.iter().any(|key| key.ends_with('*'));
-		if !entries.iter().any(globbed) {
-			return Ok(());
-		}
-		let listened: Vec<(String, Vec<String>)> = entries
-			.iter()
-			.filter(|entry| !entry.disabled)
-			.map(|entry| {
-				let mut exact = entry.clone();
-				exact.inject.retain(|key| !key.ends_with('*'));
-				let listen = self
-					.plan(&exact)
-					.map(|plan| plan.listen)
-					.unwrap_or_default();
-				(entry.id.clone(), listen)
-			})
-			.collect();
-		for entry in entries.iter_mut().filter(|entry| globbed(entry)) {
-			let mut keys: Vec<String> = Vec::new();
-			for key in std::mem::take(&mut entry.inject) {
-				let Some(prefix) = key.strip_suffix('*') else {
-					if !keys.contains(&key) {
-						keys.push(key);
-					}
-					continue;
-				};
-				if prefix.is_empty() {
-					return Err(Error::Profile(format!(
-						"entry `{}` may not inject a bare `*`; a glob needs a prefix",
-						entry.id
-					)));
-				}
-				let mut matched: Vec<String> = listened
-					.iter()
-					.filter(|(id, _)| *id != entry.id)
-					.flat_map(|(_, listen)| listen.iter())
-					.filter(|key| key.starts_with(prefix))
-					.cloned()
-					.collect();
-				matched.sort();
-				matched.dedup();
-				for key in matched {
-					if !keys.contains(&key) {
-						keys.push(key);
-					}
-				}
-			}
-			entry.inject = keys;
-		}
-		Ok(())
 	}
 
 	/// Every configurable surface of the profile, read from documents only.

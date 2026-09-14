@@ -22,11 +22,9 @@ pub struct Cartridge {
 	pub binary: Option<String>,
 	/// Optional Solid UI module, relative to this cartridge's folder.
 	pub ui: Option<String>,
-	/// A contract: an event this cartridge listens to that proves its behaviour;
-	/// `cartridge verify` emits it.
-	pub selftest: Option<String>,
-	/// A contract: an event this cartridge listens to that proves its wiring.
-	pub integration: Option<String>,
+	/// Events this cartridge listens to that prove it; `cartridge verify` sends them.
+	#[serde(default)]
+	pub contracts: Vec<String>,
 	/// An event this cartridge listens to that `cartridge setup` sends after
 	/// installing it, to ask what this project must decide and take back the
 	/// configuration to write. The exchange is described in `cli/setup.rs`.
@@ -208,7 +206,9 @@ impl Cartridge {
 	fn check(&self, manifest: &Path) -> Result<()> {
 		let at = |what: &str| Error::document(manifest, what);
 		let key = |field: &str, k: &String| -> Result<()> {
-			if k.trim().is_empty() || k.contains('*') || k.contains('\0') {
+			let glob = field == "needs" && k.len() > 1 && k.ends_with('*');
+			let exact = if glob { &k[..k.len() - 1] } else { k.as_str() };
+			if exact.trim().is_empty() || exact.contains('*') || exact.contains('\0') {
 				return Err(at(&format!(
 					"`{field}` entry `{k}` must be a nonempty exact key"
 				)));
@@ -237,18 +237,17 @@ impl Cartridge {
 				return Err(at(&format!("duplicate needs declaration `{k}`")));
 			}
 		}
-		for (field, contract) in [
-			("selftest", &self.selftest),
-			("integration", &self.integration),
-			("setup", &self.setup),
-			("doctor", &self.doctor),
-		] {
-			if let Some(k) = contract {
-				if !self.listen.contains(k) {
-					return Err(at(&format!(
-						"`{field}` names `{k}`, which this cartridge does not listen to"
-					)));
-				}
+		let named = self.contracts.iter().map(|k| ("contracts", k));
+		let named = named.chain(
+			[("setup", &self.setup), ("doctor", &self.doctor)]
+				.into_iter()
+				.filter_map(|(field, k)| k.as_ref().map(|k| (field, k))),
+		);
+		for (field, k) in named {
+			if !self.listen.contains(k) {
+				return Err(at(&format!(
+					"`{field}` names `{k}`, which this cartridge does not listen to"
+				)));
 			}
 		}
 		self.grant.check(&at)

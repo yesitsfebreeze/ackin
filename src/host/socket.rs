@@ -2,13 +2,10 @@
 //! cartridges speak, for the command line.
 //!
 //! Methods, after `auth {token}`. A cartridge's token (from its directory) is
-//! granted `status`, `snapshot` and `cartridges`, and `bridge.*` where its
-//! profile entry sets `bridge = true`; the host token is granted everything.
+//! granted `status`, `snapshot` and `cartridges`; the host token everything.
 //!   status                        -> [{id, state, error, waiting, events, needs, listen, socket}]
 //!   snapshot                      -> {host_pid, profile, cartridge_root, entries}
 //!   cartridges                    -> [{id, dir}]
-//!   bridge.status                 -> [{id, generation, module, services}]
-//!   bridge.call {owner, generation, key, args}
 //!   bail {name, data}             -> the first listener's answer, or null
 //!   emit {name, data}             -> [{from, data} | {from, error}]
 //!   reload {cartridge?}           -> {}
@@ -184,7 +181,7 @@ fn write_private(path: &Path, text: &str) -> Result<()> {
 #[derive(Clone)]
 enum Caller {
 	Host,
-	Cartridge(String),
+	Cartridge,
 }
 
 async fn connection(
@@ -198,7 +195,7 @@ async fn connection(
 			let token = request.params["token"].as_str().unwrap_or_default();
 			let caller = match token == host.host_token() {
 				true => Some(Caller::Host),
-				false => host.caller(token).map(Caller::Cartridge),
+				false => host.known(token).then_some(Caller::Cartridge),
 			};
 			match caller {
 				Some(caller) => {
@@ -258,12 +255,10 @@ async fn answer(
 	let params = request.params.clone();
 	let application = |e: Error| rpc::Error::application(e.to_string());
 	let method = request.method.clone();
-	let granted = match (&caller, method.as_str()) {
-		(Caller::Host, _) => true,
-		(Caller::Cartridge(_), "status" | "snapshot" | "cartridges") => true,
-		(Caller::Cartridge(id), "bridge.status" | "bridge.call") => host.bridged(id),
-		_ => false,
-	};
+	let granted = matches!(
+		(&caller, method.as_str()),
+		(Caller::Host, _) | (Caller::Cartridge, "status" | "snapshot" | "cartridges")
+	);
 	if !granted {
 		let message = format!("`{method}` is not granted to this token");
 		return request.reply(Err(rpc::Error::new(rpc::UNAUTHORIZED, message)));
@@ -272,18 +267,6 @@ async fn answer(
 		"status" => request.reply(Ok(json!(host.status()))),
 		"snapshot" => request.reply(Ok(host.snapshot())),
 		"cartridges" => request.reply(Ok(host.cartridges())),
-		"bridge.status" => request.reply(Ok(host.bridge_status())),
-		"bridge.call" => {
-			let result = host
-				.bridge_call(
-					params["owner"].as_str().unwrap_or_default(),
-					params["generation"].as_u64().unwrap_or_default(),
-					params["key"].as_str().unwrap_or_default(),
-					params["args"].clone(),
-				)
-				.await;
-			request.reply(result.map_err(application));
-		}
 		"bail" => {
 			let name = params["name"].as_str().unwrap_or_default().to_owned();
 			let result = host.bail(&name, params["data"].clone()).await;

@@ -20,9 +20,9 @@ Pick the send by what you do with the answers:
   parallel  none, but every listener must succeed
   gather    all of them, attributed
 
-An optional feature with several possible providers is an event prefix the
-consumer injects in the profile (`inject = {"tool.*"}`); `cartridge.needs()`
-lists what arrived.
+An optional feature with several possible providers is an event prefix in
+`needs` (`"tool.*"`): every event with that prefix another enabled cartridge
+listens to; `cartridge.needs()` lists what arrived.
 
 SCHEMAS
 

@@ -536,8 +536,8 @@ fn rank(path: &Path) -> u8 {
 	}
 }
 
-/// A module's `cartridge.json` as a reader wants it: what it declares, with the
-/// injected keys the composition adds.
+/// A module's `cartridge.json` as a reader wants it: what it declares, with
+/// `needs` globs expanded.
 fn declarations(c: &CartridgeInfo, document: &Result<loader::Cartridge>, dir: &Path) -> String {
 	// Not a heading: the declarations are one leaf, addressed by the file alone.
 	let mut out = format!(

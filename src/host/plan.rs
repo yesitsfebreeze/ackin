@@ -36,11 +36,29 @@ fn exact(keys: &[String]) -> Result<()> {
 	for key in keys {
 		if key.trim().is_empty() || key.contains('*') {
 			return Err(Error::Profile(format!(
-				"`{key}` must be a nonempty exact event name (wildcards are unsupported)"
+				"`{key}` must be a nonempty exact event name"
 			)));
 		}
 	}
 	Ok(())
+}
+
+/// `tool.*` in `needs` names every event with that prefix another enabled
+/// entry listens to.
+fn expand(needs: Vec<String>, listened: &[String]) -> Result<Vec<String>> {
+	let mut out = Vec::new();
+	for key in needs {
+		match key.strip_suffix('*') {
+			None => out.push(key),
+			Some("") => {
+				return Err(Error::Profile(
+					"a bare `*` in needs; a glob needs a prefix".into(),
+				))
+			}
+			Some(prefix) => out.extend(listened.iter().filter(|k| k.starts_with(prefix)).cloned()),
+		}
+	}
+	Ok(out)
 }
 
 fn dedup(keys: &mut Vec<String>) {
@@ -59,13 +77,27 @@ impl Host {
 			.parent()
 			.expect("resolved entry has a folder")
 			.to_path_buf();
-		let mut needs = declared.needs.clone();
-		needs.extend(entry.inject.iter().cloned());
 		let mut listen = declared.listen.clone();
-		exact(&needs)?;
 		exact(&listen)?;
-		dedup(&mut needs);
 		dedup(&mut listen);
+		let mut needs = declared.needs.clone();
+		if needs.iter().any(|k| k.ends_with('*')) {
+			let mut listened = Vec::new();
+			for other in self
+				.entries()?
+				.iter()
+				.filter(|e| !e.disabled && e.id != entry.id)
+			{
+				if let Ok(declared) = crate::loader::resolve(&self.dir.join(&other.path)) {
+					listened.extend(declared.listen);
+				}
+			}
+			listened.sort();
+			listened.dedup();
+			needs = expand(needs, &listened)?;
+		}
+		exact(&needs)?;
+		dedup(&mut needs);
 		let grant = self.expand_grant(&declared.grant, &config)?;
 		Ok(Plan {
 			id: entry.id.clone(),

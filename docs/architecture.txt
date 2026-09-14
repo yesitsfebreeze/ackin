@@ -27,9 +27,8 @@ THE PROFILE
 
 Every folder under the cartridge root (`--dir`, default `builtin`) holding a
 `cartridge.json` is installed and starts disabled. `.cartridge/init.lua`
-returns entries `{id, path, config?, inject?, disabled?}` that enable and
-configure them. `inject` adds events to an entry's needs; `inject = {"tool.*"}`
-names every event with that prefix another enabled entry listens to.
+returns entries `{id, path, config?, disabled?}` that enable and configure
+them.
 `~/.cartridge/config.lua` and `.cartridge/config.lua` map entry ids to config
 laid over each entry.
 

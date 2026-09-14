@@ -93,15 +93,7 @@ fn apply(lua: &Lua, ctx: &Ctx, entry: &Path, config: Value) -> cartridge::Result
 		global.set("config", lua.to_value(&config)?)?;
 		let source = std::fs::read_to_string(entry).map_err(mlua::Error::external)?;
 		let returned: mlua::Value = lua.load(&source).set_name(entry.to_string_lossy()).eval()?;
-		let disposer = match returned {
-			mlua::Value::Table(table) => match table.get::<mlua::Value>("apply")? {
-				mlua::Value::Function(apply) => apply
-					.call::<mlua::Value>((global.clone(), global.get::<mlua::Value>("config")?))?,
-				_ => mlua::Value::Nil,
-			},
-			other => other,
-		};
-		if let mlua::Value::Function(dispose) = disposer {
+		if let mlua::Value::Function(dispose) = returned {
 			ctx.on_dispose(move || async move {
 				if let Err(error) = tokio::task::block_in_place(|| dispose.call::<()>(())) {
 					tracing::warn!(target: "cartridge", "disposer failed: {error}");

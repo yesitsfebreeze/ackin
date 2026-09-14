@@ -67,9 +67,7 @@ async fn a_cartridge_answers_the_events_it_listens_to() {
 			"name": "welcome", "entry": "init.lua",
 			"events": {"welcome": {}}, "needs": ["greet"], "listen": ["welcome"],
 		}),
-		r#"return { apply = function(ctx, config)
-			ctx.listen("welcome", function(args) return ctx.bail("greet", args) end)
-		end }"#,
+		r#"cartridge.listen("welcome", function(args) return cartridge.bail("greet", args) end)"#,
 	);
 	profile(dir.path(), &["welcome", "greeter"]);
 	let host = boot(dir.path()).await;
@@ -369,8 +367,8 @@ async fn a_cartridge_asks_the_host_what_only_the_host_knows() {
 		r#"cartridge.listen("ask", function()
 			local cartridges = cartridge.host("cartridges", nil)
 			local snapshot = cartridge.host("snapshot", nil)
-			local ok, refused = pcall(cartridge.host, "bridge.status", nil)
-			return { count = #cartridges, entries = #snapshot.entries, bridge = ok, refused = tostring(refused),
+			local ok, refused = pcall(cartridge.host, "stop", nil)
+			return { count = #cartridges, entries = #snapshot.entries, stopped = ok, refused = tostring(refused),
 				needs = cartridge.needs(), events = cartridge.events() }
 		end)"#,
 	);
@@ -379,7 +377,7 @@ async fn a_cartridge_asks_the_host_what_only_the_host_knows() {
 	let answer = host.bail("ask", json!(null)).await.unwrap().unwrap();
 	assert_eq!(answer["count"], 2);
 	assert_eq!(answer["entries"], 2);
-	assert_eq!(answer["bridge"], false);
+	assert_eq!(answer["stopped"], false);
 	assert!(
 		answer["refused"].as_str().unwrap().contains("not granted"),
 		"{answer}"
@@ -419,12 +417,38 @@ async fn the_host_socket_answers_the_command_line() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_glob_in_needs_names_what_the_others_listen_to() {
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	cartridge(
+		dir.path(),
+		"tools",
+		json!({"name": "tools", "entry": "init.lua", "events": {"tool.a": {}, "tool.b": {}, "other": {}}, "listen": ["tool.a", "tool.b", "other"]}),
+		r#"cartridge.listen("tool.a", function() return "a" end)"#,
+	);
+	cartridge(
+		dir.path(),
+		"user",
+		json!({"name": "user", "entry": "init.lua", "events": {"which": {}}, "listen": ["which"], "needs": ["tool.*", "greet"]}),
+		r#"cartridge.listen("which", function() return cartridge.needs() end)"#,
+	);
+	profile(dir.path(), &["greeter", "tools", "user"]);
+	let host = boot(dir.path()).await;
+	assert_eq!(status(&host, "user").state, State::Active);
+	assert_eq!(
+		host.bail("which", json!(null)).await.unwrap(),
+		Some(json!(["tool.a", "tool.b", "greet"]))
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn verify_sends_every_declared_contract() {
 	let dir = tempfile::tempdir().unwrap();
 	cartridge(
 		dir.path(),
 		"checked",
-		json!({"name": "checked", "entry": "init.lua", "events": {"checked.ok": {}}, "listen": ["checked.ok"], "selftest": "checked.ok"}),
+		json!({"name": "checked", "entry": "init.lua", "events": {"checked.ok": {}}, "listen": ["checked.ok"], "contracts": ["checked.ok"]}),
 		r#"cartridge.listen("checked.ok", function() return true end)"#,
 	);
 	profile(dir.path(), &["checked"]);
@@ -474,7 +498,7 @@ fn a_document_refuses_a_bad_schema_or_a_contract_it_does_not_listen_to() {
 	for manifest in [
 		json!({"name": "p", "entry": "init.lua", "events": {"a": {"schema": {"type": "no-such-type"}}}}),
 		json!({"name": "p", "entry": "init.lua", "listen": ["a", "a"]}),
-		json!({"name": "p", "entry": "init.lua", "selftest": "a"}),
+		json!({"name": "p", "entry": "init.lua", "contracts": ["a"]}),
 	] {
 		write(dir.path(), "cartridge.json", &manifest.to_string());
 		assert!(

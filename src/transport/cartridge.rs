@@ -264,7 +264,7 @@ impl Ctx {
 		self.state.stop.cancel();
 	}
 
-	/// Ask the host: `status`, `snapshot`, `cartridges`, and where granted, `bridge.status` and `bridge.call`.
+	/// Ask the host: `status`, `snapshot`, `cartridges`.
 	pub async fn host(&self, method: &str, params: Value) -> Result<Value> {
 		let address = self
 			.state
