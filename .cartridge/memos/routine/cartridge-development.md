@@ -7,7 +7,7 @@ description: Build, check, and test the composed cartridges through their existi
 
 Run `just build <owner>`, `just check <owner>`, or `just test <owner>` from the
 composed root or runtime. `all` covers the runtime, shared Rust workspace,
-memory, UI, live, authentication, planning and workspace clients. Additional arguments retain their shell boundaries.
+memory, the terminal UI, live, authentication and planning clients. Additional arguments retain their shell boundaries.
 Memory owns its independent Cargo workspace. Tests and fixtures live in each
 owner's `.cartridge/tests/`; outputs are ignored empirical state.
 
@@ -50,7 +50,7 @@ _cargo action module *args:
     export CARGO_PROFILE_DEV_INCREMENTAL=false CARGO_PROFILE_TEST_INCREMENTAL=false
     if [[ "$module" == all ]]; then
         if (( $# )); then echo 'Select an owner before passing extra arguments' >&2; exit 2; fi
-        for owner in runtime workspace memory policy ui live auth prd workspace-ui; do
+        for owner in runtime workspace memory policy tui live auth prd; do
             just --justfile "$MEMO_JUSTFILE" --working-directory "$MEMO_OWNER_ROOT" _cargo "$action" "$owner"
         done
         if [[ "$action" == check ]]; then
@@ -59,11 +59,7 @@ _cargo action module *args:
         exit
     fi
     case "$module" in
-        workspace-ui)
-            cd "$repos/workspace.ctg"
-            if [[ "$action" == build ]]; then exec bun install --frozen-lockfile "$@"; fi
-            exec bun run "$action" "$@";;
-        ui|live|auth|prd)
+        tui|live|auth|prd)
             cd "$repos/$module.ctg"
             if [[ "$action" == build ]]; then exec bun install --frozen-lockfile "$@"; fi
             exec bun run "$action" "$@";;
@@ -73,7 +69,7 @@ _cargo action module *args:
         workspace) manifest="$MEMO_OWNER_ROOT/.cartridge/workspace/Cargo.toml"; scope=(--workspace);;
         policy)
             exec "$MEMO_OWNER_ROOT/.cartridge/tools/memo-run" "$repos/policy.ctg/.cartridge/memos/routine/policy-tests.md" test "$@";;
-        agent|docs|fs|gitfs|harness|landscape|mcp|memo|memory-tool|proxy|pty|router|sessions|tools)
+        agent|docs|fs|gitfs|harness|fabric|mcp|memo|proxy|pty|router|sessions|tools)
             manifest="$MEMO_OWNER_ROOT/.cartridge/workspace/Cargo.toml"
             package=$module; [[ "$module" != memo ]] || package=memo_cartridge
             scope=(-p "$package");;

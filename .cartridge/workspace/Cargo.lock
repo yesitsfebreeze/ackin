@@ -9,6 +9,7 @@ dependencies = [
  "cartridge",
  "futures",
  "reqwest",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
@@ -621,7 +622,6 @@ name = "harness"
 version = "0.1.0"
 dependencies = [
  "cartridge",
- "landscape",
  "serde",
  "serde_json",
  "sha2",
@@ -945,18 +945,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "landscape"
-version = "0.1.0"
-dependencies = [
- "futures",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1043,22 +1031,12 @@ name = "memo_cartridge"
 version = "0.1.0"
 dependencies = [
  "cartridge",
- "landscape",
+ "futures",
  "serde",
  "serde_json",
  "serde_yaml_ng",
  "sha2",
  "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "memory-tool"
-version = "0.1.0"
-dependencies = [
- "cartridge",
- "serde",
- "serde_json",
  "tokio",
 ]
 
@@ -1290,7 +1268,6 @@ dependencies = [
  "axum",
  "cartridge",
  "futures",
- "landscape",
  "reqwest",
  "router",
  "serde",
@@ -1307,8 +1284,11 @@ dependencies = [
  "alacritty_terminal",
  "base64",
  "cartridge",
+ "getrandom 0.4.3",
  "libc",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
 ]

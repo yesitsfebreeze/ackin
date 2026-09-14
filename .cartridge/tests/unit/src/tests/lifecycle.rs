@@ -414,3 +414,60 @@ async fn disposing_an_effect_that_never_yields_finishes() {
 		.await
 		.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn gather_keeps_every_answer_with_its_fiber() {
+	let rt = Runtime::new();
+	// Two cartridges answer, one stays silent, one fails: the announce keeps
+	// what it was told and the failure stays with the cartridge that broke.
+	let speaker = |answer: &'static str| {
+		move |ctx: Ctx| {
+			ctx.on(
+				"announce",
+				Arc::new(move |_| Box::pin(async move { Ok(Some(value(answer))) })),
+			);
+			Ok(vec![])
+		}
+	};
+	let first = rt.ctx().cartridge(sync("first", speaker("one")));
+	let second = rt.ctx().cartridge(sync("second", speaker("two")));
+	let silent = rt.ctx().cartridge(sync("silent", |ctx: Ctx| {
+		ctx.on("announce", Arc::new(|_| Box::pin(async { Ok(None) })));
+		Ok(vec![])
+	}));
+	let broken = rt.ctx().cartridge(sync("broken", |ctx: Ctx| {
+		ctx.on(
+			"announce",
+			Arc::new(|_| Box::pin(async { Err(Error::Apply("no answer".into())) })),
+		);
+		Ok(vec![])
+	}));
+	for f in [&first, &second, &silent, &broken] {
+		f.settled().await;
+	}
+
+	let gathered = rt.ctx().gather("announce", value(())).await;
+	// Sorted, not asserted in arrival order: two cartridges register their
+	// listeners concurrently, so which one lands first is not a contract.
+	let mut answers: Vec<(u64, &str)> = gathered
+		.iter()
+		.map(|(uid, v)| (*uid, *v.downcast_ref::<&str>().unwrap()))
+		.collect();
+	answers.sort();
+	assert_eq!(
+		answers,
+		vec![(first.uid(), "one"), (second.uid(), "two")],
+		"only the answering fibers contribute, each under its own uid"
+	);
+	settle().await;
+	assert_eq!(broken.state(), Some(State::Failed));
+	assert_eq!(first.state(), Some(State::Active));
+
+	first.dispose().await;
+	let gathered = rt.ctx().gather("announce", value(())).await;
+	assert_eq!(
+		gathered.len(),
+		1,
+		"a disposed cartridge stops contributing to the graph"
+	);
+}

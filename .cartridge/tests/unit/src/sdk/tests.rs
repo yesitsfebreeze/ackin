@@ -8,6 +8,7 @@ fn host() -> (Host, mpsc::UnboundedReceiver<Option<Value>>) {
 			link: Link::new(tx, "gone"),
 			events: Arc::default(),
 			services: Arc::default(),
+			announce: Arc::default(),
 			streams: Arc::default(),
 			finalizers: Arc::default(),
 			declared: vec![],
@@ -78,9 +79,11 @@ async fn cancelling_nested_startup_kills_and_reaps_its_child() {
 #[tokio::test]
 async fn slow_stream_handlers_have_bounded_queues_and_receive_a_gap() {
 	let (host, mut wire) = host();
-	let (tx, mut rx) = mpsc::channel(WATCHER_EVENTS);
+	let (tx, mut rx) = mpsc::channel(watcher_events());
 	host.streams.lock().insert("slow".into(), tx);
-	for seq in 1..=1000 {
+	// Well past the queue, whatever the setting makes it, so the handler is
+	// dropped rather than merely lagging.
+	for seq in 1..=watcher_events() * 4 {
 		host.deliver_stream("slow", json!({"seq":seq,"kind":"data"}));
 	}
 	assert!(!host.streams.lock().contains_key("slow"));
@@ -89,7 +92,7 @@ async fn slow_stream_handlers_have_bounded_queues_and_receive_a_gap() {
 	while let Some(value) = rx.recv().await {
 		seen.push(value);
 	}
-	assert_eq!(seen.len(), WATCHER_EVENTS);
+	assert_eq!(seen.len(), watcher_events());
 	assert_eq!(seen.last().unwrap()["kind"], "error");
 }
 

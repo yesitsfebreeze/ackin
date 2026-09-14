@@ -57,7 +57,7 @@ impl Host {
 		profile: impl Into<PathBuf>,
 		yolo: bool,
 	) -> Arc<Self> {
-		let (outbox, _) = broadcast::channel(1024);
+		let (outbox, _) = broadcast::channel(crate::settings::host().outbox_queue);
 		let dir: PathBuf = dir.into();
 		let profile: PathBuf = profile.into();
 		let lua = Lua::new();
@@ -89,11 +89,11 @@ impl Host {
 			.expect("cartridge.process");
 		cartridge
 			.set(
-				"turn",
-				lua.create_function(|_, ()| Ok(crate::turn::current().map(|id| id.to_string())))
-					.expect("turn helper"),
+				"trace",
+				lua.create_function(|_, ()| Ok(crate::trace::current().map(|id| id.to_string())))
+					.expect("trace helper"),
 			)
-			.expect("cartridge.turn");
+			.expect("cartridge.trace");
 		lua.globals()
 			.set("cartridge", cartridge)
 			.expect("cartridge global");
@@ -212,7 +212,7 @@ impl Host {
 	}
 
 	pub(crate) fn report(&self, cartridge: &str, message: impl std::fmt::Display) {
-		crate::turn::diagnostic(cartridge, &message, serde_json::Value::Null);
+		crate::trace::diagnostic(cartridge, &message, serde_json::Value::Null);
 		self.send(
 			serde_json::json!({ "error": { "cartridge": cartridge, "message": message.to_string() } }),
 		);
@@ -256,11 +256,29 @@ impl Host {
 			declared.name.clone(),
 			declared.sources.clone(),
 		);
-		// The document carries the cartridge's own configuration; a caller
-		// that names none inherits it, and one that names its own wins.
-		if config.is_null() && !declared.config.is_null() {
-			config = declared.config.clone();
+		// The configuration a component is handed is settled here, once, so
+		// that every way in — a profile entry, the ledger, a nested load — hands
+		// it the same complete table. Declared defaults first, then the
+		// document's own `config`, then what the caller names, each laid over
+		// the last field by field. A caller that names one key keeps the rest.
+		let mut settled = crate::settings::defaults(&declared.settings);
+		let mut carried = false;
+		for layer in [declared.config.clone(), config] {
+			if !layer.is_null() {
+				crate::settings::merge(&mut settled, layer);
+				carried = true;
+			}
 		}
+		// Absent and empty are different answers, and a cartridge reads them
+		// differently: `{}` is a configuration that names nothing, and `null` is
+		// no configuration at all. Nothing declared and no layer carrying
+		// anything stays `null`, so a cartridge that never had a configuration
+		// does not start seeing one — but a caller that passed `{}` keeps it.
+		config = match declared.settings.is_empty() && !carried {
+			true => serde_json::Value::Null,
+			false => crate::settings::apply(&declared.settings, settled, &name)
+				.map_err(mlua::Error::RuntimeError)?,
+		};
 		if self.yolo && matches!(name.as_str(), "agent" | "memo") {
 			if config.is_null() {
 				config = serde_json::json!({});

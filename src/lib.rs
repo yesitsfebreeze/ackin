@@ -1,7 +1,7 @@
 pub mod cartridge;
 pub mod context;
+pub mod fabric;
 pub mod fiber;
-mod landscape;
 pub mod ledger;
 pub mod loader;
 pub mod lua;
@@ -13,9 +13,10 @@ pub mod runtime;
 pub mod sandbox;
 pub mod sdk;
 mod service;
+pub mod settings;
 pub mod socket;
 pub mod stream;
-pub mod turn;
+pub mod trace;
 
 #[cfg(test)]
 #[path = "../.cartridge/tests/unit/src/tests/mod.rs"]

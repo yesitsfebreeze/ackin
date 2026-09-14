@@ -270,7 +270,7 @@ impl Runtime {
 				)
 			},
 		);
-		let (lifecycle, _) = broadcast::channel(256);
+		let (lifecycle, _) = broadcast::channel(crate::settings::host().lifecycle_queue);
 		Arc::new(Self {
 			reg: Mutex::new(Registry {
 				next: ROOT,
@@ -413,7 +413,7 @@ where
 			_ = &mut cancelled => {
 				// Give an in-flight effect a brief chance to yield its inverse.
 				// A stream that never yields cannot hold retirement indefinitely.
-				(tokio::time::timeout(std::time::Duration::from_millis(100), &mut next).await.ok().flatten(), true)
+				(tokio::time::timeout(crate::settings::host().lifecycle_drain(), &mut next).await.ok().flatten(), true)
 			},
 			item = &mut next => (item, false),
 		};
@@ -728,5 +728,30 @@ impl Ctx {
 		} else {
 			Err(Error::Listeners(errors))
 		}
+	}
+
+	/// Every listener's answer, kept with the fiber that gave it. This is the
+	/// dispatch an announce needs: ask the composition a question and keep all
+	/// of the replies, attributed, instead of the first one ([`Ctx::bail`]) or
+	/// none of them ([`Ctx::parallel`]).
+	///
+	/// A listener that answers nothing contributes nothing. A listener that
+	/// fails fails its own fiber, as with [`Ctx::emit`] — the error lands on
+	/// the failing cartridge's channel and the caller is not the party that
+	/// broke — so one cartridge that cannot answer never costs the caller the
+	/// answers the rest of the composition gave.
+	pub async fn gather(&self, name: &str, payload: Value) -> Vec<(Uid, Value)> {
+		let listeners = self.listeners(name);
+		let answers =
+			futures::future::join_all(listeners.iter().map(|(_, f)| f(payload.clone()))).await;
+		let mut gathered = Vec::new();
+		for ((uid, _), answer) in listeners.into_iter().zip(answers) {
+			match answer {
+				Ok(Some(value)) => gathered.push((uid, value)),
+				Ok(None) => {}
+				Err(e) => self.rt.fail(uid, e),
+			}
+		}
+		gathered
 	}
 }

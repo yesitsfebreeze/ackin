@@ -35,6 +35,11 @@ path = ".cartridge/tests/unit/src/tests/fixtures/lua_fixture.rs"
 name = "chain_fixture"
 path = ".cartridge/tests/unit/src/tests/fixtures/chain_fixture.rs"
 
+# Provides a tool and announces to the graph: the announce regression's peer.
+[[example]]
+name = "tool_fixture"
+path = ".cartridge/tests/unit/src/tests/fixtures/tool_fixture.rs"
+
 [dependencies]
 tokio = { version = "1.53", features = ["full"] }
 futures = "0.3"
@@ -48,6 +53,8 @@ notify = "9.0.0-rc.5"
 clap = { version = "4", features = ["derive"] }
 [dev-dependencies]
 tempfile = "3"
+# The evidence tests drive deadlines on a paused clock rather than sleeping.
+tokio = { version = "1.53", features = ["full", "test-util"] }
 
 [lints.rust]
 warnings = "deny"

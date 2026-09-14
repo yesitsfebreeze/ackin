@@ -21,8 +21,8 @@ struct Request {
 	call: Option<String>,
 	args: Value,
 	id: Value,
-	/// A client that already names its turn keeps it; otherwise the host mints one.
-	turn: Option<String>,
+	/// A client that already names its trace keeps it; otherwise the host mints one.
+	trace: Option<String>,
 	/// Debug mode: `"on"`, `"off"`, or `"status"` to only report.
 	debug: Option<String>,
 	/// Watch a stream channel; delivery arrives as `{"channel", "event"}` lines.
@@ -36,8 +36,20 @@ struct Request {
 	publish: Option<String>,
 }
 
-pub fn path(dir: &Path) -> PathBuf {
-	sockpath(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()))
+/// The socket one runtime serves, keyed by the project it runs in. Two
+/// directories are two runtimes — each owning its own cartridges and its own
+/// data, neither able to answer for the other — so the key has to separate them
+/// even when the profile directory cannot be canonicalized and every project's
+/// bare `.cartridge` would otherwise hash alike. [`crate::loader::root`] has
+/// already made the root the working directory, so a command typed deep inside
+/// a project derives the same socket as the runtime serving it.
+pub fn path(profile: &Path) -> PathBuf {
+	let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+	sockpath((canonical(&root), canonical(profile)))
+}
+
+fn canonical(path: &Path) -> PathBuf {
+	path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// The socket one chain node serves, keyed by the node's ledger path under the
@@ -45,21 +57,141 @@ pub fn path(dir: &Path) -> PathBuf {
 /// a dependent finds its dependency's socket without being told where it is,
 /// and two nodes of one tree never share one.
 pub fn node_path(root: &Path, node: &str) -> PathBuf {
-	let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-	sockpath((canonical, node.to_owned()))
+	sockpath((canonical(root), node.to_owned()))
+}
+
+/// Where sockets are minted: the directory that holds them, and the two halves
+/// of the name every one of ours carries. Minting and sweeping need the same
+/// three pieces — one has to build a name, the other has to recognise one — so
+/// neither spells them out on its own.
+fn home() -> (PathBuf, String, String) {
+	let user = std::env::var("USER").unwrap_or_else(|_| "default".into());
+	let tmp = || {
+		(
+			PathBuf::from("/tmp"),
+			"cartridge-".to_owned(),
+			format!("-{user}.sock"),
+		)
+	};
+	let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) else {
+		return tmp();
+	};
+	// A socket address is a fixed, short buffer; a runtime directory deep
+	// enough to overrun it is no place to mint one. Every hash is the same
+	// width, so one candidate answers for all of them.
+	let candidate = dir.join(format!("cartridge-{:016x}.sock", 0));
+	match candidate.as_os_str().len() < 100 {
+		true => (dir, "cartridge-".to_owned(), ".sock".to_owned()),
+		false => tmp(),
+	}
 }
 
 fn sockpath(what: impl Hash) -> PathBuf {
 	let mut h = DefaultHasher::new();
 	what.hash(&mut h);
 	let hash = format!("{:016x}", h.finish());
-	std::env::var_os("XDG_RUNTIME_DIR")
-		.map(|d| PathBuf::from(d).join(format!("cartridge-{hash}.sock")))
-		.filter(|p| p.as_os_str().len() < 100)
-		.unwrap_or_else(|| {
-			let user = std::env::var("USER").unwrap_or_else(|_| "default".into());
-			PathBuf::from(format!("/tmp/cartridge-{hash}-{user}.sock"))
-		})
+	let (dir, prefix, suffix) = home();
+	dir.join(format!("{prefix}{hash}{suffix}"))
+}
+
+/// The socket file outlives the listener that made it: nothing in the
+/// filesystem notices a process leaving, and the names are hashes, so the next
+/// runtime of that project mints its own rather than reusing what was left.
+/// This unlinks on the way out, which makes an ordinary exit leave nothing
+/// behind and leaves [`sweep`] only what a kill or a crash stranded.
+struct Bound {
+	path: PathBuf,
+	id: Option<(u64, u64)>,
+}
+
+impl Bound {
+	fn new(path: &Path) -> Self {
+		Self {
+			path: path.to_path_buf(),
+			id: identity(path),
+		}
+	}
+}
+
+impl Drop for Bound {
+	fn drop(&mut self) {
+		// Only the entry this listener created. A daemon that took the name
+		// after we let it go owns what stands there now, and unlinking that
+		// would strand a live socket for the sake of tidying a dead one.
+		if self.id.is_some() && identity(&self.path) == self.id {
+			let _ = std::fs::remove_file(&self.path);
+		}
+	}
+}
+
+/// What distinguishes one socket file from another standing at the same path.
+fn identity(path: &Path) -> Option<(u64, u64)> {
+	use std::os::unix::fs::{FileTypeExt, MetadataExt};
+	let meta = std::fs::metadata(path).ok()?;
+	meta.file_type()
+		.is_socket()
+		.then(|| (meta.dev(), meta.ino()))
+}
+
+/// Collect the sockets nobody answers on. A listener killed outright — a chain
+/// node taken down with the tree, a daemon that crashed, a machine that went
+/// away — never runs its [`Bound`] guard, and the entry it left is indelible
+/// otherwise: a marker for a process that no longer exists, accumulating one
+/// per project per kill until the directory is a census of everything that ever
+/// ran here. Each candidate is probed the way a client would probe it, because
+/// that is the only honest question to ask a socket; a refused connection means
+/// the listener is gone, and one that answers is left alone. Returns how many
+/// were collected.
+pub async fn sweep() -> usize {
+	let (dir, prefix, suffix) = home();
+	sweep_in(&dir, &prefix, &suffix).await
+}
+
+async fn sweep_in(dir: &Path, prefix: &str, suffix: &str) -> usize {
+	let Ok(entries) = std::fs::read_dir(dir) else {
+		return 0;
+	};
+	let mut collected = 0;
+	for entry in entries.flatten() {
+		let name = entry.file_name();
+		let Some(name) = name.to_str() else { continue };
+		if !name.starts_with(prefix) || !name.ends_with(suffix) {
+			continue;
+		}
+		let path = entry.path();
+		// The identity is read before the probe and confirmed after it: a
+		// refusal describes the socket that refused, and unlinking on the
+		// strength of it is only safe while that is still the socket at the
+		// path. The window is small and the cost of losing the race is a
+		// stranded daemon, so it is worth closing.
+		let Some(id) = identity(&path) else { continue };
+		if UnixStream::connect(&path).await.is_ok() {
+			continue;
+		}
+		if identity(&path) == Some(id) && std::fs::remove_file(&path).is_ok() {
+			collected += 1;
+		}
+	}
+	collected
+}
+
+/// The collecting a long-lived host does on everyone's behalf. A session that
+/// launches chains all day strands a socket for every node that was killed
+/// rather than told to go, and one pass at startup would leave the rest of the
+/// day's worth to pile up behind it. A slow cadence keeps the directory the
+/// size of what is actually running, and costs a directory read and a handful
+/// of refused connections to do it.
+pub async fn keep_swept() {
+	let mut every = tokio::time::interval(std::time::Duration::from_secs(300));
+	loop {
+		// The first tick is immediate: a host coming up inherits whatever the
+		// last one left, and that is the largest pile it will ever see.
+		every.tick().await;
+		match sweep().await {
+			0 => {}
+			swept => crate::trace::diagnostic("cartridge", "swept", json!({ "sockets": swept })),
+		}
+	}
 }
 
 pub fn status(host: &Host) -> Value {
@@ -75,6 +207,10 @@ pub async fn serve(host: Arc<Host>, path: &Path) -> std::io::Result<()> {
 	}
 	let _ = std::fs::remove_file(path);
 	let listener = UnixListener::bind(path)?;
+	// Held for as long as this serves: the socket goes when the serving does,
+	// whether that is a daemon told to stop or a foreground host whose serving
+	// task was simply dropped.
+	let _bound = Bound::new(path);
 	let mut clients = tokio::task::JoinSet::new();
 	loop {
 		tokio::select! {
@@ -254,11 +390,11 @@ async fn client(host: Arc<Host>, stream: UnixStream) {
 		}
 		if let Some(key) = request.call {
 			let (host, reply_tx) = (host.clone(), reply_tx.clone());
-			let turn = request
-				.turn
+			let trace = request
+				.trace
 				.map(std::sync::Arc::from)
-				.unwrap_or_else(crate::turn::mint);
-			tasks.spawn(crate::turn::scope(turn, async move {
+				.unwrap_or_else(crate::trace::mint);
+			tasks.spawn(crate::trace::scope(trace, async move {
 				let reply = match host.call(&key, request.args).await {
 					Ok(data) => json!({ "reply": request.id, "data": data }),
 					Err(e) => json!({ "reply": request.id, "error": e }),

@@ -549,6 +549,11 @@ async fn stdout_closed_live_children_obey_each_host_deadline_and_are_reaped() {
 	use std::process::Stdio;
 	use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 	let parent = nested_fixture();
+	// The startup deadline is a host setting. The child must outlive it, or it
+	// exits on its own and nothing is left to reap; the wait runs a little past
+	// it, so the deadline is what ends the child, whatever it is set to.
+	let startup = crate::settings::host().startup_timeout();
+	let deadline = startup + std::time::Duration::from_secs(2);
 	for nested in [false, true] {
 		let dir = tempfile::tempdir().unwrap();
 		let pid = dir.path().join("owned.pid");
@@ -560,9 +565,10 @@ async fn stdout_closed_live_children_obey_each_host_deadline_and_are_reaped() {
 if [ "$1" = hello ]; then echo '{{"provide":["roundtrip"]}}'; exit 0; fi
 echo $$ > '{}'
 exec 1>&-
-exec sleep 30
+exec sleep {}
 "#,
-				pid.display()
+				pid.display(),
+				startup.as_secs() * 2
 			),
 		);
 		if nested {
@@ -583,7 +589,7 @@ exec sleep 30
 				.await
 				.unwrap();
 			let mut lines = BufReader::new(process.stdout.take().unwrap()).lines();
-			let error = tokio::time::timeout(std::time::Duration::from_secs(7), async {
+			let error = tokio::time::timeout(deadline, async {
 				loop {
 					let line = lines
 						.next_line()
@@ -613,7 +619,7 @@ exec sleep 30
 			)
 			.unwrap();
 			let fiber = host.runtime().ctx().cartridge(component);
-			tokio::time::timeout(std::time::Duration::from_secs(7), fiber.settled())
+			tokio::time::timeout(deadline, fiber.settled())
 				.await
 				.expect("runtime startup exceeded its deadline");
 			let error = fiber.error().expect("live child became ready");

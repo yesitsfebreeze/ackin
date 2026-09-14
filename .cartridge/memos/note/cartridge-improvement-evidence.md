@@ -16,7 +16,7 @@ Scores in the conversation were subjective usefulness judgments, not measurement
 
 ## Observed in this conversation
 
-On 2026-09-13, memo landscape/resolve/types and PTY readback succeeded. GitFS
+On 2026-09-13, memo fabric/resolve/types and PTY readback succeeded. GitFS
 `ls` returned an approval-required tool error because the MCP profile has no
 interactive approval channel for that operation. Memory query returned a competing
 writer error. The PTY reported Nushell with cwd in cartridge.ctg; Codex's command
@@ -53,7 +53,7 @@ take precedence over historical builtin/, core/, .zirkle/ or zirkle command refe
 The existing /Users/feb/dev/cartridge/.cartridge/CARTRIDGE-ASSESSMENT.md reports a real temporary
 MCP GitFS/ship result-envelope failure and passing component suites. This planning
 pass did not rerun those suites and does not claim their results as fresh evidence.
-That report also proposes landscape centralization, document execution and repository
+That report also proposes fabric centralization, document execution and repository
 consolidation. Those architectural migrations are context for avoiding duplicate
 work, not assumed user-approved prerequisites for the 45 improvements here.
 

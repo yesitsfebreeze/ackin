@@ -612,7 +612,9 @@ async fn disposing_a_child_before_ready_kills_it_without_waiting_for_startup_dea
 async fn a_child_that_stays_alive_without_ready_times_out_and_is_reaped() {
 	let (_dir, host, pid) = unready_fixture().await;
 	let fiber = host.fiber_of("child").unwrap();
-	tokio::time::timeout(std::time::Duration::from_secs(7), fiber.settled())
+	// The startup deadline is a host setting; wait a little past whatever it is.
+	let deadline = crate::settings::host().startup_timeout() + std::time::Duration::from_secs(2);
+	tokio::time::timeout(deadline, fiber.settled())
 		.await
 		.unwrap();
 	assert!(fiber.error().unwrap().contains("timed out before ready"));

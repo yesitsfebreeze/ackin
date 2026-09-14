@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use crate::loader::Grant;
 
 #[cfg(target_os = "linux")]
-#[path = "sandbox/linux.rs"]
+#[path = "sandbox_linux.rs"]
 mod linux;
 
 /// The operating-system policy launcher.
@@ -103,7 +103,9 @@ fn interpreter(binary: &Path) -> Option<PathBuf> {
 	if !first.starts_with(b"#!") {
 		return None;
 	}
-	let line = String::from_utf8_lossy(&first[..first.len().min(160)]);
+	let line = String::from_utf8_lossy(
+		&first[..first.len().min(crate::settings::host().sandbox_error_chars)],
+	);
 	let line = line.lines().next().unwrap_or("").trim_start_matches("#!");
 	let program = line.split_whitespace().next()?;
 	let path = PathBuf::from(program);

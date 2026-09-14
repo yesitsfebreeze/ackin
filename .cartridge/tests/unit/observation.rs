@@ -97,7 +97,7 @@ fn actual_descriptor_shapes_are_hashed_and_invalid_oversized_descriptors_are_unk
 	);
 	assert!(descriptor(&json!({"content":"not a descriptor","error":false})).is_none());
 	assert!(
-		descriptor(&json!({"name":"f","description":"s".repeat(70000),"input_schema":{}}))
+		descriptor(&json!({"name":"f","description":"s".repeat(crate::settings::host().observation_content_bytes + 1),"input_schema":{}}))
 			.is_none()
 	);
 	let (observer, _) = fixture();
@@ -105,10 +105,13 @@ fn actual_descriptor_shapes_are_hashed_and_invalid_oversized_descriptors_are_unk
 	observer.described("generation1", "tool.fixture", b.clone());
 	assert_eq!(observer.revision("generation1", "tool.fixture"), Some(b));
 	assert_eq!(observer.revision("generation2", "tool.fixture"), None);
-	for i in 0..128 {
+	// The cache depth is a host setting: fill it with fresh generations and the
+	// first one is the one that goes.
+	let entries = crate::settings::host().observation_cache_entries;
+	for i in 0..entries {
 		observer.described(&i.to_string(), "tool.fixture", a.clone());
 	}
-	assert_eq!(observer.cache.lock().unwrap().len(), 128);
+	assert_eq!(observer.cache.lock().unwrap().len(), entries);
 	assert_eq!(observer.revision("generation1", "tool.fixture"), None);
 }
 #[tokio::test]

@@ -31,7 +31,12 @@ type Finalizer = Box<dyn FnOnce() -> Fut<()> + Send>;
 /// A stream subscription's handler, fed the envelope of every event the
 /// cartridge receives on its channel, in channel order.
 type Watcher = mpsc::Sender<Value>;
-const WATCHER_EVENTS: usize = 258;
+/// A watcher's queue holds a full replay of the channel plus the headroom a
+/// join, a gap and a lag notice need — the same answer a host-side subscriber
+/// gets, off the same settings, so neither side is the narrow one.
+fn watcher_events() -> usize {
+	crate::settings::host().subscriber_events()
+}
 
 /// A cartridge hosted below this one, and what its `hello` declared: the
 /// reload flag is what makes a frame the host above sends this cartridge the
@@ -48,6 +53,9 @@ pub struct Host {
 	link: Arc<Link>,
 	events: Arc<Mutex<HashMap<String, Handler>>>,
 	services: Arc<Mutex<HashMap<String, Handler>>>,
+	/// What this cartridge contributes to the graph beyond the tools it
+	/// provides, set by [`Host::announce`].
+	announce: Arc<Mutex<Option<Handler>>>,
 	streams: Arc<Mutex<HashMap<String, Watcher>>>,
 	finalizers: Arc<Mutex<Vec<Finalizer>>>,
 	/// The provide keys this cartridge's own declaration carries — the only
@@ -66,8 +74,95 @@ where
 
 impl Host {
 	/// Read-only committed composition, without configuration values.
-	pub async fn landscape(&self) -> Result<Value> {
-		self.link.request(json!({"landscape":true})).await
+	pub async fn snapshot(&self) -> Result<Value> {
+		self.link.request(json!({"snapshot":true})).await
+	}
+
+	/// The graph over the live composition, as `{"nodes","edges","announced"}`.
+	/// Asking for it fires the announce, so what comes back is what the
+	/// composition says about itself now — not a cached copy of what it said
+	/// when something was last loaded. `scope` reaches every contributor; pass
+	/// the asking side's context in it, such as the session cwd a record is
+	/// read from.
+	pub async fn graph(&self, scope: Value) -> Result<Value> {
+		self.link.request(json!({"graph": scope})).await
+	}
+
+	/// Contribute to the graph. The handler is given the announce payload and
+	/// answers `{"nodes":[…],"edges":[…]}`, or `Value::Null` to contribute
+	/// nothing this time. Every cartridge already announces the tools it
+	/// provides; this is for what only the cartridge itself knows — a record's
+	/// memos, a session roster, whatever it holds that the graph should reach.
+	pub fn announce<F, Fut>(&self, f: F)
+	where
+		F: Fn(Value) -> Fut + Send + Sync + 'static,
+		Fut: Future<Output = Result<Value>> + Send + 'static,
+	{
+		*self.announce.lock() = Some(boxed(f));
+	}
+
+	/// Answer the announce: the tools this cartridge provides, as each one
+	/// describes itself right now, plus whatever its own hook contributes.
+	///
+	/// The descriptors are read from this cartridge's own service handlers, in
+	/// process — nobody has to inject a tool to learn what it is, and a tool
+	/// that fails or answers nonsense is left out rather than failing the
+	/// graph. A cartridge with no tools and no hook answers null and is not
+	/// counted among the contributors.
+	async fn announcement(&self, scope: Value) -> Result<Value> {
+		let tools: Vec<(String, Handler)> = {
+			let services = self.services.lock();
+			services
+				.iter()
+				.filter(|(key, _)| key.starts_with("tool."))
+				.map(|(key, handler)| (key.clone(), handler.clone()))
+				.collect()
+		};
+		let mut nodes = Vec::new();
+		for (key, handler) in tools {
+			let Ok(answer) = handler(json!({"op":"describe"})).await else {
+				continue;
+			};
+			// A tool may answer describe inside its own result envelope.
+			let descriptor = match answer["content"].as_str() {
+				Some(text) => serde_json::from_str(text).unwrap_or(Value::Null),
+				None => answer,
+			};
+			let Some(name) = descriptor["name"].as_str() else {
+				continue;
+			};
+			nodes.push(json!({"kind":"tool","key":key,"name":name,
+			                  "description":descriptor["description"].as_str().unwrap_or("")}));
+		}
+		let hook = self.announce.lock().clone();
+		let mut contribution = match hook {
+			Some(hook) => hook(scope).await?,
+			None => Value::Null,
+		};
+		if nodes.is_empty() && contribution.is_null() {
+			return Ok(Value::Null);
+		}
+		if !contribution.is_object() {
+			contribution = json!({});
+		}
+		let rows = contribution["nodes"]
+			.as_array()
+			.cloned()
+			.unwrap_or_default();
+		contribution["nodes"] = json!(nodes.into_iter().chain(rows).collect::<Vec<_>>());
+		Ok(contribution)
+	}
+
+	/// Listen for the announce. Every cartridge does this, whether or not it
+	/// has anything to say, because what it has to say can change after it
+	/// applies — a tool added by a later generation announces itself without
+	/// the cartridge having to remember to register anything.
+	fn listen_announce(&self) {
+		let host = self.clone();
+		self.on(crate::fabric::ANNOUNCE, move |announce| {
+			let host = host.clone();
+			async move { host.announcement(announce).await }
+		});
 	}
 
 	/// Cooperatively prepare or cancel a generation replacement.
@@ -154,7 +249,7 @@ impl Host {
 		F: Fn(Value) -> Fut + Send + Sync + 'static,
 		Fut: Future<Output = Result<Value>> + Send + 'static,
 	{
-		let (tx, mut rx) = mpsc::channel::<Value>(WATCHER_EVENTS);
+		let (tx, mut rx) = mpsc::channel::<Value>(watcher_events());
 		let boxed = boxed(f);
 		// One pump per subscription: the wire is read in order and the pump
 		// handles in order, so two events never race inside the handler.
@@ -266,7 +361,7 @@ impl Host {
 		child.tasks.spawn(async move {
 			let mut lines = BufReader::new(stderr).lines();
 			while let Ok(Some(line)) = lines.next_line().await {
-				crate::turn::diagnostic_line(&label, &line);
+				crate::trace::diagnostic_line(&label, &line);
 			}
 		});
 		let (tx, mut rx) = mpsc::unbounded_channel::<Option<Value>>();
@@ -284,8 +379,8 @@ impl Host {
 		});
 		link.send(json!({ "apply": { "name": name, "config": config, "capabilities":{"service_versions":self.version_queries} } }));
 		let mut startup = BufReader::new(stdout);
-		let mut remaining = 64 * 1024;
-		let ready = tokio::time::timeout(crate::process::STARTUP_TIMEOUT, async {
+		let mut remaining = crate::settings::host().startup_bytes;
+		let ready = tokio::time::timeout(crate::process::startup_timeout(), async {
 			loop {
 				let Some(line) = crate::process::startup_line(&mut startup, &mut remaining)
 					.await
@@ -377,9 +472,12 @@ impl Host {
 				.retain(|child| !Arc::ptr_eq(&child.link, &finalizer_link));
 			finalizer_link.send(json!({ "dispose": true }));
 			finalizer_link.stop();
-			if tokio::time::timeout(std::time::Duration::from_secs(5), finalizer_child.wait())
-				.await
-				.is_err()
+			if tokio::time::timeout(
+				crate::settings::host().shutdown_timeout(),
+				finalizer_child.wait(),
+			)
+			.await
+			.is_err()
 			{
 				let _ = finalizer_child.kill().await;
 			}
@@ -432,14 +530,14 @@ impl Host {
 			return;
 		}
 		let id = m["id"].as_u64().unwrap_or(0);
-		let (host, link, turn) = (self.clone(), link.clone(), crate::turn::of(&m));
+		let (host, link, trace) = (self.clone(), link.clone(), crate::trace::of(&m));
 		if let Some(key) = m["meta"].as_str().map(str::to_owned) {
-			tokio::spawn(crate::turn::scope(turn, async move {
+			tokio::spawn(crate::trace::scope(trace, async move {
 				link.reply(id, host.meta(&key).await);
 			}));
 		} else if let Some(key) = m["call"].as_str().map(str::to_owned) {
 			let args = m["args"].clone();
-			tokio::spawn(crate::turn::scope(turn, async move {
+			tokio::spawn(crate::trace::scope(trace, async move {
 				link.reply(id, host.call(&key, args).await);
 			}));
 		} else if let Some(keys) = m["versions"].as_array() {
@@ -448,28 +546,33 @@ impl Host {
 				.filter_map(Value::as_str)
 				.map(str::to_owned)
 				.collect::<Vec<_>>();
-			tokio::spawn(crate::turn::scope(turn, async move {
+			tokio::spawn(crate::trace::scope(trace, async move {
 				link.reply(id, host.service_versions(&keys).await);
 			}));
 		} else if m["injections"] == true {
-			tokio::spawn(crate::turn::scope(turn, async move {
+			tokio::spawn(crate::trace::scope(trace, async move {
 				link.reply(id, host.injections().await.map(|keys| json!(keys)));
 			}));
-		} else if m["landscape"] == true {
-			tokio::spawn(crate::turn::scope(turn, async move {
-				link.reply(id, host.landscape().await);
+		} else if m["snapshot"] == true {
+			tokio::spawn(crate::trace::scope(trace, async move {
+				link.reply(id, host.snapshot().await);
+			}));
+		} else if !m["graph"].is_null() {
+			let scope = m["graph"].clone();
+			tokio::spawn(crate::trace::scope(trace, async move {
+				link.reply(id, host.graph(scope).await);
 			}));
 		} else if m["cartridges"] == true {
-			tokio::spawn(crate::turn::scope(turn, async move {
+			tokio::spawn(crate::trace::scope(trace, async move {
 				link.reply(id, host.cartridges().await);
 			}));
 		} else if m["bridge"] == "status" {
-			tokio::spawn(crate::turn::scope(turn, async move {
+			tokio::spawn(crate::trace::scope(trace, async move {
 				link.reply(id, host.bridge_status().await);
 			}));
 		} else if m["bridge"] == "call" {
 			let call = m.clone();
-			tokio::spawn(crate::turn::scope(turn, async move {
+			tokio::spawn(crate::trace::scope(trace, async move {
 				link.reply(id, host.bridge_call(call).await);
 			}));
 		} else if m["reload"].is_boolean() {
@@ -497,9 +600,9 @@ impl Host {
 		let handler = table.lock().get(name).cloned();
 		let link = self.link.clone();
 		let name = name.to_owned();
-		// The host's turn continues inside this cartridge, so a nested call or a
-		// diagnostic written here names the turn that asked for the work.
-		tokio::spawn(crate::turn::scope(crate::turn::of(m), async move {
+		// The host's trace continues inside this cartridge, so a nested call or a
+		// diagnostic written here names the trace that asked for the work.
+		tokio::spawn(crate::trace::scope(crate::trace::of(m), async move {
 			let reply = match handler {
 				Some(h) => h(data).await,
 				None => Err(format!("no handler for {name}")),
@@ -508,9 +611,9 @@ impl Host {
 		}));
 	}
 
-	/// The turn this handler runs in, for a cartridge writing a diagnostic.
-	pub fn turn() -> Option<String> {
-		crate::turn::current().map(|id| id.to_string())
+	/// The trace this handler runs in, for a cartridge writing a diagnostic.
+	pub fn trace() -> Option<String> {
+		crate::trace::current().map(|id| id.to_string())
 	}
 
 	async fn finish(&self) {
@@ -581,6 +684,7 @@ impl Cartridge {
 			link,
 			events: Arc::default(),
 			services: Arc::default(),
+			announce: Arc::default(),
 			streams: Arc::default(),
 			finalizers: Arc::default(),
 			declared: self.provide.clone(),
@@ -603,7 +707,13 @@ impl Cartridge {
 				let config = m["apply"]["config"].clone();
 				tokio::spawn(async move {
 					match apply(host.clone(), config).await {
-						Ok(()) => host.write(json!({ "ready": true })),
+						Ok(()) => {
+							// Registered once the cartridge has applied, so the
+							// first announce it can be asked already sees every
+							// tool it provides.
+							host.listen_announce();
+							host.write(json!({ "ready": true }));
+						}
 						Err(e) => {
 							host.write(json!({ "error": e }));
 							host.finish().await;

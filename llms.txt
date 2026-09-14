@@ -1,8 +1,12 @@
 # Cartridge: system and authoring guide
 
-Cartridge hosts replaceable Lua and SDK process cartridges. Start here, then
-read the linked plain-text guides relevant to the task. Paths are relative to
-this source repository.
+Cartridge hosts replaceable Lua and SDK process cartridges. Start with
+`cartridge help`: it lists what this composition has enabled, one line each,
+and `cartridge help <id>` prints that cartridge's declarations and the page it
+ships. The manual is built from the cartridges present, so it is never stale
+and never describes one cartridge from inside another. Then read the linked
+plain-text guides relevant to the task. Paths are relative to this source
+repository.
 
 - [Writing good modules](docs/writing-good-modules.txt): useful events, direct
   integration, cartridge dependencies, and documentation through memo tools.
@@ -16,17 +20,53 @@ this source repository.
   proxy, MCP registration, local data, Git workflow, and troubleshooting.
 - [Memos and knowledge](docs/memos.txt): record types, validated writes,
   discovery, system prompts, and the cartridge-creation routine.
+- [Settings](docs/settings.txt): how a cartridge contributes configuration
+  keys, the three layers that settle them, and `cartridge settings`.
 
 The executable declaration belongs in each cartridge.json. It includes purpose,
-services, dependencies, grants, and documented command argument arrays. Reading
-commands does not execute them. Memos hold context, decisions, and procedures.
-There is no separate development JSON.
+services, dependencies, grants, documented command argument arrays, and the
+configuration keys the cartridge contributes. Reading commands does not execute
+them. Memos hold context, decisions, and procedures. There is no separate
+development JSON.
+
+Every tunable value is a declared setting, never a constant. A cartridge names
+its keys in `settings` with a type, a default, optional bounds and one line of
+documentation; the host fills each one, checks it, and hands the cartridge a
+complete configuration. That document is the only place the numbers live: a
+cartridge carries no `Default` restating them, no `#[serde(default)]` on a
+configuration field, and no second ceiling in code. It embeds its own
+`cartridge.json` and reads the declared table back for an unhosted run, so the
+values a test exercises are the values it ships. The host's own keys live in
+`settings.json` beside this file, in the same shape. Three
+layers settle a key — the declaration, then `~/.cartridge/config.lua` for this
+machine, then the project's `.cartridge/config.lua` — each laid over the last
+field by field. `cartridge settings` prints every key with its value and the
+file that settled it, `--template` prints the whole surface as a config.lua
+ready to save, and a non-zero exit means a cartridge is configured with a key it
+never declared. Do not re-check in code a bound the declaration already states,
+and do not pin a limit in a project file merely to restate its default.
+
+Defaults are deliberately generous: a limit here exists to stop a runaway, not
+to ration the machine. When one is in the way, raise the declaration rather than
+working around it.
+
+A cartridge brings its own surface. Its services, tools, settings, tests,
+documentation and `.cartridge/help.md` page live in its directory and register
+into the host; nothing about it lives anywhere else. It reaches another
+cartridge in exactly two ways: through a key it declares in `needs` (a hard
+dependency, which the host refuses to start without) or by listening to an
+event another cartridge emits and reacting. It never carries another
+cartridge's protocol for an optional feature, never names a sibling it did not
+declare, and never installs a rule about a sibling into a shared cartridge.
+Installing or uninstalling a cartridge therefore changes nothing outside it.
+`just isolation` checks every cartridge against this rule.
 
 A good cartridge owns a concrete capability, exposes useful state changes as
-events, and calls declared dependencies directly for required results. Reuse the
-system's services and preserve their context, errors, and lifecycle. Keep service
-and event contracts discoverable in memos alongside the implementation.
+events, and calls declared dependencies directly for required results. Preserve
+the host's context, errors, and lifecycle. Keep service and event contracts
+discoverable in memos alongside the implementation.
 
 The guides describe this checkout, not a promise that unfinished sandbox work
 is complete. Source contracts and tests are authoritative when behavior changes.
-See src/loader.rs for the manifest schema.
+See src/loader.rs for the manifest schema and src/settings.rs for the settings
+format and the host's own keys.

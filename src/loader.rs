@@ -19,6 +19,14 @@
 //!   "selftest": "store.check",  // optional: a provided key proving behaviour
 //!   "integration": "store.wire",// optional: a provided key proving wiring
 //!   "source": "https://…",      // optional: where to retrieve source from
+//!   "settings": {              // optional: the config keys this cartridge
+//!     "max_bytes": {           //   contributes; dotted names nest
+//!       "type": "integer",     //   integer|number|boolean|string|list|table
+//!       "default": 67108864,   //   required: the value when nothing sets it
+//!       "min": 1024,           //   optional inclusive bounds, numbers only
+//!       "doc": "Read budget."  //   optional: one line, printed by `settings`
+//!     }
+//!   },
 //!   "provide": ["store.get"],   // optional: keys offered, private by default
 //!   "needs": ["log.write"],     // optional: keys asked for
 //!   "export": ["inner.store"],  // optional: inner keys passed outward
@@ -30,6 +38,14 @@
 //!   }
 //! }
 //! ```
+//!
+//! **A declared setting is a filled setting.** Every key in `settings` holds a
+//! value by the time the cartridge starts: its own default, or what
+//! `~/.cartridge/config.lua`, the project's `.cartridge/config.lua` or the
+//! profile entry laid over it, in that order. The value is checked against the
+//! declared kind and bounds first, so a cartridge never reads a key that is
+//! missing, of the wrong type, or outside what it said it could take — and
+//! never needs a fallback beside the declaration to say so twice.
 //!
 //! **An absent `grant` grants nothing.** `Grant::default()` is empty on all
 //! four of `read`, `write`, `net` and `exec`, which is the tightest policy and
@@ -64,7 +80,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::ledger::{Bound, Installed, Ledger};
 
@@ -117,6 +132,20 @@ pub struct CartridgeInfo {
 	/// the same mistake as keeping the request in a second file.
 	pub unread: Option<String>,
 	pub error: Option<String>,
+}
+
+/// One entry's configurable surface: what it declares, what the layers settled
+/// it to, and what it is configured with that it never declared.
+pub struct SettingsInfo {
+	pub id: String,
+	pub path: String,
+	pub disabled: bool,
+	/// The keys this cartridge contributes, dotted and sorted.
+	pub specs: crate::settings::Specs,
+	/// Those keys filled in, with every layer laid over them.
+	pub settled: serde_json::Value,
+	/// Configured keys no declaration mentions: the migration checklist.
+	pub undeclared: Vec<String>,
 }
 
 pub(crate) struct Loaded {
@@ -179,6 +208,14 @@ pub struct Cartridge {
 	/// own config, when it names one, is laid over it.
 	#[serde(default)]
 	pub config: serde_json::Value,
+	/// The keys this cartridge contributes to the configuration: dotted name to
+	/// `{type, default, min, max, doc}`. What is declared here is filled with
+	/// its default before the cartridge starts, checked against its kind and
+	/// bounds, listed by `cartridge settings`, and settable in the global
+	/// `~/.cartridge/config.lua` or the project's own — under this entry's id.
+	/// A cartridge that declares its keys carries no fallbacks of its own.
+	#[serde(default)]
+	pub settings: crate::settings::Specs,
 	/// Keys this cartridge offers. Private to its own subtree unless a parent
 	/// re-exports them: two cartridges may provide the same key without
 	/// colliding so long as neither subtree passes it into the other.
@@ -517,6 +554,10 @@ pub(crate) struct Declared {
 	pub(crate) provide: Vec<String>,
 	pub(crate) needs: Vec<String>,
 	pub(crate) config: serde_json::Value,
+	/// What this cartridge contributes to the configuration. Travels with the
+	/// document so the value a component is handed is already settled against
+	/// it, wherever the component was loaded from.
+	pub(crate) settings: crate::settings::Specs,
 }
 
 /// What a profile entry's document declares, read from the document and its own
@@ -555,6 +596,7 @@ pub(crate) fn resolve(path: &Path) -> mlua::Result<Declared> {
 			provide: Vec::new(),
 			needs: Vec::new(),
 			config: serde_json::Value::Null,
+			settings: Default::default(),
 		});
 	}
 	let (manifest, entry) = Cartridge::read(&path).map_err(mlua::Error::RuntimeError)?;
@@ -579,6 +621,7 @@ pub(crate) fn resolve(path: &Path) -> mlua::Result<Declared> {
 		provide: manifest.provide,
 		needs: manifest.needs,
 		config: manifest.config,
+		settings: manifest.settings,
 	})
 }
 
@@ -591,15 +634,45 @@ fn validate(entry: &Entry) -> mlua::Result<()> {
 	Ok(())
 }
 
-/// Resolve a profile name under the project configuration directory.
-/// An absolute name selects that exact directory.
-pub fn profile(name: &str) -> PathBuf {
-	Path::new(".cartridge").join(name)
+/// The one user profile: the `.cartridge` directory of the project being run,
+/// holding the `init.lua` that composes it and the `config.lua` that configures
+/// it. There is no name to select and no `<profile>` layer beneath it — a
+/// command picks an entry point out of this one host, never a second list of
+/// cartridges — so every caller resolves the same directory.
+pub fn profile() -> PathBuf {
+	PathBuf::from(".cartridge")
 }
 
 /// Cartridges are loaded from the working directory unless `--dir` is supplied.
 pub fn builtin() -> PathBuf {
 	PathBuf::from("builtin")
+}
+
+/// The project a runtime belongs to: the nearest directory at or above the one
+/// it was started in whose `.cartridge` folder composes a runtime.
+///
+/// The composing `init.lua` is what makes a directory a project, not the
+/// `.cartridge` folder alone — a repository keeps memos, records and data under
+/// that name without ever being a project, and stopping at the first of those
+/// would bind the runtime to a directory that has no composition to load.
+///
+/// A runtime is bound to its project. Two directories run two of them, each
+/// with its own cartridges, its own data directories and its own credential
+/// store, and each dying with the terminal that started it — so the way to move
+/// a runtime is to end it here and start it there. That only holds if the
+/// project is decided by where the runtime was started and nothing else: a
+/// profile can be an absolute path shared by every project on the machine, and
+/// reading the project off the profile would collapse them all into one.
+///
+/// Searching upward is what lets a command typed deep inside a project reach
+/// the runtime serving it instead of starting a second one in a subdirectory.
+/// A working directory under no project at all is its own root: the runtime
+/// still starts, and its relative paths land where it was started.
+pub fn root() -> PathBuf {
+	let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+	cwd.ancestors()
+		.find(|dir| dir.join(".cartridge").join("init.lua").is_file())
+		.map_or(cwd.clone(), Path::to_path_buf)
 }
 
 impl Host {
@@ -768,20 +841,35 @@ impl Host {
 				)));
 			}
 		}
-		let config = self.profile.join("config.lua");
-		if config.is_file() {
-			let mut overrides: serde_json::Map<String, serde_json::Value> = self.eval(&config)?;
-			for entry in &mut entries {
-				let Some(over) = overrides.remove(&entry.id) else {
-					continue;
-				};
-				match (&mut entry.config, over) {
-					(serde_json::Value::Object(base), serde_json::Value::Object(over)) => {
-						base.extend(over)
+		// Two configuration files, laid one over the other: the machine's, then
+		// this project's. A preference that follows the person lives in
+		// `~/.cartridge/config.lua`; what this checkout needs lives beside the
+		// profile that composes it, and wins where both speak. Both are keyed by
+		// entry id, and both merge field by field, so naming one key in a
+		// project file keeps every other key the global file settled.
+		let mut overrides = serde_json::Map::new();
+		for file in crate::settings::global_path()
+			.into_iter()
+			.chain([crate::settings::project_path(&self.profile)])
+		{
+			if !file.is_file() {
+				continue;
+			}
+			let layer: serde_json::Map<String, serde_json::Value> = self.eval(&file)?;
+			for (id, over) in layer {
+				match overrides.get_mut(&id) {
+					Some(slot) => crate::settings::merge(slot, over),
+					None => {
+						overrides.insert(id, over);
 					}
-					(base, over) => *base = over,
 				}
 			}
+		}
+		for entry in &mut entries {
+			let Some(over) = overrides.remove(&entry.id) else {
+				continue;
+			};
+			crate::settings::merge(&mut entry.config, over);
 		}
 		self.expand(&mut entries)?;
 		Ok(entries)
@@ -980,7 +1068,7 @@ impl Host {
 		let mut failures = Vec::new();
 		let mut lifecycle = self.rt.lifecycle();
 		self.reconcile().await.map_err(|e| e.to_string())?;
-		let settled = tokio::time::timeout(Duration::from_secs(30), async {
+		let settled = tokio::time::timeout(crate::settings::host().verify_timeout(), async {
 			while self
 				.rt
 				.fibers()
@@ -1114,7 +1202,7 @@ impl Host {
 			// Hot reload is the host's normal behaviour: sources are watched
 			// and changed cartridges replaced in place for every foreground run.
 			watcher = Some(self.watch_mode().map_err(|e| e.to_string())?);
-			tokio::time::timeout(Duration::from_secs(30), async {
+			tokio::time::timeout(crate::settings::host().verify_timeout(), async {
 				loop {
 					let fibers = self.rt.fibers();
 					if fibers.iter().any(|f| {
@@ -1178,6 +1266,45 @@ impl Host {
 		tokio::task::spawn_blocking(move || host.load_entry(&entry))
 			.await
 			.map_err(mlua::Error::external)?
+	}
+
+	/// Every configurable surface this profile has, without running any of it.
+	///
+	/// The listing `cartridge settings` prints. It reads documents and the two
+	/// configuration files and stops there — no Lua entry is evaluated and no
+	/// `hello` process is spawned — because what a cartridge *can be told* is a
+	/// property of its declaration, and a cartridge that will not start still
+	/// has settings worth reading.
+	pub fn settings(self: &Arc<Self>) -> Result<Vec<SettingsInfo>, mlua::Error> {
+		Ok(self
+			.entries()?
+			.into_iter()
+			.map(|entry| {
+				let manifest = entry.file(&self.dir);
+				let (specs, author) = match Cartridge::document(&manifest) {
+					Ok(doc) => (doc.settings, doc.config),
+					// A bare `.lua` entry has no document and declares nothing; so
+					// does a document that will not read. Either way the configured
+					// values are still shown, under `undeclared`.
+					Err(_) => (Default::default(), serde_json::Value::Null),
+				};
+				let mut settled = crate::settings::defaults(&specs);
+				for layer in [author, entry.config.clone()] {
+					if !layer.is_null() {
+						crate::settings::merge(&mut settled, layer);
+					}
+				}
+				let undeclared = crate::settings::undeclared(&specs, &settled);
+				SettingsInfo {
+					id: entry.id.clone(),
+					path: entry.path.clone(),
+					disabled: entry.disabled,
+					specs,
+					settled,
+					undeclared,
+				}
+			})
+			.collect())
 	}
 
 	/// Effective declarations. Enabled process wrappers run hello, never apply.
@@ -1693,7 +1820,7 @@ impl Host {
 		let task = tokio::spawn(async move {
 			while let Some(first) = rx.recv().await {
 				let mut changed = vec![first];
-				tokio::time::sleep(Duration::from_millis(500)).await;
+				tokio::time::sleep(crate::settings::host().watch_debounce()).await;
 				while let Ok(p) = rx.try_recv() {
 					changed.push(p);
 				}

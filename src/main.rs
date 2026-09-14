@@ -11,16 +11,14 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(
 	name = "cartridge",
-	about = "cartridges on a socket: run in the back, handle the events"
+	about = "cartridges on a socket: run in the back, handle the events",
+	// `help` is a subcommand of ours: the manual of what is composed, not clap's usage text.
+	disable_help_subcommand = true
 )]
 struct Cli {
 	/// Directory containing bundled cartridges (each with cartridge.json)
 	#[arg(long, global = true)]
 	dir: Option<PathBuf>,
-	/// Profile name under `.cartridge/`, or an absolute profile directory
-	/// (default `default`; `proxy` for launch)
-	#[arg(long, global = true)]
-	profile: Option<String>,
 	/// Automatic execution: bypass tool policy and skip resolver provenance recording
 	#[arg(long, global = true)]
 	yolo: bool,
@@ -69,9 +67,9 @@ enum Command {
 		key: String,
 		#[arg(default_value = "null")]
 		args: String,
-		/// Tag this call with a turn id; one is minted when absent
+		/// Tag this call with a trace id; one is minted when absent
 		#[arg(long)]
-		turn: Option<String>,
+		trace: Option<String>,
 	},
 	Reload,
 	Status,
@@ -81,10 +79,39 @@ enum Command {
 		state: String,
 	},
 	Socket,
+	/// Unlink the socket files no listener answers on, left by runtimes that
+	/// were killed rather than stopped
+	Sweep,
 	/// Cartridges of the profile and what each one needs, resolved to its provider
 	List,
 	/// Every cartridge installed under the cartridge root, and what each need binds to
 	Ledger,
+	/// The manual of this composition: what is enabled and what each cartridge
+	/// is for, built from the cartridges themselves. `cartridge help <id>` is
+	/// one cartridge's declarations and the page it ships; `cartridge help
+	/// <word>` searches every page; `cartridge help host` is the runtime's own
+	Help {
+		/// A cartridge id, `host`, or a word to search for. Absent is the overview
+		what: Option<String>,
+		/// Print the whole manual as one JSON document
+		#[arg(long)]
+		json: bool,
+	},
+	/// Every tunable value this profile has: the host's own and each
+	/// cartridge's, with what it is set to and which file settled it.
+	/// Name a key or a cartridge to narrow it: `cartridge settings host`,
+	/// `cartridge settings agent.max_steps`
+	Settings {
+		/// A cartridge id, or one dotted key under it. Absent lists everything
+		what: Option<String>,
+		/// Print the listing as JSON instead of a table
+		#[arg(long)]
+		json: bool,
+		/// Print a commented `config.lua` carrying every key at its current
+		/// value, ready to save as `~/.cartridge/config.lua` or the project's
+		#[arg(long)]
+		template: bool,
+	},
 	Up {
 		key: String,
 	},
@@ -322,12 +349,22 @@ async fn hosted_node() {
 	// exit. The far end of the chain is different: nothing launched it that
 	// owns it, so it has no pipe to watch and dies only when it is killed.
 	// The held child goes with this node: the drop is what kills it.
-	if std::env::var_os("CARTRIDGE_BOTTOM").is_none() {
-		let mut stdin = tokio::io::stdin();
-		let mut buffer = [0u8; 64];
-		while stdin.read(&mut buffer).await.unwrap_or(0) > 0 {}
-	} else {
-		futures::future::pending::<()>().await;
+	// A stop that can be caught is taken as one: the node returns from here,
+	// its serving task is dropped with the runtime, and the socket goes with
+	// it. Only the kill that cannot be caught leaves an entry, and the daemon's
+	// sweep is what collects that.
+	let gone = async {
+		if std::env::var_os("CARTRIDGE_BOTTOM").is_none() {
+			let mut stdin = tokio::io::stdin();
+			let mut buffer = [0u8; 64];
+			while stdin.read(&mut buffer).await.unwrap_or(0) > 0 {}
+		} else {
+			futures::future::pending::<()>().await;
+		}
+	};
+	tokio::select! {
+		_ = gone => {}
+		_ = stopped() => {}
 	}
 	drop(dependent);
 }
@@ -347,13 +384,13 @@ async fn bind_dependency(
 	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 	let path = cartridge::socket::node_path(root, dep);
 	let mut stream = None;
-	for _ in 0..40 {
+	for _ in 0..cartridge::settings::host().daemon_wait_attempts {
 		match tokio::net::UnixStream::connect(&path).await {
 			Ok(s) => {
 				stream = Some(s);
 				break;
 			}
-			Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+			Err(_) => tokio::time::sleep(cartridge::settings::host().daemon_wait()).await,
 		}
 	}
 	let stream = stream.ok_or_else(|| {
@@ -471,7 +508,8 @@ fn launch_node(
 /// stdout carries the protocol and nothing else.
 async fn stdio(host: std::sync::Arc<Host>) -> Result<Value, String> {
 	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-	let (replies, mut pending) = tokio::sync::mpsc::channel::<String>(64);
+	let (replies, mut pending) =
+		tokio::sync::mpsc::channel::<String>(cartridge::settings::host().mcp_reply_queue);
 	let writer = tokio::spawn(async move {
 		let mut out = tokio::io::stdout();
 		while let Some(line) = pending.recv().await {
@@ -536,16 +574,16 @@ fn json_arg(s: String) -> Value {
 	})
 }
 
-/// A request naming a turn gets it back on the reply, so a probe report can
+/// A request naming a trace gets it back on the reply, so a probe report can
 /// cite the id of one specific call.
 async fn ask(profile: &std::path::Path, request: Value, answer: &str) {
-	let turn = request.get("turn").cloned();
+	let trace = request.get("trace").cloned();
 	let mut client = connect(profile).await;
 	client.send(request).await.expect("send");
 	while let Some(mut m) = client.next().await {
 		if m.get(answer).is_some() || m.get("error").is_some_and(|e| e.get("cartridge").is_some()) {
-			if let (Some(turn), Some(o)) = (&turn, m.as_object_mut()) {
-				o.insert("turn".into(), turn.clone());
+			if let (Some(trace), Some(o)) = (&trace, m.as_object_mut()) {
+				o.insert("trace".into(), trace.clone());
 			}
 			println!("{m}");
 			return;
@@ -626,6 +664,264 @@ fn list(cartridges: &[CartridgeInfo]) -> usize {
 	cartridges.iter().filter(|p| p.unread.is_some()).count()
 }
 
+/// The host's own settings, settled against its declarations, for the three
+/// renderings below. A configuration the declarations refuse does not silently
+/// become the defaults here: the reason is said once, and then the defaults
+/// stand — a limit that will not parse must not take the listing of limits down
+/// with it.
+fn host_settled(profile: &Path) -> Value {
+	use cartridge::settings;
+	let configured = settings::layers(profile)
+		.unwrap_or_else(|e| {
+			eprintln!("cartridge: settings: {e}");
+			json!({})
+		})
+		.get("host")
+		.cloned()
+		.unwrap_or_else(|| json!({}));
+	settings::apply(settings::host_specs(), configured, "host").unwrap_or_else(|e| {
+		eprintln!("cartridge: settings: {e}; showing declared defaults");
+		settings::defaults(settings::host_specs())
+	})
+}
+
+/// Every tunable value, in one table: the host's own first, then each
+/// cartridge's, each key with its type, what it is set to, and where that came
+/// from. This is the listing the system's own documentation points at, so a
+/// value that cannot be found here is a value that was never a setting.
+///
+/// Answers how many problems it found: a cartridge configured with keys it
+/// never declared is one per cartridge, so finishing the migration is a
+/// non-zero exit going to zero rather than a memory of which ones were done.
+fn settings_table(profile: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -> usize {
+	use cartridge::settings;
+	let wanted = |section: &str, key: &str| match what {
+		None => true,
+		Some(w) => {
+			let dotted = format!("{section}.{key}");
+			section == w || dotted == w || dotted.starts_with(&format!("{w}."))
+		}
+	};
+	let mut rows: Vec<(String, String, String, String, String)> = Vec::new();
+	let mut push = |section: &str, key: &str, spec: Option<&settings::Spec>, value: &Value| {
+		if !wanted(section, key) {
+			return;
+		}
+		let dotted = format!("{section}.{key}");
+		let declared = spec.map_or(Value::Null, |s| s.default.clone());
+		let source = settings::source(profile, &dotted, value, &declared);
+		let kind = spec.map_or("undeclared".to_owned(), |s| {
+			s.describe()["type"].as_str().unwrap_or("?").to_owned()
+		});
+		let doc = spec.and_then(|s| s.doc.clone()).unwrap_or_default();
+		rows.push((
+			dotted,
+			kind,
+			serde_json::to_string(value).unwrap_or_default(),
+			source.to_owned(),
+			doc,
+		));
+	};
+	let host = host_settled(profile);
+	for (key, spec) in settings::host_specs() {
+		let value = settings::get(&host, key).cloned().unwrap_or(Value::Null);
+		push("host", key, Some(spec), &value);
+	}
+	for entry in entries {
+		for (key, spec) in &entry.specs {
+			let value = settings::get(&entry.settled, key)
+				.cloned()
+				.unwrap_or(Value::Null);
+			push(&entry.id, key, Some(spec), &value);
+		}
+		// A configured key with no declaration is listed too, and marked. It is
+		// working configuration — dropping it from the listing would hide the
+		// one thing this listing exists to find.
+		for key in &entry.undeclared {
+			let value = settings::get(&entry.settled, key)
+				.cloned()
+				.unwrap_or(Value::Null);
+			push(&entry.id, key, None, &value);
+		}
+	}
+	// One wide value — a whole table of per-tool rules is a common one — must
+	// not push every other column off the terminal, so the value column is
+	// elided past a readable width. `--json` is the un-elided answer.
+	const VALUE_WIDTH: usize = 44;
+	let width = |n: usize| rows.iter().map(|r| field(r, n).len()).max().unwrap_or(0);
+	let (w0, w1, w3) = (width(0), width(1), width(3));
+	let w2 = width(2).min(VALUE_WIDTH);
+	for row in &rows {
+		let doc = &row.4;
+		let value = match row.2.chars().count() > VALUE_WIDTH {
+			true => format!(
+				"{}…",
+				row.2.chars().take(VALUE_WIDTH - 1).collect::<String>()
+			),
+			false => row.2.clone(),
+		};
+		let line = format!(
+			"{:w0$}  {:w1$}  {:>w2$}  {:w3$}",
+			row.0, row.1, value, row.3
+		);
+		match doc.is_empty() {
+			true => println!("{line}"),
+			false => println!("{line}  {doc}"),
+		}
+	}
+	// Only what was asked about is counted: narrowing the listing to one
+	// cartridge asks about that cartridge, and answering for the rest of the
+	// profile would make a clean one look dirty.
+	entries
+		.iter()
+		.filter(|e| e.undeclared.iter().any(|key| wanted(&e.id, key)))
+		.count()
+}
+
+fn field(row: &(String, String, String, String, String), n: usize) -> &str {
+	match n {
+		0 => &row.0,
+		1 => &row.1,
+		2 => &row.2,
+		_ => &row.3,
+	}
+}
+
+/// The listing as data: declarations, settled values and the file each came
+/// from, for anything reading this surface rather than looking at it.
+fn settings_json(profile: &Path, entries: &[loader::SettingsInfo]) -> String {
+	use cartridge::settings;
+	let describe =
+		|section: &str, specs: &settings::Specs, settled: &Value, undeclared: &[String]| {
+			let keys: serde_json::Map<String, Value> = specs
+				.iter()
+				.map(|(key, spec)| {
+					let mut out = spec.describe();
+					let map = out.as_object_mut().expect("object");
+					map.insert(
+						"value".into(),
+						settings::get(settled, key).cloned().unwrap_or(Value::Null),
+					);
+					map.insert(
+						"source".into(),
+						json!(settings::source(
+							profile,
+							&format!("{section}.{key}"),
+							settings::get(settled, key).unwrap_or(&Value::Null),
+							&spec.default,
+						)),
+					);
+					(key.clone(), out)
+				})
+				.collect();
+			json!({"keys": keys, "undeclared": undeclared})
+		};
+	let host_settled = host_settled(profile);
+	let mut out = serde_json::Map::new();
+	out.insert(
+		"host".into(),
+		describe("host", settings::host_specs(), &host_settled, &[]),
+	);
+	for entry in entries {
+		out.insert(
+			entry.id.clone(),
+			describe(&entry.id, &entry.specs, &entry.settled, &entry.undeclared),
+		);
+	}
+	serde_json::to_string_pretty(&Value::Object(out)).unwrap_or_default()
+}
+
+/// The same surface as a `config.lua`: every key, its documentation above it,
+/// and its current value. Saving this as `~/.cartridge/config.lua` changes
+/// nothing and leaves every knob in reach, which is the point — a person
+/// tuning a system should not have to discover the key's name first.
+fn settings_template(profile: &Path, entries: &[loader::SettingsInfo]) {
+	use cartridge::settings;
+	println!("-- Every setting this profile has, at its current value.");
+	println!("-- Save as ~/.cartridge/config.lua for this machine, or as");
+	println!("-- .cartridge/config.lua for this project alone. Delete what you");
+	println!("-- do not want to pin: an absent key keeps its declared default.");
+	println!("return {{");
+	let host = host_settled(profile);
+	section("host", settings::host_specs(), &host);
+	for entry in entries {
+		if entry.specs.is_empty() {
+			continue;
+		}
+		section(&entry.id, &entry.specs, &entry.settled);
+	}
+	println!("}}");
+}
+
+/// One cartridge's table, written as the nested tables its dotted keys mean.
+/// `ship.remote` is `ship = { remote = ... }` here and not a key with a dot in
+/// its name, which is a different thing and would configure nothing.
+fn section(id: &str, specs: &cartridge::settings::Specs, settled: &Value) {
+	println!("\t{} = {{", lua_key(id));
+	table(settled, specs, "", 2);
+	println!("\t}},");
+}
+
+fn table(value: &Value, specs: &cartridge::settings::Specs, prefix: &str, depth: usize) {
+	let Some(map) = value.as_object() else {
+		return;
+	};
+	let pad = "\t".repeat(depth);
+	for (key, value) in map {
+		let dotted = match prefix.is_empty() {
+			true => key.clone(),
+			false => format!("{prefix}.{key}"),
+		};
+		if let Some(doc) = specs.get(&dotted).and_then(|s| s.doc.as_deref()) {
+			println!("{pad}-- {doc}");
+		}
+		// A table with declarations under it is written out key by key, so each
+		// leaf keeps its own line and its own comment. One the declaration does
+		// not reach is written inline: its shape is the user's, not ours.
+		let inside = specs.keys().any(|k| k.starts_with(&format!("{dotted}.")));
+		match value.is_object() && inside {
+			true => {
+				println!("{pad}{} = {{", lua_key(key));
+				table(value, specs, &dotted, depth + 1);
+				println!("{pad}}},");
+			}
+			false => println!("{pad}{} = {},", lua_key(key), lua_value(value)),
+		}
+	}
+}
+
+/// A name Lua can take bare, or the bracketed string form for one it cannot —
+/// `live-record` is a key, not an identifier.
+fn lua_key(key: &str) -> String {
+	let bare = !key.is_empty()
+		&& !key.starts_with(|c: char| c.is_ascii_digit())
+		&& key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+	match bare {
+		true => key.to_owned(),
+		false => format!("[{key:?}]"),
+	}
+}
+
+fn lua_value(value: &Value) -> String {
+	match value {
+		Value::Null => "nil".to_owned(),
+		Value::Bool(b) => b.to_string(),
+		Value::Number(n) => n.to_string(),
+		Value::String(s) => format!("{s:?}"),
+		Value::Array(items) => format!(
+			"{{ {} }}",
+			items.iter().map(lua_value).collect::<Vec<_>>().join(", ")
+		),
+		Value::Object(map) => format!(
+			"{{ {} }}",
+			map.iter()
+				.map(|(k, v)| format!("{} = {}", lua_key(k), lua_value(v)))
+				.collect::<Vec<_>>()
+				.join(", ")
+		),
+	}
+}
+
 /// One line per installed cartridge, in path order, with each of its needs
 /// under it bound to the path that provides it — `?` where nothing in scope
 /// does, `ambiguous` naming every offer where one scope offers it twice.
@@ -673,6 +969,359 @@ fn ledger_lines(ledger: &cartridge::ledger::Ledger) -> usize {
 			.count()
 }
 
+/// A path pinned to the directory this process started in, lexically: the
+/// answer must not change once the working directory moves to the project root,
+/// and a directory that does not exist yet still has an address.
+/// One cartridge as the manual sees it: the declarations off its document and
+/// the page it ships. The page is `.cartridge/help.md` in the cartridge's own
+/// directory, so what `help` prints for a cartridge is what that cartridge
+/// brought, and nothing here describes one cartridge from inside another.
+struct HelpEntry {
+	id: String,
+	path: String,
+	enabled: bool,
+	/// The cartridge's real directory, symlinks resolved: the base every link
+	/// on its page is relative to, printed so a reader can follow them.
+	dir: PathBuf,
+	document: Result<loader::Cartridge, String>,
+	inject: Vec<String>,
+	page: Option<String>,
+}
+
+/// The manual: the host's own page beside the profile, and one entry per
+/// cartridge the ledger knows, enabled or not. Nothing is cached and nothing
+/// is authored here: reading it again after a cartridge is installed or
+/// removed is the whole update.
+struct Manual {
+	host_page: Option<String>,
+	host_dir: PathBuf,
+	cartridges: Vec<HelpEntry>,
+}
+
+const PAGE: &str = "help.md";
+
+impl Manual {
+	fn read(dir: &Path, profile: &Path, cartridges: &[CartridgeInfo]) -> Self {
+		let host_dir = std::fs::canonicalize(profile).unwrap_or_else(|_| profile.to_path_buf());
+		let cartridges = cartridges
+			.iter()
+			.map(|c| {
+				let manifest = c.entry.file(dir);
+				let home = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
+				let page = std::fs::read_to_string(home.join(".cartridge").join(PAGE)).ok();
+				HelpEntry {
+					id: c.entry.id.clone(),
+					path: c.entry.path.clone(),
+					enabled: !c.entry.disabled,
+					dir: std::fs::canonicalize(&home).unwrap_or(home),
+					document: loader::Cartridge::document(&manifest),
+					inject: c.inject.clone(),
+					page,
+				}
+			})
+			.collect();
+		Self {
+			host_page: std::fs::read_to_string(profile.join(PAGE)).ok(),
+			host_dir,
+			cartridges,
+		}
+	}
+
+	fn description(entry: &HelpEntry) -> String {
+		match &entry.document {
+			Ok(doc) => doc.description.clone().unwrap_or_default(),
+			Err(e) => format!("error: {e}"),
+		}
+	}
+
+	/// The spine: every enabled cartridge with its one line, then what is
+	/// installed and not enabled, then the ways to go deeper. Answers how many
+	/// enabled cartridges have no page or no readable document — the sweep this
+	/// listing exists to finish, said in the exit status like `settings` does.
+	fn overview(&self) -> usize {
+		let enabled: Vec<_> = self.cartridges.iter().filter(|c| c.enabled).collect();
+		let parked: Vec<_> = self.cartridges.iter().filter(|c| !c.enabled).collect();
+		let width = enabled
+			.iter()
+			.chain(&parked)
+			.map(|c| c.id.len())
+			.max()
+			.unwrap_or(4)
+			.max(4);
+		println!(
+			"cartridge help: {} cartridges enabled, {} installed and not enabled\n",
+			enabled.len(),
+			parked.len()
+		);
+		println!(
+			"  {:width$}  the runtime itself: what a cartridge is, how one is written, how this composition is read{}",
+			"host",
+			if self.host_page.is_some() { "" } else { "  (no page)" }
+		);
+		let mut problems = usize::from(self.host_page.is_none());
+		for c in &enabled {
+			let mut line = format!("  {:width$}  {}", c.id, Self::description(c));
+			if c.page.is_none() {
+				line.push_str("  (no page)");
+			}
+			if c.document.is_err() || c.page.is_none() {
+				problems += 1;
+			}
+			println!("{line}");
+		}
+		if !parked.is_empty() {
+			println!("\ninstalled, not enabled:");
+			for c in &parked {
+				println!("  {:width$}  {}", c.id, Self::description(c));
+			}
+		}
+		println!(
+			"\ngo deeper:\n  cartridge help <id>      one cartridge: its declarations, then the page it ships\n  cartridge help <word>    search every page and description\n  cartridge help host      the runtime's own page\n  cartridge help --json    the whole manual as one JSON document\n  cartridge settings       every tunable value and the file that settled it\n  cartridge list           what each cartridge needs, resolved to its provider"
+		);
+		if problems > 0 {
+			eprintln!(
+				"\n{problems} enabled cartridge(s) ship no .cartridge/{PAGE} or no readable document: a cartridge documents itself, so the fix is a page in that cartridge"
+			);
+		}
+		problems
+	}
+
+	fn host_page(&self) -> usize {
+		println!("# host  ({})\n", self.host_dir.display());
+		println!("The runtime that composes the cartridges. Its own tunable values are under `cartridge settings host`; its composition is `cartridge list`.");
+		match &self.host_page {
+			Some(page) => {
+				println!(
+					"\npage: {}  (links are relative to {})\n---\n{}",
+					self.host_dir.join(PAGE).display(),
+					self.host_dir.display(),
+					page.trim_end()
+				);
+				0
+			}
+			None => {
+				eprintln!(
+					"\nno page: {} does not exist",
+					self.host_dir.join(PAGE).display()
+				);
+				1
+			}
+		}
+	}
+
+	/// One cartridge in full: what its document declares, then its page
+	/// verbatim. The declarations are read off `cartridge.json` here rather
+	/// than restated on the page, so the page cannot go stale on them.
+	fn entry(&self, id: &str) -> usize {
+		let Some(c) = self.cartridges.iter().find(|c| c.id == id) else {
+			return 1;
+		};
+		println!(
+			"# {}  ({} -> {}){}\n",
+			c.id,
+			c.path,
+			c.dir.display(),
+			if c.enabled {
+				""
+			} else {
+				"  [installed, not enabled]"
+			}
+		);
+		let mut problems = 0;
+		match &c.document {
+			Ok(doc) => {
+				if let Some(d) = &doc.description {
+					println!("{d}\n");
+				}
+				let list = |label: &str, keys: &[String]| {
+					if !keys.is_empty() {
+						println!("{label}: {}", keys.join(", "));
+					}
+				};
+				list("provides", &doc.provide);
+				list("needs", &doc.needs);
+				list("injected", &c.inject);
+				list("exports", &doc.export);
+				if !doc.settings.is_empty() {
+					println!("settings:  (cartridge settings {})", c.id);
+					for (key, spec) in &doc.settings {
+						println!("  {key:24} {}", spec.doc.as_deref().unwrap_or(""));
+					}
+				}
+				if !doc.commands.is_empty() {
+					println!("commands:  (run from {})", c.dir.display());
+					for (label, cmd) in &doc.commands {
+						let mut line = format!("  {label:8} {}", cmd.argv.join(" "));
+						if cmd.cwd != "." {
+							line.push_str(&format!("  (cwd {})", cmd.cwd));
+						}
+						if let Some(d) = &cmd.description {
+							line.push_str(&format!("  # {d}"));
+						}
+						println!("{line}");
+					}
+				}
+			}
+			Err(e) => {
+				println!("document: error: {e}");
+				problems += 1;
+			}
+		}
+		match &c.page {
+			Some(page) => println!(
+				"\npage: {}  (links are relative to {})\n---\n{}",
+				c.dir.join(".cartridge").join(PAGE).display(),
+				c.dir.display(),
+				page.trim_end()
+			),
+			None => {
+				eprintln!(
+					"\nno page: {} does not exist. A cartridge documents itself; write that file",
+					c.dir.join(".cartridge").join(PAGE).display()
+				);
+				problems += 1;
+			}
+		}
+		problems
+	}
+
+	/// A word across the manual: ids, descriptions, keys, settings
+	/// documentation and every line of every page, case-insensitively. One
+	/// line per hit, prefixed by the cartridge it was found in, so a reader
+	/// knows which `cartridge help <id>` to open next.
+	fn search(&self, word: &str) -> usize {
+		let needle = word.to_lowercase();
+		let hit = |text: &str| text.to_lowercase().contains(&needle);
+		let mut hits = 0;
+		let mut show = |id: &str, line: &str| {
+			println!("{id}:  {}", line.trim());
+			hits += 1;
+		};
+		if let Some(page) = &self.host_page {
+			for line in page.lines().filter(|l| hit(l)) {
+				show("host", line);
+			}
+		}
+		for c in &self.cartridges {
+			if hit(&c.id) {
+				show(&c.id, &format!("{}  {}", c.id, Self::description(c)));
+			} else if hit(&Self::description(c)) {
+				show(&c.id, &Self::description(c));
+			}
+			if let Ok(doc) = &c.document {
+				for key in doc.provide.iter().chain(&doc.needs).filter(|k| hit(k)) {
+					show(&c.id, &format!("key {key}"));
+				}
+				for (key, spec) in &doc.settings {
+					let doc_line = spec.doc.as_deref().unwrap_or("");
+					if hit(key) || hit(doc_line) {
+						show(&c.id, &format!("setting {}.{key}  {doc_line}", c.id));
+					}
+				}
+			}
+			if let Some(page) = &c.page {
+				for line in page.lines().filter(|l| hit(l)) {
+					show(&c.id, line);
+				}
+			}
+		}
+		if hits == 0 {
+			eprintln!(
+				"nothing in the manual matches `{word}`; `cartridge help` lists what is composed"
+			);
+			return 1;
+		}
+		0
+	}
+
+	/// The whole manual as one document, for anything reading it rather than
+	/// looking at it. Every optional field is materialised (`null`, `[]`, `{}`),
+	/// never omitted, so a consumer does not have to tell absent from empty.
+	fn json(&self) -> String {
+		let cartridges: Vec<Value> = self
+			.cartridges
+			.iter()
+			.map(|c| {
+				let (description, provide, needs, export, settings, commands, error) =
+					match &c.document {
+						Ok(doc) => (
+							json!(doc.description),
+							json!(doc.provide),
+							json!(doc.needs),
+							json!(doc.export),
+							doc.settings
+								.iter()
+								.map(|(k, s)| (k.clone(), json!(s.doc)))
+								.collect::<serde_json::Map<_, _>>(),
+							doc.commands
+								.iter()
+								.map(|(k, cmd)| {
+									(
+										k.clone(),
+										json!({"argv": cmd.argv, "cwd": cmd.cwd, "description": cmd.description}),
+									)
+								})
+								.collect::<serde_json::Map<_, _>>(),
+							Value::Null,
+						),
+						Err(e) => (
+							Value::Null,
+							json!([]),
+							json!([]),
+							json!([]),
+							Default::default(),
+							Default::default(),
+							json!(e),
+						),
+					};
+				json!({
+					"id": c.id,
+					"path": c.path,
+					"dir": c.dir,
+					"enabled": c.enabled,
+					"description": description,
+					"provide": provide,
+					"needs": needs,
+					"injected": c.inject,
+					"export": export,
+					"settings": settings,
+					"commands": commands,
+					"page": c.page,
+					"error": error,
+				})
+			})
+			.collect();
+		json!({
+			"host": { "dir": self.host_dir, "page": self.host_page },
+			"cartridges": cartridges,
+		})
+		.to_string()
+	}
+}
+
+fn absolute(path: &Path) -> PathBuf {
+	std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The two ways a process is asked to stop: an interrupt from the terminal it
+/// runs in, and a terminate from whatever supervises it. Either one is a
+/// request, and a host that honours it gets to put its socket away.
+async fn stopped() {
+	use tokio::signal::unix::{signal, SignalKind};
+	let terminate = async {
+		match signal(SignalKind::terminate()) {
+			Ok(mut term) => {
+				term.recv().await;
+			}
+			Err(_) => futures::future::pending().await,
+		}
+	};
+	tokio::select! {
+		_ = tokio::signal::ctrl_c() => {}
+		_ = terminate => {}
+	}
+}
+
 #[tokio::main]
 async fn main() {
 	let cli = Cli::parse();
@@ -680,12 +1329,25 @@ async fn main() {
 		eprintln!("--yolo requires run or daemon; it cannot change an existing daemon");
 		std::process::exit(2);
 	}
-	let profile = loader::profile(cli.profile.as_deref().unwrap_or(match &cli.command {
-		Command::Launch { .. } => "proxy",
-		Command::Mcp => "mcp",
-		_ => "default",
-	}));
-	let dir = cli.dir.unwrap_or_else(loader::builtin);
+	// `--dir` is the last path read against the directory this process was
+	// started in; everything after is read against the project. A runtime is
+	// bound to its project and dies with the terminal that started it, so the
+	// project is decided once, here, before anything is loaded — and a command
+	// typed in a subdirectory joins the runtime already serving that project
+	// instead of starting a second one beside it.
+	let dir = absolute(&cli.dir.unwrap_or_else(loader::builtin));
+	let root = loader::root();
+	if let Err(e) = std::env::set_current_dir(&root) {
+		eprintln!("{}: {e}", root.display());
+		std::process::exit(1);
+	}
+	// One user profile, one composition: `mcp`, `launch` and `run` differ by the
+	// entry point they call into this host, not by the cartridges it loads.
+	let profile = loader::profile();
+	// Settle the host's own settings against the profile that was just
+	// resolved, before anything reads one. Everything downstream — including an
+	// SDK child that has only a working directory — then reads this one answer.
+	cartridge::settings::settle(&profile);
 	match cli.command {
 		Command::Run { key, args } => {
 			// Foreground process cartridges receive terminal interrupts directly.
@@ -713,7 +1375,8 @@ async fn main() {
 				Ok(value) if !value.is_null() => println!("{value}"),
 				Ok(_) => {}
 				Err(error) => {
-					cartridge::turn::diagnostic("cartridge", error, Value::Null);
+					eprintln!("{error}");
+					cartridge::trace::diagnostic("cartridge", error, Value::Null);
 					std::process::exit(1);
 				}
 			}
@@ -721,7 +1384,10 @@ async fn main() {
 		Command::Launch { agent, model, args } => {
 			// The proxy listener needs a key; the launched agent gets the same one.
 			if std::env::var("CARTRIDGE_PROXY_KEY").map_or(true, |k| k.is_empty()) {
-				std::env::set_var("CARTRIDGE_PROXY_KEY", random_hex(32));
+				std::env::set_var(
+					"CARTRIDGE_PROXY_KEY",
+					random_hex(cartridge::settings::host().proxy_key_bytes),
+				);
 			}
 			let signals = tokio::spawn(async { while tokio::signal::ctrl_c().await.is_ok() {} });
 			let host = Host::new(Runtime::new(), &dir, &profile);
@@ -731,7 +1397,8 @@ async fn main() {
 			match result {
 				Ok(status) => std::process::exit(status.as_i64().unwrap_or(1) as i32),
 				Err(error) => {
-					cartridge::turn::diagnostic("cartridge", error, Value::Null);
+					eprintln!("{error}");
+					cartridge::trace::diagnostic("cartridge", error, Value::Null);
 					std::process::exit(1);
 				}
 			}
@@ -752,20 +1419,33 @@ async fn main() {
 		Command::Daemon => {
 			let host = Host::with_yolo(Runtime::new(), &dir, &profile, cli.yolo);
 			if let Err(e) = host.reconcile().await {
-				cartridge::turn::diagnostic("init.lua", e, Value::Null);
+				cartridge::trace::diagnostic("init.lua", e, Value::Null);
 			}
 			if let Err(e) = host.watch() {
-				cartridge::turn::diagnostic("watch", e, Value::Null);
+				cartridge::trace::diagnostic("watch", e, Value::Null);
 			}
 			let path = socket::path(&profile);
-			cartridge::turn::diagnostic(
+			cartridge::trace::diagnostic(
 				"cartridge",
 				"serving",
 				json!({ "dir": dir.display().to_string(), "profile": profile.display().to_string(), "socket": path.display().to_string() }),
 			);
-			if let Err(e) = socket::serve(host, &path).await {
-				cartridge::turn::diagnostic("cartridge", e, Value::Null);
-				std::process::exit(1);
+			// A daemon outlives every other command, so it is the one that
+			// keeps the socket directory: the collecting runs beside the
+			// serving, off the path of anything waiting on the door to open.
+			tokio::spawn(cartridge::socket::keep_swept());
+			// The stop is caught rather than taken: the socket is unlinked by a
+			// guard the serving holds, and a guard only runs on the way out of
+			// a future that was allowed to end. Killed outright there is no way
+			// out, and the next sweep is what collects the entry.
+			tokio::select! {
+				served = socket::serve(host, &path) => {
+					if let Err(e) = served {
+						cartridge::trace::diagnostic("cartridge", e, Value::Null);
+						std::process::exit(1);
+					}
+				}
+				_ = stopped() => {}
 			}
 		}
 		Command::Send { name, data } => {
@@ -800,11 +1480,11 @@ async fn main() {
 				println!("{m}");
 			}
 		}
-		Command::Call { key, args, turn } => {
-			let turn = turn.unwrap_or_else(|| cartridge::turn::mint().to_string());
+		Command::Call { key, args, trace } => {
+			let trace = trace.unwrap_or_else(|| cartridge::trace::mint().to_string());
 			ask(
 				&profile,
-				json!({ "call": key, "args": json_arg(args), "id": 1, "turn": turn }),
+				json!({ "call": key, "args": json_arg(args), "id": 1, "trace": trace }),
 				"reply",
 			)
 			.await;
@@ -813,6 +1493,7 @@ async fn main() {
 		Command::Status => ask(&profile, json!({ "status": true }), "status").await,
 		Command::Debug { state } => ask(&profile, json!({ "debug": state }), "debug").await,
 		Command::Socket => println!("{}", socket::path(&profile).display()),
+		Command::Sweep => println!("{} swept", cartridge::socket::sweep().await),
 		Command::Verify { cartridge } => {
 			let host = Host::new(Runtime::new(), &dir, &profile);
 			let run = match &cartridge {
@@ -915,6 +1596,65 @@ async fn main() {
 			std::process::exit(1);
 		}
 		Command::Node => hosted_node().await,
+		Command::Settings {
+			what,
+			json: as_json,
+			template,
+		} => {
+			let host = Host::new(Runtime::new(), &dir, &profile);
+			let entries = match host.settings() {
+				Ok(entries) => entries,
+				Err(e) => {
+					eprintln!("{}: {e}", profile.join("init.lua").display());
+					std::process::exit(1);
+				}
+			};
+			if template {
+				settings_template(&profile, &entries);
+				return;
+			}
+			if as_json {
+				println!("{}", settings_json(&profile, &entries));
+				return;
+			}
+			// A cartridge configured with keys it never declared is the one
+			// thing this listing is for; saying so in the exit status is what
+			// keeps the sweep finishable.
+			if settings_table(&profile, &entries, what.as_deref()) > 0 {
+				std::process::exit(1);
+			}
+		}
+		Command::Help {
+			what,
+			json: as_json,
+		} => {
+			let host = Host::new(Runtime::new(), &dir, &profile);
+			let cartridges = match host.manifest() {
+				Ok(cartridges) => cartridges,
+				Err(e) => {
+					eprintln!("{}: {e}", profile.join("init.lua").display());
+					std::process::exit(1);
+				}
+			};
+			let manual = Manual::read(&dir, &profile, &cartridges);
+			if as_json {
+				if what.is_some() {
+					eprintln!("--json is the whole manual; it takes no query");
+					std::process::exit(2);
+				}
+				println!("{}", manual.json());
+				return;
+			}
+			let problems = match what.as_deref() {
+				None => manual.overview(),
+				Some("host") => manual.host_page(),
+				Some(id) if manual.cartridges.iter().any(|c| c.id == id) => manual.entry(id),
+				Some(word) => manual.search(word),
+			};
+			if problems > 0 {
+				std::process::exit(1);
+			}
+		}
 		Command::List => {
 			// `--yolo` is rejected above for every command but run and daemon.
 			let host = Host::new(Runtime::new(), &dir, &profile);

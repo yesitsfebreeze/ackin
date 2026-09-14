@@ -1,0 +1,174 @@
+{
+  "name": "host",
+  "description": "The runtime host's own tunable values: the caps, timeouts and queue depths it spends on behalf of every cartridge it composes.",
+  "settings": {
+    "stream_history_events": {
+      "type": "integer",
+      "default": 4096,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Events retained per stream channel for replay."
+    },
+    "stream_history_bytes": {
+      "type": "integer",
+      "default": 67108864,
+      "min": 4096,
+      "max": 68719476736,
+      "doc": "Bytes retained per stream channel; the older bound wins."
+    },
+    "subscriber_headroom": {
+      "type": "integer",
+      "default": 8,
+      "min": 1,
+      "max": 4096,
+      "doc": "Queue slots a subscriber gets beyond a full replay: the join, an optional gap, and room to be told it lagged."
+    },
+    "outbox_queue": {
+      "type": "integer",
+      "default": 16384,
+      "min": 16,
+      "max": 1048576,
+      "doc": "Depth of the host's event outbox before a slow consumer is told it lagged."
+    },
+    "lifecycle_queue": {
+      "type": "integer",
+      "default": 4096,
+      "min": 16,
+      "max": 1048576,
+      "doc": "Depth of the runtime's lifecycle broadcast."
+    },
+    "lifecycle_drain_ms": {
+      "type": "integer",
+      "default": 100,
+      "min": 1,
+      "max": 60000,
+      "doc": "How long a lifecycle drain waits for one more event before concluding the burst ended."
+    },
+    "startup_timeout_secs": {
+      "type": "integer",
+      "default": 60,
+      "min": 1,
+      "max": 3600,
+      "doc": "How long a process cartridge has to announce itself. RPC calls after that have no deadline."
+    },
+    "startup_bytes": {
+      "type": "integer",
+      "default": 4194304,
+      "min": 4096,
+      "max": 1073741824,
+      "doc": "Bytes of announcement a starting cartridge may write before the host stops reading."
+    },
+    "discovery_bytes": {
+      "type": "integer",
+      "default": 4194304,
+      "min": 4096,
+      "max": 1073741824,
+      "doc": "Bytes a `hello` discovery run may print."
+    },
+    "shutdown_timeout_secs": {
+      "type": "integer",
+      "default": 15,
+      "min": 1,
+      "max": 3600,
+      "doc": "How long a disposed child gets to exit before it is reaped."
+    },
+    "verify_timeout_secs": {
+      "type": "integer",
+      "default": 300,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long `verify` waits for a composition to settle before calling it stuck."
+    },
+    "watch_debounce_ms": {
+      "type": "integer",
+      "default": 500,
+      "min": 1,
+      "max": 600000,
+      "doc": "How long the source watcher gathers further changes before reloading."
+    },
+    "daemon_wait_attempts": {
+      "type": "integer",
+      "default": 200,
+      "min": 1,
+      "max": 100000,
+      "doc": "Connection attempts a client makes while a daemon is coming up."
+    },
+    "daemon_wait_ms": {
+      "type": "integer",
+      "default": 50,
+      "min": 1,
+      "max": 60000,
+      "doc": "Pause between those attempts."
+    },
+    "mcp_reply_queue": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Replies the MCP server may have in flight on this terminal's stdio."
+    },
+    "proxy_key_bytes": {
+      "type": "integer",
+      "default": 32,
+      "min": 16,
+      "max": 4096,
+      "doc": "Entropy in a minted proxy key, in bytes."
+    },
+    "sandbox_error_chars": {
+      "type": "integer",
+      "default": 512,
+      "min": 40,
+      "max": 65536,
+      "doc": "Characters of a sandbox failure's first line carried into the error."
+    },
+    "observation_content_bytes": {
+      "type": "integer",
+      "default": 4194304,
+      "min": 1024,
+      "max": 1073741824,
+      "doc": "Bytes of one observed payload that are hashed and recorded."
+    },
+    "observation_cache_entries": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Observed sources kept in the resolution cache."
+    },
+    "observation_actors_bytes": {
+      "type": "integer",
+      "default": 262144,
+      "min": 256,
+      "max": 67108864,
+      "doc": "Size of the actor map the environment may carry."
+    },
+    "observation_actors_max": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Actors that map may name."
+    },
+    "observation_source_chars": {
+      "type": "integer",
+      "default": 512,
+      "min": 8,
+      "max": 65536,
+      "doc": "Length of an observed source name."
+    },
+    "observation_key_chars": {
+      "type": "integer",
+      "default": 1024,
+      "min": 8,
+      "max": 65536,
+      "doc": "Length of an observed key."
+    },
+    "diagnostics_max_bytes": {
+      "type": "integer",
+      "default": 67108864,
+      "min": 4096,
+      "max": 1073741824,
+      "doc": "Cap on the diagnostics file, with one rotated generation. `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` overrides it for one invocation."
+    }
+  }
+}

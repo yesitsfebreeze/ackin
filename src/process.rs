@@ -4,8 +4,17 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
-const DISCOVERY_BYTES: usize = 64 * 1024;
+/// How long a starting cartridge has to announce itself, and how much a
+/// discovery run may print. Both are settings — `host.startup_timeout_secs` and
+/// `host.discovery_bytes` — because a cold cartridge on a loaded machine is
+/// slow, not broken, and a large declaration is large, not hostile.
+pub(crate) fn startup_timeout() -> Duration {
+	crate::settings::host().startup_timeout()
+}
+
+fn discovery_bytes() -> usize {
+	crate::settings::host().discovery_bytes
+}
 
 /// Dropping startup or its owner stops reader/writer tasks, kills the child,
 /// and transfers wait ownership to a reaper on the same runtime.
@@ -80,8 +89,8 @@ pub(crate) async fn discover(
 	let stderr = child.stderr.take().expect("piped stderr");
 	let result = tokio::time::timeout(timeout, async {
 		let (stdout, stderr, status) = tokio::try_join!(
-			capture(stdout, DISCOVERY_BYTES),
-			capture(stderr, DISCOVERY_BYTES),
+			capture(stdout, discovery_bytes()),
+			capture(stderr, discovery_bytes()),
 			async { child.wait().await.map_err(|e| e.to_string()) },
 		)?;
 		Ok(std::process::Output {
@@ -120,7 +129,10 @@ pub(crate) async fn startup_line<R: tokio::io::AsyncBufRead + Unpin>(
 		if count > *remaining {
 			return Err(std::io::Error::new(
 				std::io::ErrorKind::InvalidData,
-				"startup output exceeds 65536 bytes",
+				format!(
+					"startup output exceeds host.startup_bytes ({} bytes)",
+					crate::settings::host().startup_bytes
+				),
 			));
 		}
 		let ended = bytes[count - 1] == b'\n';

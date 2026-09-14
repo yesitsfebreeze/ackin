@@ -41,10 +41,22 @@ pub struct Subscription {
 	pub rx: mpsc::Receiver<Json>,
 }
 
-const HISTORY_EVENTS: usize = 256;
-const HISTORY_BYTES: usize = 1024 * 1024;
-// A full replay, an optional gap, the join, and one reserved error slot.
-const SUBSCRIBER_EVENTS: usize = HISTORY_EVENTS + 3;
+// How much a channel retains and how deep a subscriber's queue runs are
+// settings, not constants: a machine with room to spare should be told so.
+// `host.stream_history_events`, `host.stream_history_bytes` and
+// `host.subscriber_headroom` are the three knobs, all raisable.
+fn history_events() -> usize {
+	crate::settings::host().stream_history_events
+}
+
+fn history_bytes() -> usize {
+	crate::settings::host().stream_history_bytes
+}
+
+// A full replay, an optional gap, the join, and room to be told about a lag.
+fn subscriber_events() -> usize {
+	crate::settings::host().subscriber_events()
+}
 
 #[derive(Default)]
 struct Channel {
@@ -100,7 +112,7 @@ impl Stream {
 		let ch = self.channel(channel);
 		let mut ch = ch.lock();
 		let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
-		let (tx, rx) = mpsc::channel(SUBSCRIBER_EVENTS);
+		let (tx, rx) = mpsc::channel(subscriber_events());
 		if let Some(after) = after {
 			for envelope in Self::history(&ch, channel, after) {
 				let _ = tx.try_send(envelope);
@@ -167,7 +179,7 @@ impl Stream {
 		let bytes = envelope.to_string().len();
 		ch.bytes += bytes;
 		ch.log.push_back((envelope.clone(), bytes));
-		while ch.log.len() > HISTORY_EVENTS || ch.bytes > HISTORY_BYTES {
+		while ch.log.len() > history_events() || ch.bytes > history_bytes() {
 			ch.bytes -= ch.log.pop_front().unwrap().1;
 		}
 		ch.subs.retain(|sub| {

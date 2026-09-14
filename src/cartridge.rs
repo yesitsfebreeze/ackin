@@ -20,7 +20,6 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -157,7 +156,7 @@ impl Link {
 		}
 		let _waiting = Waiting { link: self, id };
 		m["id"] = json!(id);
-		crate::turn::stamp(&mut m);
+		crate::trace::stamp(&mut m);
 		if self.tx.send(Some(m)).is_err() {
 			self.close();
 			return Err(self.gone.into());
@@ -291,10 +290,10 @@ pub(crate) fn manifest(cmd: &[String]) -> Result<Manifest, String> {
 }
 
 pub(crate) async fn manifest_async(cmd: &[String]) -> Result<Manifest, String> {
-	let out = crate::process::discover(cmd, crate::process::STARTUP_TIMEOUT).await?;
+	let out = crate::process::discover(cmd, crate::process::startup_timeout()).await?;
 	let program = &cmd[0];
 	for line in String::from_utf8_lossy(&out.stderr).lines() {
-		crate::turn::diagnostic_line(program, line);
+		crate::trace::diagnostic_line(program, line);
 	}
 	if !out.status.success() {
 		return Err(format!("{program} hello: {}", out.status));
@@ -349,7 +348,7 @@ async fn start(
 		async move {
 			let mut lines = BufReader::new(stderr).lines();
 			while let Ok(Some(line)) = lines.next_line().await {
-				crate::turn::diagnostic_line(&name, &line);
+				crate::trace::diagnostic_line(&name, &line);
 			}
 		}
 	});
@@ -371,8 +370,8 @@ async fn start(
 		json!({ "apply": { "name": name, "config": config, "capabilities":{"service_versions":true} } }),
 	);
 	let mut startup = BufReader::new(stdout);
-	let mut remaining = 64 * 1024;
-	let ready = tokio::time::timeout(crate::process::STARTUP_TIMEOUT, async {
+	let mut remaining = crate::settings::host().startup_bytes;
+	let ready = tokio::time::timeout(crate::process::startup_timeout(), async {
 		loop {
 			let Some(line) = crate::process::startup_line(&mut startup, &mut remaining)
 				.await
@@ -462,7 +461,7 @@ async fn start(
 			link.send(json!({ "dispose": true }));
 			link.stop();
 			let mut child = child;
-			if tokio::time::timeout(Duration::from_secs(5), child.wait())
+			if tokio::time::timeout(crate::settings::host().shutdown_timeout(), child.wait())
 				.await
 				.is_err()
 			{
@@ -552,8 +551,16 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) ->
 		link.reply(id, Ok(host.bridge_status()));
 		return Ok(());
 	}
-	if m["landscape"] == true {
-		link.reply(id, Ok(host.landscape()));
+	if m["snapshot"] == true {
+		link.reply(id, Ok(host.snapshot()));
+		return Ok(());
+	}
+	if !m["graph"].is_null() {
+		// The announce is a round trip through every listening cartridge —
+		// including, when the memo record asks, this one — so it answers off
+		// the read loop and never blocks the wire it will travel back over.
+		let (host, link, scope) = (host.clone(), link.clone(), m["graph"].clone());
+		tokio::spawn(async move { link.reply(id, Ok(host.graph(scope).await)) });
 		return Ok(());
 	}
 	if m["cartridges"] == true {
@@ -610,16 +617,16 @@ fn handle(host: &Arc<Host>, ctx: &Ctx, link: &Arc<Link>, name: &str, m: Json) ->
 		return Ok(());
 	}
 	if let Some(key) = m["call"].as_str() {
-		let (host, ctx, link, key, args, turn, source) = (
+		let (host, ctx, link, key, args, trace, source) = (
 			host.clone(),
 			ctx.clone(),
 			link.clone(),
 			key.to_owned(),
 			m["args"].clone(),
-			crate::turn::of(&m),
+			crate::trace::of(&m),
 			name.to_owned(),
 		);
-		tokio::spawn(crate::turn::scope(turn, async move {
+		tokio::spawn(crate::trace::scope(trace, async move {
 			let r = crate::observation::invoke(&host, &ctx, &source, &key, args).await;
 			link.reply(id, r);
 		}));

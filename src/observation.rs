@@ -1,5 +1,5 @@
 //! Native dispatch metadata, written only to the existing opt-in diagnostic sink.
-use crate::{lua::Host, runtime::Ctx, service::Service, turn};
+use crate::{lua::Host, runtime::Ctx, service::Service, trace};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -33,21 +33,28 @@ struct Observer {
 }
 impl Observer {
 	fn new(raw: &str, sink: Sink) -> Self {
-		let actors = if raw.len() <= 16384 {
+		// Every bound here is a setting under `host.observation_*`: the actor
+		// map an environment may carry, how many actors it may name, and how
+		// long a source name may be. They exist to keep a malformed environment
+		// from becoming an unbounded one, not to ration a real deployment.
+		let limit = crate::settings::host();
+		let actors = if raw.len() <= limit.observation_actors_bytes {
 			serde_json::from_str::<BTreeMap<String, Actor>>(raw)
 				.ok()
-				.filter(|map| map.len() <= 128)
+				.filter(|map| map.len() <= limit.observation_actors_max)
 				.unwrap_or_default()
 				.into_iter()
 				.filter(|(source, actor)| {
-					!source.is_empty() && source.len() <= 128 && actor.valid()
+					!source.is_empty()
+						&& source.len() <= limit.observation_source_chars
+						&& actor.valid()
 				})
 				.collect()
 		} else {
 			BTreeMap::new()
 		};
 		Self {
-			origin: turn::mint().to_string(),
+			origin: trace::mint().to_string(),
 			actors,
 			cache: Mutex::new(VecDeque::new()),
 			sink,
@@ -69,7 +76,7 @@ impl Observer {
 				tool: tool.into(),
 				revision,
 			});
-			while cache.len() > 128 {
+			while cache.len() > crate::settings::host().observation_cache_entries {
 				cache.pop_front();
 			}
 		}
@@ -81,7 +88,7 @@ impl Observer {
 			"cancel" => Some("cancellation"),
 			_ => actor.map(|actor| actor.activity.as_str()),
 		};
-		let value = json!({"v":1,"observation_id":turn::mint().to_string(),"source":source,"actor":actor.map(|actor|actor.actor.as_str()),"activity":activity,"tool":tool,"operation":op,"stage":"attempt","dispatched":false,"outcome":null,"completion_known":null,"elapsed_ms":null,"response_bytes":null,"provider_generation":null,"descriptor_revision":null,"descriptor_basis":"last_successful_describe","resumed":false});
+		let value = json!({"v":1,"observation_id":trace::mint().to_string(),"source":source,"actor":actor.map(|actor|actor.actor.as_str()),"activity":activity,"tool":tool,"operation":op,"stage":"attempt","dispatched":false,"outcome":null,"completion_known":null,"elapsed_ms":null,"response_bytes":null,"provider_generation":null,"descriptor_revision":null,"descriptor_basis":"last_successful_describe","resumed":false});
 		(self.sink)(source, value.clone());
 		Guard {
 			observer: self.clone(),
@@ -100,7 +107,7 @@ fn configured() -> Option<Arc<Observer>> {
 	OBSERVER
 		.get_or_init(|| {
 			if std::env::var("CARTRIDGE_TOOL_OBSERVATIONS").as_deref() != Ok("1")
-				|| !turn::diagnostics_enabled()
+				|| !trace::diagnostics_enabled()
 			{
 				return None;
 			}
@@ -112,7 +119,7 @@ fn configured() -> Option<Arc<Observer>> {
 					} else {
 						"tool_completion"
 					};
-					turn::diagnostic(source, msg, fields);
+					trace::diagnostic(source, msg, fields);
 				}),
 			)))
 		})
@@ -234,7 +241,7 @@ fn descriptor(value: &Value) -> Option<String> {
 	let owned;
 	let value = if value["content"].is_string() && value["error"] == false {
 		let content = value["content"].as_str()?;
-		if content.len() > 65536 {
+		if content.len() > crate::settings::host().observation_content_bytes {
 			return None;
 		}
 		owned = serde_json::from_str::<Value>(content).ok()?;
@@ -251,6 +258,7 @@ fn descriptor(value: &Value) -> Option<String> {
 	let mut output = BoundedDigest {
 		hash: Sha256::new(),
 		bytes: 0,
+		cap: crate::settings::host().observation_content_bytes,
 	};
 	serde_json::to_writer(&mut output, value).ok()?;
 	Some(format!("{:x}", output.hash.finalize()))
@@ -277,10 +285,11 @@ fn json_size(value: &Value) -> Option<usize> {
 struct BoundedDigest {
 	hash: Sha256,
 	bytes: usize,
+	cap: usize,
 }
 impl std::io::Write for BoundedDigest {
 	fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-		if bytes.len() > 65536 - self.bytes {
+		if bytes.len() > self.cap.saturating_sub(self.bytes) {
 			return Err(std::io::Error::other("descriptor too large"));
 		}
 		self.bytes += bytes.len();
@@ -304,8 +313,8 @@ pub(crate) async fn invoke(
 		.then(configured)
 		.flatten()
 		.filter(|_| {
-			source.len() <= 128
-				&& key.len() <= 256
+			source.len() <= crate::settings::host().observation_source_chars
+				&& key.len() <= crate::settings::host().observation_key_chars
 				&& key
 					.bytes()
 					.all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))

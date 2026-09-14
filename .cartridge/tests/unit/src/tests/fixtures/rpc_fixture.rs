@@ -54,11 +54,11 @@ async fn main() {
 					if args == "exit" {
 						std::process::exit(0);
 					}
-					// The turn this cartridge sees, and the one a Lua service sees when
-					// this cartridge calls on into the host inside the same turn.
-					if args == "turn" {
-						let lua = host.call("lua", json!("turn")).await?;
-						return Ok(json!({"cartridge": cartridge::sdk::Host::turn(), "lua": lua}));
+					// The trace this cartridge sees, and the one a Lua service sees when
+					// this cartridge calls on into the host inside the same trace.
+					if args == "trace" {
+						let lua = host.call("lua", json!("trace")).await?;
+						return Ok(json!({"cartridge": cartridge::sdk::Host::trace(), "lua": lua}));
 					}
 					let key = args
 						.get("key")

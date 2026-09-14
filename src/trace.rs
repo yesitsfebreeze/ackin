@@ -1,18 +1,21 @@
-//! The identifier one terminal turn carries across the runtimes cartridge spans.
+//! The trace identifier one unit of work carries across the runtimes cartridge
+//! spans, and the diagnostic stream it labels.
 //!
-//! A turn is ambient, not a parameter: it is set once where work enters the
+//! A trace is ambient, not a parameter: it is set once where work enters the
 //! host (a socket `call`, a cartridge frame that already carries one) and read
 //! wherever a diagnostic is written. [`stamp`] puts it on every outgoing wire
 //! frame and [`of`] takes it off an incoming one, so the Rust host, a Lua
-//! service and a cartridge process all name the same turn.
+//! service and a cartridge process all name the same unit of work. The field is
+//! spelled `trace` on the wire and in a diagnostic line.
 //!
 //! `tokio::spawn` does not inherit a task-local, so every spawn that continues
-//! a turn re-enters it with [`scope`].
+//! a trace re-enters it with [`scope`].
 //!
-//! [`diagnostic`] is the channel the turn exists for: one JSON line per event on
+//! [`diagnostic`] is the channel the trace exists for: one JSON line per event on
 //! a stream the protocol never uses, redacted by field name and bounded by a
 //! byte cap with one rotated generation. `CARTRIDGE_DIAGNOSTICS` names the file (the
-//! default is disabled) and `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` the cap.
+//! default is disabled); the cap is `host.diagnostics_max_bytes` in settings,
+//! and `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` overrides it for one invocation.
 
 use serde_json::Value as Json;
 use std::future::Future;
@@ -25,12 +28,12 @@ tokio::task_local! {
 	static TURN: Arc<str>;
 }
 
-/// The turn this task runs in, when it runs in one.
+/// The trace this task runs in, when it runs in one.
 pub fn current() -> Option<Arc<str>> {
 	TURN.try_with(Arc::clone).ok()
 }
 
-/// A fresh turn id, unique for the life of this process and unlikely to
+/// A fresh trace id, unique for the life of this process and unlikely to
 /// collide with another cartridge's.
 pub fn mint() -> Arc<str> {
 	static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -48,16 +51,16 @@ pub fn mint() -> Arc<str> {
 	))
 }
 
-/// The turn a wire frame carries, or a fresh one when it carries none.
+/// The trace a wire frame carries, or a fresh one when it carries none.
 pub fn of(m: &Json) -> Arc<str> {
-	m["turn"].as_str().map(Arc::from).unwrap_or_else(mint)
+	m["trace"].as_str().map(Arc::from).unwrap_or_else(mint)
 }
 
-/// Put the ambient turn on an outgoing frame. A frame sent outside any turn is
+/// Put the ambient trace on an outgoing frame. A frame sent outside any trace is
 /// left alone, so the wire never grows a field that names nothing.
 pub fn stamp(m: &mut Json) {
 	if let Some(id) = current() {
-		m["turn"] = Json::String(id.to_string());
+		m["trace"] = Json::String(id.to_string());
 	}
 }
 
@@ -66,7 +69,7 @@ pub async fn scope<F: Future>(id: Arc<str>, f: F) -> F::Output {
 	TURN.scope(id, f).await
 }
 
-/// Continue the current turn inside a future that a `tokio::spawn` will run in
+/// Continue the current trace inside a future that a `tokio::spawn` will run in
 /// a task of its own, where the task-local would otherwise be lost.
 pub fn carry<F: Future>(f: F) -> impl Future<Output = F::Output> {
 	let id = current();
@@ -159,10 +162,13 @@ impl Sink {
 	}
 
 	fn from_env() -> Self {
+		// The cap is a setting (`host.diagnostics_max_bytes`); the environment
+		// still wins, because turning diagnostics up for one invocation is what
+		// the variable is for and editing a file to do it is not.
 		let cap = std::env::var("CARTRIDGE_DIAGNOSTICS_MAX_BYTES")
 			.ok()
 			.and_then(|v| v.parse().ok())
-			.unwrap_or(8 << 20);
+			.unwrap_or_else(|| crate::settings::host().diagnostics_max_bytes);
 		match std::env::var("CARTRIDGE_DIAGNOSTICS") {
 			Ok(p) if p == "stderr" => Sink {
 				out: Out::Stderr,
@@ -249,9 +255,9 @@ fn sink() -> &'static Mutex<Sink> {
 	SINK.get_or_init(|| Mutex::new(Sink::from_env()))
 }
 
-/// One diagnostic line: `{"t","turn","src","msg",…}`, sensitive fields omitted.
-/// `fields` may carry its own `turn`, which wins over the ambient one — that is
-/// how a line a cartridge wrote in its own turn keeps it.
+/// One diagnostic line: `{"t","trace","src","msg",…}`, sensitive fields omitted.
+/// `fields` may carry its own `trace`, which wins over the ambient one — that is
+/// how a line a cartridge wrote in its own trace keeps it.
 pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 	if !diagnostics_enabled() {
 		return;
@@ -262,7 +268,7 @@ pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 		other => serde_json::Map::from_iter([("data".to_owned(), other)]),
 	};
 	let id = extra
-		.remove("turn")
+		.remove("trace")
 		.and_then(|t| t.as_str().map(str::to_owned))
 		.or_else(|| current().map(|i| i.to_string()));
 	let mut omitted = Vec::new();
@@ -281,7 +287,7 @@ pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 				.unwrap_or_default(),
 		),
 	);
-	line.insert("turn".into(), id.map(Json::String).unwrap_or(Json::Null));
+	line.insert("trace".into(), id.map(Json::String).unwrap_or(Json::Null));
 	line.insert("src".into(), Json::String(src.to_owned()));
 	line.insert("msg".into(), Json::String(msg.to_string()));
 	if !omitted.is_empty() {
@@ -316,5 +322,5 @@ pub fn diagnostic_line(src: &str, line: &str) {
 }
 
 #[cfg(test)]
-#[path = "../.cartridge/tests/unit/src/turn/tests.rs"]
+#[path = "../.cartridge/tests/unit/src/trace/tests.rs"]
 mod tests;

@@ -7,10 +7,15 @@ working directory even when called through an absolute path from elsewhere.
 
 DISCOVERY AND BUILD
 
+cartridge help                     what is enabled, one line each (from cartridge.ctg)
+cartridge help <id>                one cartridge: declarations, then its help page
+cartridge help <word>              search every page and description
+just isolation                     every undeclared cross-cartridge reference
+just layout                        the repository layout rules
 just modules                       list known modules and memory packages
 just describe proxy                print proxy.ctg/cartridge.json
 just describe runtime              show the runtime README
-just describe landscape            show the library README
+just describe fabric            show the library README
 just links                         validate repositories and builtin links
 just build                         build runtime, Rust cartridges, memory, UI setup
 just build proxy                   build one registered module
@@ -39,18 +44,31 @@ scripts/workspace.py, rather than silently falling back to another test suite.
 
 LOCAL CONVERSATION
 
-run                                start Live, the terminal wrapper, and browser
+just tui                           start the terminal interface and the voice
+run                                start Live and the terminal wrapper
 just run                           same entry point from the repository
-just run --no-open                 attach the terminal without opening a browser
-just run --no-open --no-terminal   create a headless session and print its URL
-just tui                           open the terminal interface
+just run --no-terminal             create a headless session and print its URL
+just solo                          the terminal interface alone, no live service
 
 The bare run command is .cartridge/tools/run linked from ~/.local/bin/run.
-The browser supports voice, text, local task controls, and a model-sized context
-ring. Launch attaches the terminal wrapper to that same host and hands Live
-control of its shell. From a noninteractive launcher, a terminal window opens
+The terminal supports voice, text, local task controls, and a model-sized
+context ring. Launch attaches the terminal wrapper to that same host and hands
+Live control of its shell. From a noninteractive launcher, a terminal window opens
 for the wrapper. Its controls let the user reclaim the shell at any time.
-Local work continues when the browser or wrapper closes. Each launch creates a
+
+just tui, just run and just live are one launch path. There is no page: the
+terminal is the only surface, and it attaches to the host the launch started.
+
+The terminal is told which conversation the launch opened and where Live
+answers, so its left pane can be set to voice mode with Ctrl+V: the same
+conversation the voice coworker speaks into, with the speech and the tasks it
+delegated out of it. Typing there delegates into that conversation rather than a
+second one. Ctrl+V returns to the typed agent session, which keeps its own
+history either way. Ctrl+P carries voice off and voice on, which record whether
+the conversation wants a microphone. Nothing holds one yet: spoken audio needed
+the browser's WebRTC peer, so until a terminal audio client exists that intent
+has no actor and the typed channel is what reaches the agent.
+Local work continues when the wrapper closes. Each launch creates a
 new session while retaining prior history. Build the runtime and live services first.
 
 PROFILES AND SERVICES
@@ -101,8 +119,8 @@ memo types call. To remove this configuration use codex mcp remove cartridge.
 MCP is not an HTTP server and does not connect to the proxy's HTTP port.
 The live tool attaches to the existing Live host over its Cartridge socket.
 Start that host with just live. Use live conversations to select a conversation,
-then state/context to inspect it or delegate to submit work. Voice, browser, and
-MCP share the same tasks; disconnecting MCP does not stop the Live host.
+then state/context to inspect it or delegate to submit work. Voice, terminal,
+and MCP share the same tasks; disconnecting MCP does not stop the Live host.
 
 STATE, MIGRATION, AND GIT
 

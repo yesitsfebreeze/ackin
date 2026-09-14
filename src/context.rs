@@ -135,6 +135,24 @@ impl UserData for LuaCtx {
 				block_on(this.ctx.parallel(&name, Arc::new(payload))).map_err(external)
 			},
 		);
+		// One row per answering cartridge: `{from = <entry id>, data = <answer>}`.
+		// The name is stamped here from the registry rather than taken from the
+		// answer, so a contribution cannot claim to come from somewhere else.
+		methods.add_method(
+			"gather",
+			|lua, this, (name, payload): (String, mlua::Value)| {
+				let answers = block_on(this.ctx.gather(&name, Arc::new(payload)));
+				let labels = this.host.labels();
+				let rows = lua.create_table()?;
+				for (uid, answer) in answers {
+					let row = lua.create_table()?;
+					row.set("from", labels.get(&uid).cloned())?;
+					row.set("data", this.host.to_lua(&answer))?;
+					rows.push(row)?;
+				}
+				Ok(rows)
+			},
+		);
 		methods.add_method("send", |_, this, (name, data): (String, mlua::Value)| {
 			let data = this.host.to_json(data);
 			this.host.send_event(&name, data);

@@ -264,11 +264,12 @@ fn local_list_resolves_wrappers_without_starting_a_daemon_or_applying_cartridges
 			json!(super::process::sdk_fixture())
 		),
 	);
-	write(
-		dir.path(),
-		"init.lua",
-		r#"return {{id="arbitrary-provider",path="provider.lua"},{id="arbitrary-child",path="child.lua"}}"#,
-	);
+	let composition = r#"return {{id="arbitrary-provider",path="provider.lua"},{id="arbitrary-child",path="child.lua"}}"#;
+	write(dir.path(), "init.lua", composition);
+	// The CLI below has no profile to select: it reads the `.cartridge` beside
+	// its working directory, so the same composition is written there too.
+	std::fs::create_dir_all(dir.path().join(".cartridge")).unwrap();
+	write(&dir.path().join(".cartridge"), "init.lua", composition);
 	let host = crate::lua::Host::new(crate::runtime::Runtime::new(), dir.path(), dir.path());
 	let cartridges = host.manifest().unwrap();
 	assert_eq!(cartridges[1].inject, ["lua"]);
@@ -279,8 +280,9 @@ fn local_list_resolves_wrappers_without_starting_a_daemon_or_applying_cartridges
 		std::process::Command::new(super::built(&["-p", "cartridge", "--bin", "cartridge"]))
 			.arg("--dir")
 			.arg(dir.path())
-			.arg("--profile")
-			.arg(dir.path())
+			// One user profile: the host reads the `.cartridge` beside its
+			// working directory, so the run happens in the fixture root.
+			.current_dir(dir.path())
 			.arg("list")
 			.output()
 			.unwrap();
@@ -295,7 +297,7 @@ fn local_list_resolves_wrappers_without_starting_a_daemon_or_applying_cartridges
 		"{stdout}"
 	);
 	assert!(stdout.contains("lua <- arbitrary-provider"), "{stdout}");
-	assert!(!crate::socket::path(dir.path()).exists());
+	assert!(!crate::socket::path(&dir.path().join(".cartridge")).exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["../../../docs.ctg", "../../../agent.ctg", "../../../fs.ctg", "../../../gitfs.ctg", "../../../harness.ctg", "../../../landscape.ctg", "../../../mcp.ctg", "../../../memo.ctg", "../../../memory-tool.ctg", "../../../proxy.ctg", "../../../pty.ctg", "../../../router.ctg", "../../../sessions.ctg", "../../../tools.ctg"]
+members = ["../../../docs.ctg", "../../../agent.ctg", "../../../fs.ctg", "../../../gitfs.ctg", "../../../harness.ctg", "../../../mcp.ctg", "../../../memo.ctg", "../../../proxy.ctg", "../../../pty.ctg", "../../../router.ctg", "../../../sessions.ctg", "../../../tools.ctg"]
 exclude = ["../..", "../../../memory.ctg"]
 
 [profile.dev]

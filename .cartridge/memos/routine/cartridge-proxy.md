@@ -1,14 +1,16 @@
 ---
 kind: routine
-description: Start an authenticated local proxy with a private persisted development key and a disposable per-port profile.
+description: Start an authenticated local proxy on a chosen port with a private persisted development key.
 ---
 
 # Start the local proxy
 
 Use `just proxy <port>`. The explicit environment key takes precedence; otherwise
-keep a generated key in ignored `.cartridge/dev/` with private permissions.
-Never print the key or commit the generated profile. A busy port refuses before
-starting another daemon.
+keep a generated key in ignored `.cartridge/dev/` with private permissions. Never
+print the key. A busy port refuses before starting another daemon. There is one
+user profile and this recipe does not write a second one: the key and the address
+travel in the environment, and `.cartridge/config.lua` binds the proxy listener
+only when one of them names it.
 
 ```just
 set positional-arguments
@@ -29,11 +31,9 @@ serve port="4242":
       if(!process.env.CARTRIDGE_PROXY_KEY)throw Error("Empty proxy key file");
       console.error("Proxy key file: "+key);
     }
-    const profile=path.join(dev,"proxy-"+port),base=path.join(runtime,".cartridge/proxy");
-    fs.mkdirSync(profile,{recursive:true});fs.copyFileSync(path.join(base,"init.lua"),path.join(profile,"init.lua"));
-    fs.writeFileSync(path.join(profile,"config.lua"),"local config = dofile("+JSON.stringify(path.join(base,"config.lua"))+")\nconfig.proxy.listen = \"127.0.0.1:"+port+"\"\nconfig.router.listen = {\"127.0.0.1:0\"}\nreturn config\n");
+    process.env.CARTRIDGE_PROXY_LISTEN="127.0.0.1:"+port;
     const binary=path.join(process.env.CARGO_TARGET_DIR||path.join(runtime,"target"),"debug/cartridge");
-    const child=Bun.spawn([binary,"--profile",profile,"daemon"],{cwd:runtime,env:process.env,stdin:"inherit",stdout:"inherit",stderr:"inherit"});
+    const child=Bun.spawn([binary,"daemon"],{cwd:runtime,env:process.env,stdin:"inherit",stdout:"inherit",stderr:"inherit"});
     for(const signal of ["SIGINT","SIGTERM"])process.on(signal,()=>child.kill(signal));
     process.exit(await child.exited);
 ```

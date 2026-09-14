@@ -1,0 +1,119 @@
+# Settings
+
+Read alongside architecture.txt and creating-cartridges.txt.
+
+A number that changes behaviour is a setting, not a constant. Every cap,
+timeout, queue depth and budget in this system is declared once, filled with a
+default, checked before anything runs, and printed by cartridge settings. If a
+value can be tuned, that listing names it; if it is not in the listing, it is
+not tunable.
+
+WHAT DECLARES WHAT
+
+Each cartridge contributes its own keys in its cartridge.json, under settings:
+
+  "settings": {
+    "max_steps": {
+      "type": "integer",        integer|number|boolean|string|list|table
+      "default": 500,           required, unless optional says null is a value
+      "min": 1, "max": 1000000, inclusive bounds, numbers only
+      "optional": false,        true where absent is itself an answer
+      "doc": "Model round trips one turn may take before it is stopped."
+    },
+    "ship.remote": { "type": "string", "default": "origin", "doc": "..." }
+  }
+
+A dotted key is a nested table: ship.remote is ship = { remote = ... }, not a
+key with a dot in its name. The host has no cartridge.json, so its own keys are
+declared in src/settings.rs and live under host.
+
+THREE LAYERS
+
+Each is laid over the one above it, field by field. A file naming one key keeps
+every other key the layers above settled; tables merge, scalars and lists
+replace, and an explicit null returns a key to its default.
+
+  declaration in cartridge.json   default, bounds, documentation
+  cartridge.json config           the author's own values
+  ~/.cartridge/config.lua         this machine, across every project
+  <project>/.cartridge/config.lua this project
+  init.lua entry config           this composition
+
+Both config.lua files are keyed by profile entry id and are ordinary Lua, so
+os.getenv and computed values work in either. $CARTRIDGE_HOME overrides where
+the global one is read from.
+
+READING AND WRITING THE SURFACE
+
+  cartridge settings              every key: type, value, which file settled it
+  cartridge settings agent        one cartridge
+  cartridge settings agent.max_steps   one key
+  cartridge settings --json       the same as data, values not elided
+  cartridge settings --template   every key at its current value as config.lua
+
+The source column reads default, global or project. The template is what to
+save as either config.lua: it changes nothing as printed, and deleting a line
+returns that key to its declared default. The exit status is non-zero when a
+cartridge is configured with keys it never declared, which is the one thing the
+listing exists to find.
+
+WHAT A CARTRIDGE MAY ASSUME
+
+A declared key holds a value of its declared kind, inside its declared bounds,
+by the time apply runs. A cartridge therefore carries no fallback of its own
+and no second opinion about what a missing key means.
+
+There is no Default impl restating the numbers, and no #[serde(default)] on a
+configuration field. Every field is required and the type refuses a table that
+is missing one. A second copy of a default in Rust is how the declaration and
+the code drift apart, and the drift is silent: the declaration is what a person
+reads and raises, the copy is what the binary spends.
+
+The one source is the document, embedded:
+
+  pub const DOCUMENT: &str = include_str!("../cartridge.json");
+
+  impl Config {
+      fn parse(value: Value) -> Result<Self, String> {
+          let mut settled = cartridge::settings::declared(DOCUMENT);
+          cartridge::settings::merge(&mut settled, value);
+          serde_json::from_value(settled).map_err(|e| e.to_string())
+      }
+  }
+
+The host settles every key before apply, so the declared table underneath
+changes nothing in a hosted run. It is what makes an unhosted one — a unit
+test, a standalone invocation — read the values the cartridge actually ships.
+Where tests build a configuration directly, Default delegates to parse for the
+same reason; it is not a second copy, it reads the same document.
+
+Do not re-check a bound the declaration already states. A second ceiling in
+Rust is how the two drift, and how raising a limit becomes an unexplained
+refusal. Check only what no declaration can express: that a cap is not zero,
+that a name is a name, that a path resolves, that a list holds exact keys.
+
+LIBRARIES AND FREE FUNCTIONS
+
+A free function has a file or a byte slice in front of it, not a configuration.
+Those caps live in a limits module: one struct, deserialized straight from the
+settled table, installed once by the cartridge before it serves.
+
+  pub fn limits() -> &'static Limits { LIMITS.get_or_init(Limits::declared) }
+
+Limits::declared reads the same cartridge.json, so the module has no numbers of
+its own either. First call wins, so work already under way keeps the budget it
+started with. harness, sessions, gitfs, pty, router, docs and memo each carry
+one, declared as their limits.* keys; memo carries a second for its source
+adapters under sources.*.
+
+The host's own keys work the same way and live in settings.json beside
+llms.txt, in the shape a cartridge's settings block uses. The Host struct names
+them to give them types and deserializes the settled table; a name that
+disagrees with the document is a deserialization error, not a divergence.
+
+DEFAULTS ARE GENEROUS
+
+A limit here stops a runaway; it does not ration a workstation. Raise one when
+it is in the way — that is what the layers are for — and prefer raising the
+declaration over pinning a value in a project file, so every project moves with
+it. A limit that is never reached costs nothing.

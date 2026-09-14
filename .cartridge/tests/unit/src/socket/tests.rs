@@ -244,3 +244,57 @@ async fn disconnect_cleans_subscriptions_while_host_owned_reconcile_waits() {
 	host.fiber_of("added").unwrap().settled().await;
 	host.fiber_of("added").unwrap().dispose().await;
 }
+
+#[tokio::test]
+async fn serving_takes_its_socket_with_it() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("cartridge-serving.sock");
+	let host = host(dir.path());
+	let serving = tokio::spawn({
+		let path = path.clone();
+		async move { serve(host, &path).await }
+	});
+	timeout(Duration::from_secs(1), async {
+		while UnixStream::connect(&path).await.is_err() {
+			tokio::task::yield_now().await;
+		}
+	})
+	.await
+	.unwrap();
+	serving.abort();
+	// The abort drops the future, and the guard it held unlinks on the way out.
+	timeout(Duration::from_secs(1), async {
+		while path.exists() {
+			tokio::task::yield_now().await;
+		}
+	})
+	.await
+	.unwrap();
+}
+
+#[tokio::test]
+async fn a_sweep_collects_the_unanswered_and_spares_the_rest() {
+	let dir = tempfile::tempdir().unwrap();
+	let stranded = dir.path().join("cartridge-stranded.sock");
+	let served = dir.path().join("cartridge-served.sock");
+	let unrelated = dir.path().join("agent-stranded.sock");
+	// A listener dropped without unlinking is exactly what a killed host leaves.
+	drop(UnixListener::bind(&stranded).unwrap());
+	drop(UnixListener::bind(&unrelated).unwrap());
+	let _listening = UnixListener::bind(&served).unwrap();
+	assert_eq!(sweep_in(dir.path(), "cartridge-", ".sock").await, 1);
+	assert!(!stranded.exists());
+	assert!(served.exists());
+	assert!(unrelated.exists());
+	// Nothing is left to collect on a second pass.
+	assert_eq!(sweep_in(dir.path(), "cartridge-", ".sock").await, 0);
+}
+
+#[tokio::test]
+async fn a_sweep_leaves_what_is_not_a_socket() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("cartridge-notes.sock");
+	std::fs::write(&file, b"not a socket").unwrap();
+	assert_eq!(sweep_in(dir.path(), "cartridge-", ".sock").await, 0);
+	assert!(file.exists());
+}

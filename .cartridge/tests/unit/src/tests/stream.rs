@@ -475,30 +475,39 @@ async fn a_process_cartridge_publishes_and_watches_over_the_wire() {
 
 #[test]
 fn history_is_bounded_and_an_old_cursor_receives_a_gap() {
+	// Retention is a host setting, so the test reads the value that ships
+	// rather than restating it: well past the bound, whatever the bound is.
+	let history = crate::settings::host().stream_history_events;
+	let total = history * 4;
 	let stream = crate::stream::Stream::new();
-	for n in 0..1000 {
+	for n in 0..total {
 		stream.publish("hot", "test", crate::stream::Kind::Data, json!(n));
 	}
 	let replay = stream.replay("hot", 0);
-	assert_eq!(replay.len(), 257);
+	// The gap notice, then everything still retained.
+	assert_eq!(replay.len(), history + 1);
 	assert_eq!(replay[0]["kind"], "error");
-	assert_eq!(replay[1]["seq"], 745);
-	assert_eq!(replay.last().unwrap()["seq"], 1000);
-	assert_eq!(stream.replay("hot", 999).len(), 1);
+	assert_eq!(replay[1]["seq"], total - history + 1);
+	assert_eq!(replay.last().unwrap()["seq"], total);
+	assert_eq!(stream.replay("hot", total as u64 - 1).len(), 1);
 }
 
 #[tokio::test]
 async fn a_slow_subscriber_gets_a_gap_and_closes_without_blocking_publishers() {
+	// The queue depth is a host setting; overflow it by a wide margin so the
+	// subscriber is closed whatever the setting says — a burst that fits would
+	// leave `recv` waiting forever.
+	let queue = crate::settings::host().subscriber_events();
 	let stream = crate::stream::Stream::new();
 	let mut sub = stream.subscribe("hot", "slow", None);
-	for n in 0..1000 {
+	for n in 0..queue * 4 {
 		stream.publish("hot", "test", crate::stream::Kind::Data, json!(n));
 	}
 	let mut events = Vec::new();
 	while let Some(event) = sub.rx.recv().await {
 		events.push(event);
 	}
-	assert!(events.len() <= 259);
+	assert!(events.len() <= queue);
 	assert_eq!(events.last().unwrap()["kind"], "error");
 	let seq = stream.publish("other", "test", crate::stream::Kind::Data, json!(1));
 	assert_eq!(seq, 1);
@@ -506,8 +515,12 @@ async fn a_slow_subscriber_gets_a_gap_and_closes_without_blocking_publishers() {
 
 #[tokio::test]
 async fn a_full_replay_and_gap_leave_the_subscription_live() {
+	// Past retention by any margin: the replay is the gap notice, everything
+	// retained, and the join — and the queue still has headroom for the live
+	// event that follows.
+	let history = crate::settings::host().stream_history_events;
 	let stream = crate::stream::Stream::new();
-	for n in 0..300 {
+	for n in 0..history + 44 {
 		stream.publish("full", "test", crate::stream::Kind::Data, json!(n));
 	}
 	let mut sub = stream.subscribe("full", "reader", Some(0));
@@ -515,7 +528,7 @@ async fn a_full_replay_and_gap_leave_the_subscription_live() {
 	while let Ok(v) = sub.rx.try_recv() {
 		seen.push(v);
 	}
-	assert_eq!(seen.len(), 258);
+	assert_eq!(seen.len(), history + 2);
 	assert_eq!(seen[0]["kind"], "error");
 	assert_eq!(seen.last().unwrap()["kind"], "subscribe");
 	stream.publish("full", "test", crate::stream::Kind::Data, json!("live"));

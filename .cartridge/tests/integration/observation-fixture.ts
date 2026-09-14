@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 export const secret = "OBSERVATION_FIXTURE_PRIVATE_BODY";
@@ -44,8 +44,11 @@ export function observationFixture(binary: string) {
     dir, diagnostic,
     async run(source: string, actions: any[], options: { enabled?: boolean; cap?: number; diagnostic?: string; partial?: boolean; allowFailure?: boolean } = {}) {
       writeFileSync(join(dir, source+".lua"),readFileSync(join(dir,"caller.lua")));
-      writeFileSync(join(dir, "init.lua"), `return {{id=${JSON.stringify(source)},path=${JSON.stringify(source+".lua")}},{id="provider",path=${JSON.stringify(options.partial?"partial.lua":"tool.lua")}}}`);
-      const child = Bun.spawn([binary, "--dir", dir, "--profile", dir, "run", "fixture.run", JSON.stringify({ actions })], { env: { ...process.env, CARTRIDGE_TOOL_OBSERVATIONS: options.enabled === false ? "0" : "1", CARTRIDGE_DIAGNOSTICS: options.diagnostic || diagnostic, CARTRIDGE_DIAGNOSTICS_MAX_BYTES: String(options.cap || 8*1024*1024), CARTRIDGE_TOOL_ACTORS: JSON.stringify({ agent:{actor:"agent",activity:"deliberate"},ui:{actor:"ui",activity:"read"},poller:{actor:"background",activity:"poll"} }) }, stdout:"pipe", stderr:"pipe" });
+      // One user profile: the host reads the `.cartridge` beside its working
+      // directory, so the fixture's composition goes there and it runs in `dir`.
+      mkdirSync(join(dir, ".cartridge"), { recursive: true });
+      writeFileSync(join(dir, ".cartridge", "init.lua"), `return {{id=${JSON.stringify(source)},path=${JSON.stringify(source+".lua")}},{id="provider",path=${JSON.stringify(options.partial?"partial.lua":"tool.lua")}}}`);
+      const child = Bun.spawn([binary, "--dir", dir, "run", "fixture.run", JSON.stringify({ actions })], { cwd: dir, env: { ...process.env, CARTRIDGE_TOOL_OBSERVATIONS: options.enabled === false ? "0" : "1", CARTRIDGE_DIAGNOSTICS: options.diagnostic || diagnostic, CARTRIDGE_DIAGNOSTICS_MAX_BYTES: String(options.cap || 8*1024*1024), CARTRIDGE_TOOL_ACTORS: JSON.stringify({ agent:{actor:"agent",activity:"deliberate"},ui:{actor:"ui",activity:"read"},poller:{actor:"background",activity:"poll"} }) }, stdout:"pipe", stderr:"pipe" });
       const [exit, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       if(exit) { if(options.allowFailure)return {exit,stdout,stderr}; throw Error(`runtime exit ${exit}: ${stderr}`); }
       return JSON.parse(stdout);

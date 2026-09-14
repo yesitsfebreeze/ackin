@@ -118,21 +118,23 @@ async fn socket_calls_a_lua_wrapped_sdk_process_with_correlated_errors() {
 	drop(client);
 	server.abort();
 	let _ = server.await;
-	std::fs::remove_file(path).unwrap();
+	// The serving unlinks its own socket now; this only covers an abort that
+	// lost the race with the assertions above.
+	let _ = std::fs::remove_file(path);
 }
 
-/// One turn id survives every hop a call makes: the socket names it, the host
+/// One trace id survives every hop a call makes: the socket names it, the host
 /// puts it on the wire, the cartridge process reads it off its own frame, and
 /// the Lua service that cartridge calls back into reports the same id.
 #[tokio::test(flavor = "multi_thread")]
-async fn one_turn_id_crosses_the_socket_the_host_a_cartridge_and_lua() {
+async fn one_trace_id_crosses_the_socket_the_host_a_cartridge_and_lua() {
 	let dir = tempfile::tempdir().unwrap();
 	write(
 		dir.path(),
 		"provider.lua",
 		r#"return {provide={"lua"},apply=function(ctx)
 		ctx:provide("lua", function(args)
-			if args == "turn" then return cartridge.turn() end
+			if args == "trace" then return cartridge.trace() end
 			return args
 		end)
 	end}"#,
@@ -169,21 +171,21 @@ async fn one_turn_id_crosses_the_socket_the_host_a_cartridge_and_lua() {
 	.await
 	.unwrap();
 	client
-		.send(json!({"call":"roundtrip","args":"turn","id":"named","turn":"turn-probe-1"}))
+		.send(json!({"call":"roundtrip","args":"trace","id":"named","trace":"trace-probe-1"}))
 		.await
 		.unwrap();
 	assert_eq!(
 		until(&mut client, |m| m["reply"] == "named").await["data"],
-		json!({"cartridge":"turn-probe-1","lua":"turn-probe-1"})
+		json!({"cartridge":"trace-probe-1","lua":"trace-probe-1"})
 	);
-	// A client that names no turn still gets one, and the same one everywhere.
+	// A client that names no trace still gets one, and the same one everywhere.
 	client
-		.send(json!({"call":"roundtrip","args":"turn","id":"minted"}))
+		.send(json!({"call":"roundtrip","args":"trace","id":"minted"}))
 		.await
 		.unwrap();
 	let minted = until(&mut client, |m| m["reply"] == "minted").await;
 	let seen = minted["data"]["cartridge"].as_str().unwrap().to_owned();
-	assert!(!seen.is_empty() && seen != "turn-probe-1");
+	assert!(!seen.is_empty() && seen != "trace-probe-1");
 	assert_eq!(minted["data"]["lua"], json!(seen));
 	host.fiber_of("child").unwrap().dispose().await;
 	drop(client);

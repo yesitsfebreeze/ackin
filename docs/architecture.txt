@@ -6,7 +6,7 @@ REPOSITORIES AND OWNERSHIP
 
 ~/dev/cartridge is a Git parent containing .gitmodules, submodule directories,
 and a forwarding justfile. The source repository is cartridge.ctg. The other
-16 submodules contain 15 loadable cartridges plus the landscape Rust library.
+submodules are loadable cartridges.
 Each cartridge keeps its implementation and cartridge.json in its own repository.
 cartridge.ctg/builtin/<name> links to ../../<name>.ctg, so a source change is
 visible to the runtime without copying it into a second source tree.
@@ -44,10 +44,58 @@ fallback to hide mismatches.
 Nested keys are private to their subtree. Each parent must export an inner key
 for it to travel outward another level. Two separate subtrees may use the same
 key privately. The resolver rejects invalid or ambiguous visible bindings.
-Manifest config carries defaults with the cartridge. Profile configuration
-supplies composition-specific settings; do not commit live credentials there.
 
-.cartridge/<profile>/init.lua returns entries such as:
+ISOLATION
+
+A cartridge brings its own surface and registers into the host; the host is
+the only thing that knows the list. Across a boundary there are two paths: a
+declared need (needs, or a key the profile injects) called directly, and an
+event listened to. A key never declared is refused at the point of use, at any
+depth (undeclared access). A cartridge carries no sibling's protocol for an
+optional feature and no rule about a sibling; the tool's descriptor says which
+of its ops only read (reads), and the composition's config.lua says what the
+policy asks about. Installing or removing a cartridge therefore changes nothing
+outside it. `just isolation` reports every source line that breaks this.
+
+THE MANUAL
+
+cartridge help is built from what is installed and enabled: one line per
+cartridge from its cartridge.json description, and for `cartridge help <id>`
+the declarations off that document followed by the page the cartridge ships at
+.cartridge/help.md, with links relative to its directory. `cartridge help
+<word>` searches every page; --json is the manual as one document; `cartridge
+help host` is the runtime's own page beside the profile. A cartridge without a
+page is reported and the overview exits non-zero.
+
+SETTINGS
+
+settings in cartridge.json declares the configuration keys a cartridge
+contributes: type, default, optional bounds, and one line of documentation per
+dotted key. The host fills every declared key, checks kind and bounds, and hands
+the cartridge a complete configuration, so a cartridge carries no fallbacks and
+re-checks no bound the declaration already states. The document is the only
+place the numbers live: no Default impl restates them and no configuration
+field takes #[serde(default)]. A cartridge embeds its own cartridge.json and
+reads the declared table back through settings::declared for an unhosted run.
+The host's own keys are declared in settings.json beside llms.txt and live
+under host; src/settings.rs names them to give them types.
+
+Layers, each laid over the last field by field: the declaration, then manifest
+config, then ~/.cartridge/config.lua for the machine, then the project's
+.cartridge/config.lua, then the profile entry config in init.lua. Tables merge;
+scalars and lists replace; an explicit null returns a key to its default. Both
+config.lua files are keyed by entry id; do not commit live credentials to
+either. cartridge settings prints every key with its value and the file that
+settled it, and exits non-zero on a configured key nothing declares. See
+settings.txt.
+
+Free functions that cannot read a configuration carry a limits module instead:
+one struct deserialized from the settled table, installed once by the cartridge
+before it serves, its defaults read back off the same document. harness,
+sessions, gitfs, pty, router, docs and memo each carry one, declared as their
+limits.* keys; memo carries a second for its source adapters under sources.*.
+
+.cartridge/init.lua returns entries such as:
   return {{id="sessions", path="sessions"}, {id="policy", path="policy"}}
 path resolves below the selected cartridge directory, normally builtin/.
 config.lua returns per-entry settings. Entry-level config, disabled, inject,
@@ -66,8 +114,32 @@ and coordinates disposal. stdout logging would corrupt the protocol.
 src/cartridge.rs handles the wire, src/sdk.rs its cartridge-facing API, and
 src/process.rs child execution. src/socket.rs exposes the persistent host to
 clients; src/stream.rs manages channel subscriptions and event envelopes.
-src/turn.rs and src/context.rs carry invocation context. SDK hosts can themselves
+src/trace.rs and src/context.rs carry invocation context. SDK hosts can themselves
 spawn child cartridges, preserving explicit outward service declarations.
+
+Four dispatches carry an event to the listeners registered for its name, and
+the difference between them is what they do with the answers: ctx:emit ignores
+them, ctx:bail takes the first non-null one and stops, ctx:parallel keeps only
+the errors, and ctx:gather keeps every answer, each attributed to the fiber
+that gave it. A listener that fails fails its own fiber under emit and gather,
+so one cartridge that cannot answer never costs the caller the rest.
+
+THE FABRIC ANNOUNCE
+
+src/fabric.rs serves two questions about the composition. The snapshot
+({"snapshot":true} on the wire, Host::snapshot in the SDK) is the raw
+read-only view of what the host loaded. The graph ({"graph": scope},
+Host::graph) fires the fabric.announce event and gathers what the
+composition answers: every active cartridge contributes {"nodes","edges"} in
+the shapes src/graph.rs reads, core states the entries and their
+provide/inject edges itself, and core stamps each announced node with the
+answering entry's id rather than trusting the answer's own claim. Which
+cartridges are composed is therefore what the graph is. `scope` is the asking
+side's context, passed through to contributors — a session cwd, say, since core
+has no session of its own. The SDK answers the announce for every cartridge
+without being asked to: the tools it provides, as each describes itself now.
+Host::announce adds what only that cartridge knows, such as a record's memos.
+Nothing is cached: asking rebuilds.
 
 REPLACEMENT AND RESOURCES
 
@@ -98,8 +170,8 @@ gitfs: Git-backed file and workspace operations.
 harness: prompt/context composition, including system memos and memory.
 mcp: exposes the composed tool surface over MCP stdio.
 memo: typed Markdown record, discovery, validated writes, and composition context.
-memory: durable knowledge storage and retrieval, with a standalone CLI.
-memory-tool: adapts memory operations into the host's tool surface.
+memory: durable knowledge storage and retrieval, with a standalone CLI, and
+  the tool.memory adapter over it.
 policy: Lua tool decisions and configured per-tool rules.
 proxy: authenticated HTTP entry point for model-compatible requests.
 pty: terminal processes, shell operations, and terminal environment services.
@@ -107,7 +179,6 @@ router: configured model/provider selection and routing.
 sessions: conversation/session persistence.
 tools: building bundles and managing development worktrees.
 ui: terminal interface and its host bridge.
-landscape: Rust support library for repository/context collection, not loadable.
 
 For exact service keys and dependencies, read the relevant cartridge.json through
 just describe <name>. For API payloads, inspect its source and service metadata.
