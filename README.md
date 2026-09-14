@@ -57,6 +57,11 @@ Early (`0.1.0`). Interfaces change without notice.
   A cartridge key no declaration names is listed as `undeclared` and makes
   `cartridge settings` exit non-zero; a stray `host` key is warned about and
   the host's declared defaults stand.
+- **Sockets**: every socket of a run lives in a directory only this user can
+  enter, under `$XDG_RUNTIME_DIR/cartridge` or `/tmp/cartridge-<uid>`. Each
+  socket is owner-only from the moment it exists, both ends check the other's
+  uid, and a name held by anything that is not this user's socket is refused
+  rather than replaced.
 
 ## Build
 

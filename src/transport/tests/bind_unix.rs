@@ -29,6 +29,30 @@ async fn a_bound_socket_is_owner_only() {
 }
 
 #[tokio::test]
+async fn a_socket_is_owner_only_even_under_a_permissive_umask() {
+	use std::os::unix::fs::PermissionsExt;
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("test.sock");
+	// Under the same lock as `bind_owner_only`, so the restore cannot interleave.
+	// SAFETY: `umask` cannot fail and touches no memory.
+	let previous = unsafe {
+		let _guard = UMASK.lock();
+		libc::umask(0)
+	};
+	let bound = bind(&Endpoint::Unix(path.clone())).await;
+	// SAFETY: restoring the value `umask` returned above.
+	unsafe {
+		let _guard = UMASK.lock();
+		libc::umask(previous);
+	}
+	let BindOutcome::Bound(_listener) = bound.unwrap() else {
+		panic!("first bind should own the socket")
+	};
+	let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+	assert_eq!(mode, 0o600, "owner-only whatever the umask, got {mode:o}");
+}
+
+#[tokio::test]
 async fn a_rebound_stale_socket_is_also_owner_only() {
 	use std::os::unix::fs::PermissionsExt;
 	let dir = tempfile::tempdir().unwrap();
@@ -119,5 +143,58 @@ async fn a_stale_socket_file_is_removed_and_rebound() {
 	assert!(
 		matches!(outcome, BindOutcome::Bound(_)),
 		"stale file removed, endpoint rebound"
+	);
+}
+
+#[tokio::test]
+async fn a_regular_file_squatting_the_name_is_refused_not_removed() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("test.sock");
+	std::fs::write(&path, b"not a socket").unwrap();
+	let Err(err) = bind(&Endpoint::Unix(path.clone())).await else {
+		panic!("a file that is not a socket must refuse the bind, not be deleted")
+	};
+	assert!(
+		matches!(err, BindError::Untrusted(_)),
+		"a squat is not i/o and is not AlreadyRunning: {err}"
+	);
+	assert!(
+		err.to_string().contains("not a socket"),
+		"the refusal says what it found: {err}"
+	);
+	assert_eq!(
+		std::fs::read(&path).unwrap(),
+		b"not a socket",
+		"a path we refused is a path we must not have unlinked"
+	);
+}
+
+#[tokio::test]
+async fn a_caller_of_another_uid_is_refused_and_the_listener_keeps_serving() {
+	use std::time::Duration;
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("test.sock");
+	let BindOutcome::Bound(mut listener) = bind(&Endpoint::Unix(path.clone())).await.unwrap()
+	else {
+		panic!("first bind should own the socket")
+	};
+	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
+	let euid = unsafe { libc::geteuid() };
+	// A knock the listener must refuse; only the uid it compares against is a fiction.
+	let _stranger = UnixStreamAdapter::connect(&path).await.unwrap();
+	let refused = tokio::time::timeout(
+		Duration::from_millis(250),
+		listener.accept_from(euid.wrapping_add(1)),
+	)
+	.await;
+	assert!(
+		refused.is_err(),
+		"a connection from another uid must never become an adapter"
+	);
+	let _ours = UnixStreamAdapter::connect(&path).await.unwrap();
+	let accepted = tokio::time::timeout(Duration::from_secs(2), listener.accept_from(euid)).await;
+	assert!(
+		accepted.is_ok_and(|r| r.is_ok()),
+		"a refusal must not stop the listener"
 	);
 }

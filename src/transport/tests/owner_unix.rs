@@ -14,11 +14,24 @@ pub(super) fn foreign_path() -> Option<PathBuf> {
 fn a_path_this_user_owns_is_accepted() {
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("test.sock");
-	std::fs::write(&path, b"").unwrap();
+	let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
 	assert!(
 		require_owned_by_caller(&path).is_ok(),
-		"our own path must pass, or nothing connects"
+		"our own socket must pass, or nothing connects"
 	);
+}
+
+#[test]
+fn a_regular_file_is_not_an_endpoint() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("test.sock");
+	std::fs::write(&path, b"").unwrap();
+	let err = require_owned_by_caller(&path).expect_err("owning a file does not make it a socket");
+	assert!(
+		matches!(err, AdapterError::UntrustedEndpoint(_)),
+		"wrong type is a substitution, not i/o: {err}"
+	);
+	assert!(err.to_string().contains("not a socket"), "{err}");
 }
 
 #[test]

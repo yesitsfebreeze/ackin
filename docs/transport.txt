@@ -139,7 +139,10 @@ and the base. A node also receives, for each token it accepts, the sender and
 the events it may send there, so a token grants nothing at any other node and
 nothing beyond its events. A node answers `event`, `subscribe`, `unsubscribe`,
 and for the base `apply`, `directory` and `dispose`. A reload is a stop and a
-start on the same socket.
+start on the same socket. Both ends of a local connection check the other's
+uid: a client refuses an endpoint it does not own or that another user serves,
+and a listener drops a connection from another user without answering and
+keeps serving.
 
 Queues are bounded. A connection runs at most 64 requests at once and queues
 1024 frames each way; a sender that outruns its listener waits, and a peer that

@@ -23,35 +23,41 @@ use crate::error::{Error, Result};
 
 use super::Host;
 
+/// Create `dir` owner-only, and narrow it when found wider: every socket and
+/// token of a run lives in one of these.
+fn owner_only_dir(dir: &Path) -> Result<()> {
+	use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+	// SAFETY: `getuid` cannot fail and touches no memory.
+	let uid = unsafe { libc::getuid() };
+	std::fs::DirBuilder::new()
+		.recursive(true)
+		.mode(0o700)
+		.create(dir)
+		.map_err(|e| Error::file(dir, e))?;
+	let meta = std::fs::symlink_metadata(dir).map_err(|e| Error::file(dir, e))?;
+	if !meta.is_dir() || meta.uid() != uid {
+		return Err(Error::Profile(format!(
+			"{} is not a directory owned by this user",
+			dir.display()
+		)));
+	}
+	if meta.permissions().mode() & 0o077 != 0 {
+		std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+			.map_err(|e| Error::file(dir, e))?;
+	}
+	Ok(())
+}
+
 /// The per-user directory every host of this user keeps its sockets in.
 pub fn base() -> Result<PathBuf> {
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-		// SAFETY: `getuid` cannot fail and touches no memory.
-		let uid = unsafe { libc::getuid() };
-		let base = std::env::var_os("XDG_RUNTIME_DIR")
-			.map(|dir| PathBuf::from(dir).join("cartridge"))
-			.filter(|dir| dir.as_os_str().len() < 48)
-			.unwrap_or_else(|| PathBuf::from(format!("/tmp/cartridge-{uid}")));
-		std::fs::DirBuilder::new()
-			.recursive(true)
-			.mode(0o700)
-			.create(&base)
-			.map_err(|e| Error::file(&base, e))?;
-		let meta = std::fs::symlink_metadata(&base).map_err(|e| Error::file(&base, e))?;
-		if !meta.is_dir() || meta.uid() != uid {
-			return Err(Error::Profile(format!(
-				"{} is not a directory owned by this user",
-				base.display()
-			)));
-		}
-		if meta.permissions().mode() & 0o077 != 0 {
-			std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700))
-				.map_err(|e| Error::file(&base, e))?;
-		}
-		Ok(base)
-	}
+	// SAFETY: `getuid` cannot fail and touches no memory.
+	let uid = unsafe { libc::getuid() };
+	let base = std::env::var_os("XDG_RUNTIME_DIR")
+		.map(|dir| PathBuf::from(dir).join("cartridge"))
+		.filter(|dir| dir.as_os_str().len() < 48)
+		.unwrap_or_else(|| PathBuf::from(format!("/tmp/cartridge-{uid}")));
+	owner_only_dir(&base)?;
+	Ok(base)
 }
 
 fn tag(profile: &Path) -> String {
@@ -88,7 +94,7 @@ pub(crate) fn run_dir(profile: &Path) -> Result<PathBuf> {
 		}
 	}
 	let dir = base.join(format!("{prefix}{}", std::process::id()));
-	std::fs::create_dir_all(&dir).map_err(|e| Error::file(&dir, e))?;
+	owner_only_dir(&dir)?;
 	Ok(dir)
 }
 
@@ -108,7 +114,6 @@ pub(crate) fn file_name(id: &str) -> String {
 }
 
 pub(crate) async fn listen(path: &Path) -> Result<crate::transport::typed::LocalListener> {
-	let _ = std::fs::remove_file(path);
 	match crate::transport::typed::bind(&crate::transport::typed::Endpoint::Unix(
 		path.to_path_buf(),
 	))
@@ -177,6 +182,10 @@ pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
 	file.write_all(text.as_bytes())
 		.map_err(|e| Error::file(path, e))
 }
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/src/host/socket.rs"]
+mod tests;
 
 #[derive(Clone)]
 enum Caller {

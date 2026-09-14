@@ -497,7 +497,7 @@ impl Adapter for LocalAdapter {
 // The socket path and its target must belong to this user; checked before connecting.
 #[cfg(unix)]
 fn require_owned_by_caller(path: &Path) -> Result<(), AdapterError> {
-	use std::os::unix::fs::MetadataExt;
+	use std::os::unix::fs::{FileTypeExt, MetadataExt};
 	let untrusted =
 		|what: &str| AdapterError::UntrustedEndpoint(format!("{}: {what}", path.display()));
 	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
@@ -521,6 +521,9 @@ fn require_owned_by_caller(path: &Path) -> Result<(), AdapterError> {
 			"resolves to a path owned by uid {}, not {euid}",
 			target.uid()
 		)));
+	}
+	if !target.file_type().is_socket() {
+		return Err(untrusted("not a socket"));
 	}
 	Ok(())
 }
@@ -610,6 +613,24 @@ pub enum BindError {
 fn harden_socket(path: &Path) -> std::io::Result<()> {
 	use std::os::unix::fs::PermissionsExt;
 	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+// The kernel creates the socket `0777 & ~umask`; narrowing the umask across the
+// bind closes the window before `harden_socket` — 0o077 strips group and other
+// only, so a directory created inside the window keeps its owner execute bit.
+// Every umask write in the process takes this lock and restores what it read.
+#[cfg(unix)]
+static UMASK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+#[cfg(unix)]
+fn bind_owner_only(path: &Path) -> std::io::Result<tokio::net::UnixListener> {
+	let _guard = UMASK.lock();
+	// SAFETY: `umask` cannot fail and touches no memory.
+	let previous = unsafe { libc::umask(0o077) };
+	let bound = tokio::net::UnixListener::bind(path);
+	// SAFETY: restoring the value `umask` just returned.
+	unsafe { libc::umask(previous) };
+	bound
 }
 
 // Owner-only security descriptor for named pipes: one ACE for this process's SID.
@@ -747,7 +768,7 @@ fn create_pipe_instance(
 // The expected peer uid is a parameter so tests can reach the refusal.
 #[cfg(unix)]
 async fn bind_unix(path: &Path, expected_peer: u32) -> Result<BindOutcome, BindError> {
-	let listener = match tokio::net::UnixListener::bind(path) {
+	let listener = match bind_owner_only(path) {
 		Ok(listener) => listener,
 		Err(e) if e.kind() != std::io::ErrorKind::AddrInUse => {
 			return Err(e.into());
@@ -764,7 +785,7 @@ async fn bind_unix(path: &Path, expected_peer: u32) -> Result<BindOutcome, BindE
 				// Nothing answers a name we own: our own stale socket, ours to reclaim.
 				Err(_) => {
 					let _ = std::fs::remove_file(path);
-					tokio::net::UnixListener::bind(path)?
+					bind_owner_only(path)?
 				}
 			}
 		}
@@ -847,11 +868,37 @@ impl LocalListener {
 }
 
 impl LocalListener {
+	// The expected uid is a parameter so tests can reach the refusal.
+	#[cfg(unix)]
+	async fn accept_from(&mut self, expected: u32) -> Result<LocalAdapter, std::io::Error> {
+		loop {
+			let (stream, _peer) = self.inner.accept().await?;
+			match stream.peer_cred() {
+				Ok(cred) if cred.uid() == expected => {
+					return Ok(LocalAdapter::Unix(UnixStreamAdapter::new(stream)))
+				}
+				// Logged and dropped, not returned: both accept loops end on an
+				// error, and a stranger must not stop a listener by knocking.
+				Ok(cred) => tracing::warn!(
+					target: "cartridge",
+					"{}: refused a connection from uid {}, not {expected}",
+					self.socket_path.display(),
+					cred.uid()
+				),
+				Err(error) => tracing::warn!(
+					target: "cartridge",
+					"{}: refused a connection whose credentials do not read: {error}",
+					self.socket_path.display()
+				),
+			}
+		}
+	}
+
 	pub async fn accept(&mut self) -> Result<LocalAdapter, std::io::Error> {
 		#[cfg(unix)]
 		{
-			let (stream, _peer) = self.inner.accept().await?;
-			Ok(LocalAdapter::Unix(UnixStreamAdapter::new(stream)))
+			// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
+			self.accept_from(unsafe { libc::geteuid() }).await
 		}
 		#[cfg(windows)]
 		{

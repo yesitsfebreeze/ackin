@@ -104,6 +104,12 @@ which events each token it accepts may send. The base sends its own events
 (`run`, `call`, `send`, `verify`) through
 the same code the nodes send with, to active listeners only.
 
+Both directories are created 0700 and narrowed again if found wider. Each
+socket is bound under a narrowed umask, so it is owner-only from the moment
+the kernel creates it. A name already held is refused unless it is this
+user's own socket: another uid, a link to another uid, or a file that is not
+a socket refuses the bind and is left where it is.
+
 WHAT THE SANDBOX DOES NOT COVER
 
 Both platforms: `grant.net` names hosts and no kernel policy filters by host,
