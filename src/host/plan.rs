@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::transport::cartridge::{Address, Directory, EventEntry};
+use crate::transport::cartridge::{Accept, Address, Directory, EventEntry};
 
 use crate::error::{Error, Result};
 use crate::loader::{Declared, Entry, Event, Grant};
@@ -27,8 +27,13 @@ pub struct Plan {
 
 impl Plan {
 	/// Everything that changes what the other cartridges are told.
-	pub(crate) fn wiring(&self) -> (Vec<&String>, &[String], &[String]) {
-		(self.events.keys().collect(), &self.needs, &self.listen)
+	pub(crate) fn wiring(&self) -> (&BTreeMap<String, Event>, &[String], &[String]) {
+		(&self.events, &self.needs, &self.listen)
+	}
+
+	/// Whether this cartridge may send `name`: it defines or needs it.
+	pub(crate) fn sends(&self, name: &str) -> bool {
+		self.events.contains_key(name) || self.needs.iter().any(|n| n == name)
 	}
 }
 
@@ -187,11 +192,12 @@ impl Host {
 		})
 	}
 
-	/// The one token a node accepts from senders and presents to the base.
-	pub(crate) fn token(&self, id: &str) -> String {
+	/// The token `from` presents to `to`, or to the base when `to` is `None`.
+	/// One per edge, so a listener holds nothing it could present elsewhere.
+	pub(crate) fn token(&self, from: &str, to: Option<&str>) -> String {
 		self.tokens
 			.lock()
-			.entry(id.to_owned())
+			.entry((from.to_owned(), to.map(str::to_owned)))
 			.or_insert_with(crate::transport::token)
 			.clone()
 	}
@@ -250,7 +256,20 @@ pub(crate) fn listeners(plans: &[Arc<Plan>]) -> HashMap<String, Vec<String>> {
 	listeners
 }
 
-/// The directory of `plan` within `plans`.
+fn entry(owner: &str, event: &Event, listeners: Vec<Address>) -> EventEntry {
+	EventEntry {
+		owner: owner.to_owned(),
+		description: event.description.clone(),
+		schema: event.schema.clone(),
+		timeout_ms: event
+			.timeout_ms
+			.unwrap_or(crate::settings::host().event_timeout_ms),
+		listeners,
+	}
+}
+
+/// The directory of `plan` within `plans`: listeners and tokens only for what
+/// it may send, and a token for each cartridge that may send it something.
 pub(crate) fn directory(
 	host: &Host,
 	plan: &Plan,
@@ -259,33 +278,76 @@ pub(crate) fn directory(
 ) -> Directory {
 	let mut directory = Directory {
 		needs: plan.needs.clone(),
-		token: host.token(&plan.id),
 		host: Some(Address {
 			cartridge: "host".into(),
 			socket: host.socket_path(),
-			token: host.token(&plan.id),
+			token: host.token(&plan.id, None),
 		}),
 		..Directory::default()
 	};
 	for (name, (owner, event)) in catalogue {
-		let listeners = plans
+		let mut listeners = Vec::new();
+		if plan.sends(name) {
+			directory.sends.push(name.clone());
+			listeners = plans
+				.iter()
+				.filter(|p| p.listen.iter().any(|n| n == name))
+				.map(|listener| Address {
+					cartridge: listener.id.clone(),
+					socket: host.socket(&listener.id),
+					token: host.token(&plan.id, Some(&listener.id)),
+				})
+				.collect();
+		}
+		directory
+			.events
+			.insert(name.clone(), entry(owner, event, listeners));
+	}
+	for sender in plans {
+		let events: Vec<String> = plan
+			.listen
+			.iter()
+			.filter(|name| catalogue.contains_key(*name) && sender.sends(name))
+			.cloned()
+			.collect();
+		if !events.is_empty() {
+			directory.accept.insert(
+				host.token(&sender.id, Some(&plan.id)),
+				Accept {
+					from: sender.id.clone(),
+					events,
+				},
+			);
+		}
+	}
+	directory
+}
+
+/// What the base sends with: every event, to its active listeners, as the host.
+pub(crate) fn host_directory(
+	host: &Host,
+	active: &[Arc<Plan>],
+	catalogue: &BTreeMap<String, (String, Event)>,
+) -> Directory {
+	let mut directory = Directory::default();
+	for (name, (owner, event)) in catalogue {
+		directory.sends.push(name.clone());
+		let listeners = active
 			.iter()
 			.filter(|p| p.listen.iter().any(|n| n == name))
 			.map(|listener| Address {
 				cartridge: listener.id.clone(),
 				socket: host.socket(&listener.id),
-				token: host.token(&listener.id),
+				token: host.host_token().to_owned(),
 			})
 			.collect();
-		directory.events.insert(
-			name.clone(),
-			EventEntry {
-				owner: owner.clone(),
-				description: event.description.clone(),
-				schema: event.schema.clone(),
-				listeners,
-			},
-		);
+		directory
+			.events
+			.insert(name.clone(), entry(owner, event, listeners));
 	}
 	directory
 }
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/src/host/plan.rs"]
+mod tests;

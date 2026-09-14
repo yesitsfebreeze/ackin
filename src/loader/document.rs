@@ -65,7 +65,8 @@ pub struct Cartridge {
 }
 
 /// One event a cartridge defines. `schema` is a JSON Schema for the payload;
-/// absent, any payload passes.
+/// absent, any payload passes. `timeout_ms` is how long a sender waits for
+/// each listener; absent, the host's `event_timeout_ms`.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Event {
@@ -73,6 +74,8 @@ pub struct Event {
 	pub description: Option<String>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub schema: Option<serde_json::Value>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub timeout_ms: Option<u64>,
 }
 
 /// An argument array to run from `cwd`, relative to the manifest's folder.
@@ -217,6 +220,11 @@ impl Cartridge {
 		};
 		for (name, event) in &self.events {
 			key("events", name)?;
+			if event.timeout_ms == Some(0) {
+				return Err(at(&format!(
+					"`events.{name}.timeout_ms` must be at least 1"
+				)));
+			}
 			if let Some(schema) = &event.schema {
 				jsonschema::validator_for(schema).map_err(|e| {
 					at(&format!("`events.{name}.schema` is not a JSON Schema: {e}"))

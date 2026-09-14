@@ -8,6 +8,11 @@
 //! [`Request::reply`], and one dropped unanswered is answered with an internal
 //! error, so the caller is never left waiting.
 //!
+//! Both queues are bounded. A caller waits for room to send; the reader stops
+//! reading while [`Incoming`] is full, so a server that falls behind slows its
+//! sender instead of growing. A notification or reply that finds the outgoing
+//! queue full closes the connection: the other side is not reading.
+//!
 //! Framing is one JSON object per line ([`crate::transport::typed::JsonEnvelopeCodec`]).
 //! Every frame written carries `"jsonrpc": "2.0"`; frames read are accepted with
 //! or without it.
@@ -37,6 +42,9 @@ pub const UNAUTHORIZED: i64 = -32001;
 pub const NOT_PROVIDED: i64 = -32002;
 /// Local only, never on the wire: the connection is gone.
 pub const CLOSED: i64 = -32003;
+
+/// Frames a connection queues in each direction before it pushes back.
+pub const QUEUE: usize = 1024;
 
 /// A JSON-RPC error object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
@@ -75,7 +83,7 @@ impl From<Error> for String {
 type Pending = HashMap<u64, oneshot::Sender<Result<Value, Error>>>;
 
 struct Inner {
-	out: mpsc::UnboundedSender<Value>,
+	out: mpsc::Sender<Value>,
 	pending: Mutex<Option<Pending>>,
 	next: AtomicU64,
 	closed: AtomicBool,
@@ -126,28 +134,43 @@ pub struct Request {
 	pub method: String,
 	pub params: Value,
 	id: Value,
-	out: Option<mpsc::UnboundedSender<Value>>,
+	connection: Option<Arc<Inner>>,
 }
 
 impl Request {
 	/// Answer the request. Consumes it, so it is answered once.
 	pub fn reply(mut self, result: Result<Value, Error>) {
-		if let Some(out) = self.out.take() {
-			let _ = out.send(response(&self.id, result));
+		if let Some(connection) = self.connection.take() {
+			connection.push(response(&self.id, result));
 		}
 	}
 }
 
 impl Drop for Request {
 	fn drop(&mut self) {
-		if let Some(out) = self.out.take() {
-			let _ = out.send(response(
+		if let Some(connection) = self.connection.take() {
+			connection.push(response(
 				&self.id,
 				Err(Error::new(
 					INTERNAL_ERROR,
 					"request dropped without a reply",
 				)),
 			));
+		}
+	}
+}
+
+impl Inner {
+	/// Queue a frame without waiting; a full queue means the other side stopped
+	/// reading, and the connection is closed.
+	fn push(&self, frame: Value) -> bool {
+		match self.out.try_send(frame) {
+			Ok(()) => true,
+			Err(mpsc::error::TrySendError::Full(_)) => {
+				self.close();
+				false
+			}
+			Err(mpsc::error::TrySendError::Closed(_)) => false,
 		}
 	}
 }
@@ -166,23 +189,23 @@ impl Peer {
 	pub fn spawn<A: Adapter>(
 		adapter: A,
 		max_frame: Option<usize>,
-	) -> (Peer, mpsc::UnboundedReceiver<Incoming>) {
+	) -> (Peer, mpsc::Receiver<Incoming>) {
 		let channel = match max_frame {
 			Some(max) => Channel::with_max_frame(adapter, max),
 			None => Channel::new(adapter),
 		};
 		let (mut reader, mut writer) = channel.into_split();
-		let (out, mut outgoing) = mpsc::unbounded_channel::<Value>();
+		let (out, mut outgoing) = mpsc::channel::<Value>(QUEUE);
 		let stop = CancellationToken::new();
 		let inner = Arc::new(Inner {
-			out: out.clone(),
+			out,
 			pending: Mutex::new(Some(HashMap::new())),
 			next: AtomicU64::new(1),
 			closed: AtomicBool::new(false),
 			stop,
 			flushed: CancellationToken::new(),
 		});
-		let (incoming_tx, incoming) = mpsc::unbounded_channel();
+		let (incoming_tx, incoming) = mpsc::channel(QUEUE);
 
 		let stopped = inner.stop.clone();
 		let writer_inner = inner.clone();
@@ -225,7 +248,7 @@ impl Peer {
 				let frame = match frame {
 					Some(Ok(frame)) => frame,
 					Some(Err(error)) => {
-						let _ = out.send(response(
+						reader_inner.push(response(
 							&Value::Null,
 							Err(Error::new(PARSE_ERROR, error.to_string())),
 						));
@@ -233,7 +256,10 @@ impl Peer {
 					}
 					None => break,
 				};
-				dispatch(&reader_inner, &out, &incoming_tx, frame);
+				tokio::select! {
+					() = dispatch(&reader_inner, &incoming_tx, frame) => {}
+					_ = stopped.cancelled() => break,
+				}
 			}
 			reader_inner.close();
 		});
@@ -261,7 +287,7 @@ impl Peer {
 		}
 		let waiting = Waiting { peer: self, id };
 		let request = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-		if self.inner.out.send(request).is_err() {
+		if self.inner.out.send(request).await.is_err() {
 			return Err(Error::closed());
 		}
 		let result = rx.await.unwrap_or_else(|_| Err(Error::closed()));
@@ -269,15 +295,17 @@ impl Peer {
 		result
 	}
 
-	/// Send a notification; nothing comes back.
+	/// Send a notification; nothing comes back. A full queue closes the
+	/// connection and fails the notification.
 	pub fn notify(&self, method: &str, params: Value) -> Result<(), Error> {
-		if self.is_closed() {
+		if self.is_closed()
+			|| !self
+				.inner
+				.push(json!({ "jsonrpc": "2.0", "method": method, "params": params }))
+		{
 			return Err(Error::closed());
 		}
-		self.inner
-			.out
-			.send(json!({ "jsonrpc": "2.0", "method": method, "params": params }))
-			.map_err(|_| Error::closed())
+		Ok(())
 	}
 
 	pub fn is_closed(&self) -> bool {
@@ -323,14 +351,9 @@ impl Drop for Waiting<'_> {
 	}
 }
 
-fn dispatch(
-	inner: &Inner,
-	out: &mpsc::UnboundedSender<Value>,
-	incoming: &mpsc::UnboundedSender<Incoming>,
-	frame: Value,
-) {
+async fn dispatch(inner: &Arc<Inner>, incoming: &mpsc::Sender<Incoming>, frame: Value) {
 	let Value::Object(mut object) = frame else {
-		let _ = out.send(response(
+		inner.push(response(
 			&Value::Null,
 			Err(Error::new(INVALID_REQUEST, "a frame must be an object")),
 		));
@@ -348,13 +371,15 @@ fn dispatch(
 					method,
 					params,
 					id,
-					out: Some(out.clone()),
+					connection: Some(inner.clone()),
 				};
-				// A receiver nobody reads drops the request, which answers it.
-				let _ = incoming.send(Incoming::Request(request));
+				// A receiver that is gone drops the request, which answers it.
+				let _ = incoming.send(Incoming::Request(request)).await;
 			}
 			None => {
-				let _ = incoming.send(Incoming::Notification { method, params });
+				let _ = incoming
+					.send(Incoming::Notification { method, params })
+					.await;
 			}
 		}
 		return;

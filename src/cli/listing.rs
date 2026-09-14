@@ -36,23 +36,41 @@ pub(crate) fn ledger(project: &Project) -> ExitCode {
 	exit(ledger_lines(&ledger))
 }
 
-fn deps(all: &[CartridgeInfo], cartridge: &CartridgeInfo, depth: usize, stack: &mut Vec<String>) {
+/// Who a cartridge's sends reach, recursively: one line per event it defines
+/// or needs and each enabled listener, `?` for a need nobody listens to, and
+/// `(cycle)` where the send comes back to a cartridge already on the path.
+fn sends(
+	all: &[CartridgeInfo],
+	cartridge: &CartridgeInfo,
+	depth: usize,
+	stack: &mut Vec<String>,
+	out: &mut Vec<String>,
+) {
 	let pad = "  ".repeat(depth);
-	for key in &cartridge.needs {
-		let provider = all
+	let mut names: Vec<&String> = cartridge.events.iter().collect();
+	names.extend(
+		cartridge
+			.needs
 			.iter()
-			.find(|p| !p.entry.disabled && p.listen.iter().any(|k| k == key));
-		match provider {
-			None => println!("{pad}{key} <- ?"),
-			Some(p) if stack.contains(&p.entry.id) => {
-				println!("{pad}{key} <- {} (cycle)", p.entry.id)
+			.filter(|n| !cartridge.events.contains(n)),
+	);
+	for key in names {
+		let listeners: Vec<&CartridgeInfo> = all
+			.iter()
+			.filter(|p| !p.entry.disabled && p.listen.iter().any(|k| k == key))
+			.collect();
+		if listeners.is_empty() && cartridge.needs.contains(key) {
+			out.push(format!("{pad}{key} -> ?"));
+		}
+		for listener in listeners {
+			if stack.contains(&listener.entry.id) {
+				out.push(format!("{pad}{key} -> {} (cycle)", listener.entry.id));
+				continue;
 			}
-			Some(p) => {
-				println!("{pad}{key} <- {}", p.entry.id);
-				stack.push(p.entry.id.clone());
-				deps(all, p, depth + 1, stack);
-				stack.pop();
-			}
+			out.push(format!("{pad}{key} -> {}", listener.entry.id));
+			stack.push(listener.entry.id.clone());
+			sends(all, listener, depth + 1, stack, out);
+			stack.pop();
 		}
 	}
 }
@@ -99,7 +117,11 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 			line.push_str(&format!("  error: {note}"));
 		}
 		println!("{line}");
-		deps(cartridges, p, 1, &mut vec![p.entry.id.clone()]);
+		let mut graph = Vec::new();
+		sends(cartridges, p, 1, &mut vec![p.entry.id.clone()], &mut graph);
+		for line in graph {
+			println!("{line}");
+		}
 	}
 	cartridges.iter().filter(|p| p.unread.is_some()).count()
 }
@@ -147,3 +169,7 @@ fn ledger_lines(ledger: &cartridge::ledger::Ledger) -> usize {
 			.filter(|(_, _, bound)| bound.is_clashed())
 			.count()
 }
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/src/cli/listing.rs"]
+mod tests;

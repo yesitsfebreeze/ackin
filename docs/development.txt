@@ -29,7 +29,7 @@ TROUBLESHOOTING
   cartridge follow lifecycle        state changes as they happen
   cartridge follow <id>.error       failures of one cartridge's listeners
   cartridge doctor                  every cartridge's own answer to whether it is healthy
-  cartridge list                    the profile and what each need binds to
+  cartridge list                    the profile and whom each cartridge's sends reach, cycles marked
   cartridge settings <id>           a cartridge's settled configuration
 
 A node that fails to start reports the last lines of its stderr in its error;

@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::transport::cartridge::Directory;
+use crate::transport::cartridge::{Ctx, Directory, Outcome};
 use crate::transport::rpc::{Incoming, Peer};
 use futures::future::BoxFuture;
 use parking_lot::Mutex;
@@ -96,7 +96,9 @@ pub struct Host {
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
 	sockets: PathBuf,
 	host_token: String,
-	tokens: Mutex<HashMap<String, String>>,
+	tokens: Mutex<HashMap<(String, Option<String>), String>>,
+	/// What the base sends events with: the nodes' own send path, as the host.
+	ctx: Ctx,
 	slots: Mutex<Vec<Slot>>,
 	listeners: Mutex<HashMap<String, Vec<String>>>,
 	op: tokio::sync::Mutex<()>,
@@ -129,6 +131,7 @@ impl Host {
 			lua.set_memory_limit(limit)?;
 		}
 		let profile = profile.canonicalize().unwrap_or(profile);
+		let host_token = crate::transport::token();
 		Ok(Arc::new(Self {
 			sockets: socket::run_dir(&profile)?,
 			dir: dir.canonicalize().unwrap_or(dir),
@@ -136,7 +139,11 @@ impl Host {
 			yolo,
 			lua,
 			solo: Mutex::new(None),
-			host_token: crate::transport::token(),
+			ctx: Ctx::new(
+				host_token.clone(),
+				crate::settings::host().startup_timeout(),
+			),
+			host_token,
 			tokens: Mutex::default(),
 			slots: Mutex::default(),
 			listeners: Mutex::default(),
@@ -575,102 +582,80 @@ impl Host {
 			.and_then(|s| s.running.as_ref().map(|r| r.peer.clone()))
 	}
 
-	/// The active listeners of `name`, in composition order.
-	fn listening(&self, name: &str) -> Vec<(String, Peer)> {
-		let ids = self.listeners.lock().get(name).cloned().unwrap_or_default();
-		ids.into_iter()
-			.filter_map(|id| Some((id.clone(), self.peer_of(&id)?)))
-			.collect()
-	}
-
-	fn check(&self, name: &str, data: &Value) -> Result<()> {
-		let schema = {
+	/// The host's sender, its directory brought up to date with what is active,
+	/// once `name` is known to be declared and `data` fits its schema.
+	fn sender(&self, name: &str, data: &Value) -> Result<Ctx> {
+		let directory = {
 			let slots = self.slots.lock();
-			let Some(event) = slots
+			let planned = |s: &&Slot| s.state != State::Failed || s.running.is_some();
+			let plans: Vec<Arc<Plan>> = slots
 				.iter()
-				.filter_map(|s| s.plan.as_ref())
-				.find_map(|p| p.events.get(name))
-			else {
-				return Err(Error::NotProvided(name.to_owned()));
-			};
-			event.schema.clone()
+				.filter(planned)
+				.filter_map(|s| s.plan.clone())
+				.collect();
+			let active: Vec<Arc<Plan>> = slots
+				.iter()
+				.filter(|s| s.state == State::Active)
+				.filter_map(|s| s.plan.clone())
+				.collect();
+			plan::host_directory(self, &active, &plan::catalogue(&plans).0)
 		};
-		if let Some(schema) = schema {
-			let validator = jsonschema::validator_for(&schema)
-				.map_err(|e| Error::Profile(format!("`{name}` has an invalid schema: {e}")))?;
-			let errors: Vec<String> = validator.iter_errors(data).map(|e| e.to_string()).collect();
-			if !errors.is_empty() {
-				return Err(Error::Argument(format!(
-					"`{name}` payload rejected by its schema: {}",
-					errors.join("; ")
-				)));
-			}
+		if !directory.events.contains_key(name) {
+			return Err(Error::NotProvided(name.to_owned()));
 		}
-		Ok(())
+		if self.ctx.directory() != directory {
+			self.ctx.set_directory(directory);
+		}
+		self.ctx.validate(name, data).map_err(Error::Argument)?;
+		Ok(self.ctx.clone())
 	}
 
 	/// Send `name` to one active cartridge and take its answer.
 	pub async fn send_to(&self, id: &str, name: &str, data: Value) -> Result<Value> {
-		self.check(name, &data)?;
-		let peer = self.peer_of(id).ok_or_else(|| Error::Unavailable {
-			key: name.to_owned(),
-			why: format!("`{id}` is not active"),
-		})?;
-		let trace = crate::transport::cartridge::trace()
-			.unwrap_or_else(|| crate::trace::mint().to_string());
-		peer.call(
-			"event",
-			json!({ "name": name, "data": data, "trace": trace }),
-		)
-		.await
-		.map_err(|e| Error::Remote(e.message))
+		let ctx = self.sender(name, &data)?;
+		let outcome = ctx
+			.ask(id, name, data)
+			.await
+			.map_err(|_| Error::Unavailable {
+				key: name.to_owned(),
+				why: format!("`{id}` is not active"),
+			})?;
+		match outcome {
+			Outcome::Answered { data, .. } => Ok(data),
+			Outcome::Declined { .. } => Ok(Value::Null),
+			Outcome::Unavailable { error, .. } => Err(Error::Unavailable {
+				key: name.to_owned(),
+				why: error,
+			}),
+			other => Err(Error::Remote(other.error().unwrap_or_default())),
+		}
 	}
 
 	/// Ask listeners in order; the first non-null answer.
 	pub async fn bail(&self, name: &str, data: Value) -> Result<Option<Value>> {
-		self.check(name, &data)?;
-		let listeners = self.listening(name);
-		if listeners.is_empty() {
+		let ctx = self.sender(name, &data)?;
+		if ctx.events()[name].listeners.is_empty() {
 			return Err(Error::Unavailable {
 				key: name.to_owned(),
 				why: "no active listener".into(),
 			});
 		}
-		for (id, _) in listeners {
-			let answer = self.send_to(&id, name, data.clone()).await?;
-			if !answer.is_null() {
-				return Ok(Some(answer));
-			}
-		}
-		Ok(None)
+		ctx.bail(name, data).await.map_err(Error::Remote)
 	}
 
-	/// Send an event to every active listener; one answer or error per listener.
-	pub async fn emit(
-		&self,
-		name: &str,
-		data: Value,
-	) -> Result<Vec<(String, std::result::Result<Value, String>)>> {
-		self.check(name, &data)?;
-		let listeners = self.listening(name);
-		Ok(
-			futures::future::join_all(listeners.into_iter().map(|(id, peer)| {
-				let data = data.clone();
-				async move {
-					let answer = peer
-						.call("event", json!({ "name": name, "data": data }))
-						.await
-						.map_err(|e| e.message);
-					(id, answer)
-				}
-			}))
-			.await,
-		)
+	/// Send an event to every active listener; one outcome per listener.
+	pub async fn gather(&self, name: &str, data: Value) -> Result<Vec<Outcome>> {
+		let ctx = self.sender(name, &data)?;
+		ctx.gather(name, data).await.map_err(Error::Remote)
 	}
 
 	/// The cartridge a token was issued to.
-	pub(crate) fn known(&self, token: &str) -> bool {
-		self.tokens.lock().values().any(|issued| issued == token)
+	pub(crate) fn caller(&self, token: &str) -> Option<String> {
+		self.tokens
+			.lock()
+			.iter()
+			.find(|((_, to), issued)| to.is_none() && *issued == token)
+			.map(|((id, _), _)| id.clone())
 	}
 
 	/// Enabled cartridges that are running, with their folders.
@@ -754,7 +739,7 @@ impl Host {
 	}
 
 	/// A new connection to an active cartridge, authenticated as the host.
-	pub async fn open(&self, id: &str) -> Result<(Peer, mpsc::UnboundedReceiver<Incoming>)> {
+	pub async fn open(&self, id: &str) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
 		if self.peer_of(id).is_none() {
 			return Err(Error::Unavailable {
 				key: id.to_owned(),
@@ -768,7 +753,7 @@ impl Host {
 pub(crate) async fn connect(
 	socket: &Path,
 	token: &str,
-) -> Result<(Peer, mpsc::UnboundedReceiver<Incoming>)> {
+) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
 	let adapter = crate::transport::typed::connect(&crate::transport::typed::Endpoint::Unix(
 		socket.to_path_buf(),
 	))

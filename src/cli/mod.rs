@@ -93,7 +93,7 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 		Command::Send { event, data } => {
 			client::ask(
 				project,
-				"emit",
+				"gather",
 				json!({ "name": event, "data": json_arg(&data)? }),
 			)
 			.await

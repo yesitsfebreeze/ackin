@@ -7,7 +7,7 @@
 //!   snapshot                      -> {host_pid, profile, cartridge_root, entries}
 //!   cartridges                    -> [{id, dir, generation, listen}]
 //!   bail {name, data}             -> the first listener's answer, or null
-//!   emit {name, data}             -> [{from, data} | {from, error}]
+//!   gather {name, data}           -> [{outcome, from, data? | error?}]
 //!   reload {cartridge?}           -> {}
 //!   subscribe {channel, since?}   -> {}; `lifecycle`, or `<cartridge>.<channel>`
 //!   stop                          -> {}
@@ -276,22 +276,10 @@ async fn answer(
 					.map_err(application),
 			);
 		}
-		"emit" => {
+		"gather" => {
 			let name = params["name"].as_str().unwrap_or_default().to_owned();
-			let result = host
-				.emit(&name, params["data"].clone())
-				.await
-				.map(|answers| {
-					let rows: Vec<Value> = answers
-						.into_iter()
-						.map(|(from, answer)| match answer {
-							Ok(data) => json!({ "from": from, "data": data }),
-							Err(error) => json!({ "from": from, "error": error }),
-						})
-						.collect();
-					json!(rows)
-				});
-			request.reply(result.map_err(application));
+			let result = host.gather(&name, params["data"].clone()).await;
+			request.reply(result.map(|outcomes| json!(outcomes)).map_err(application));
 		}
 		"reload" => {
 			let result = match params["cartridge"].as_str() {
@@ -364,7 +352,7 @@ async fn follow(host: &Arc<Host>, peer: &Peer, channel: &str, since: Option<u64>
 }
 
 /// A connection to the host serving `profile`.
-pub async fn client(profile: &Path) -> Result<(Peer, mpsc::UnboundedReceiver<Incoming>)> {
+pub async fn client(profile: &Path) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
 	let token = std::fs::read_to_string(token_path(profile)?).map_err(|e| Error::Unavailable {
 		key: "host".into(),
 		why: format!("no base serves {}: {e}", profile.display()),

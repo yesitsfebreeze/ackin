@@ -4,19 +4,24 @@ Everything between cartridges is an event. A cartridge declares the events it
 defines, the events it listens to and the events it needs a listener for, in
 its cartridge.json. Its init.lua registers listeners with the injected
 `cartridge` global and sends events through it. The base validates every
-declaration before a cartridge starts and every payload before it is sent.
+declaration before a cartridge starts; every payload is checked when it is
+sent and again when it arrives.
 
 DECLARATION
 
-  "events": { "session.start": { "description": "…", "schema": { …JSON Schema… } } }
+  "events": { "session.start": { "description": "…", "schema": { …JSON Schema… }, "timeout_ms": 5000 } }
   "listen": ["tool.read", "session.start"]
   "needs":  ["memory.query"]
 
-  events   what this cartridge defines: the name, one line of purpose, and a
-           JSON Schema for the payload. One owner per event.
+  events   what this cartridge defines: the name, one line of purpose, a
+           JSON Schema for the payload, and how long a sender waits for each
+           listener (`timeout_ms`; absent, the base's `event_timeout_ms`).
+           One owner per event.
   listen   what this cartridge listens to. Its listener's return value is the
            answer; nil is no answer.
   needs    events this cartridge sends that must have a listener before it starts.
+
+A cartridge may send exactly the events it defines and the events it needs.
 
 A tool is an event its owner listens to: fs declares `tool.read` with its input
 schema and listens to it; anyone sends `tool.read` and takes the answer.
@@ -31,18 +36,31 @@ listener; `cartridge status` names what it waits for.
 
 Before an event is sent, its payload is checked against the schema; a payload
 the schema rejects is refused at the sender with the failing field, and no
-listener sees it. An event nobody declares is refused the same way.
+listener sees it. An event nobody declares, or one the sender neither defines
+nor needs, is refused the same way. The listener's node checks both again on
+arrival and refuses what fails, whatever the sender did.
+
+OUTCOMES
+
+Every send ends, for each listener, in one outcome:
+
+  answered     the listener returned a value
+  declined     it returned nil
+  failed       it raised an error, or refused the event
+  timed_out    no answer within the event's timeout_ms
+  unavailable  it could not be reached
 
 THE LUA GLOBAL
 
 The base injects `cartridge` into every init.lua:
 
   cartridge.listen(name, fn)      listen; name must be in `listen`. fn(data) returns the answer
-  cartridge.emit(name, data)      send to every listener, do not wait
-  cartridge.bail(name, data)      send in order, take the first non-nil answer
-  cartridge.parallel(name, data)  send to all, wait, error if any failed
-  cartridge.gather(name, data, [timeout_ms])
-                                  every non-nil answer as {{from=, data=}, …}
+  cartridge.emit(name, data)      send to every listener, do not wait; outcomes other
+                                  than answered and declined go to this cartridge's `error` channel
+  cartridge.bail(name, data)      send in order: the first answer wins, a decline asks
+                                  the next, any other outcome raises
+  cartridge.gather(name, data)    send to all, wait: one {outcome=, from=, data=|error=} per
+                                  listener, in profile order
   cartridge.notify(name, data)    emit, and publish on the channel `name`
   cartridge.publish(channel, data)
   cartridge.subscribe(cartridge, channel, fn)
@@ -64,6 +82,12 @@ parallel, gather, host, subscribe, a helper's :request) yields, so a node
 serves other events while one listener waits. Where Lua cannot yield, from a
 native module's Rust code or inside a sort comparator, the same call blocks
 the node until it returns; keep long waits in init.lua.
+
+Every listener, subscriber, line handler, disposer and init.lua itself runs as
+a coroutine. `bail`, `gather`, `subscribe`, `host` and a helper's `request` and
+`send` yield while they wait, so one node serves many events at once, and an
+event that comes back to its sender is answered while the sender's handler
+waits.
 
 NATIVE MODULES
 
@@ -94,30 +118,40 @@ in flight. A line with an `id` answers the `:request` with that id; any other
 line reaches the `:on_line` handler (or the pipe's `fn`) in order, one at a
 time. init.lua loads it with
 `cartridge.load("<name>")` from the cartridge folder (or target/{release,debug}
-while developing) and wires its functions to events.
+while developing) and wires its functions to events. Lua cannot yield across a
+native call, so a module's own `bail`, `gather`, `subscribe` or `host` blocks
+its node until it returns; long waits belong in Lua or on the module's threads.
 
 STREAMS
 
 A channel belongs to the cartridge that publishes it. The publisher keeps a
 bounded replay buffer and serves `subscribe` with `since`; a subscription
-survives the publisher restarting. The base serves `lifecycle` on the host
+survives the publisher restarting. A subscriber that falls a full queue behind
+is disconnected and resubscribes from the last envelope it took. The base serves `lifecycle` on the host
 socket: state transitions and failures of every cartridge.
 
 NODES
 
 Each cartridge runs as a node: the base binary re-run on that init.lua, in its
 own sandboxed process, serving JSON-RPC 2.0 on its own local socket. The wire
-is internal: the base hands every node a directory of the event catalogue with
-the listeners' sockets and tokens, and updates it whenever the composition
-changes. Each node has one token; senders present it, and the node presents it
-to the base. A node answers `event`, `subscribe`, `unsubscribe`, and for the
-base `apply`, `directory` and `dispose`. A reload is a stop and a start on the
-same socket.
+is internal: the base hands every node a directory, and updates it whenever the
+composition changes. The directory describes every event, but carries sockets
+and tokens only for the listeners of events the node may send. Tokens are
+minted per edge: one for each sender and listener pair, and one for the node
+and the base. A node also receives, for each token it accepts, the sender and
+the events it may send there, so a token grants nothing at any other node and
+nothing beyond its events. A node answers `event`, `subscribe`, `unsubscribe`,
+and for the base `apply`, `directory` and `dispose`. A reload is a stop and a
+start on the same socket.
+
+Queues are bounded. A connection runs at most 64 requests at once and queues
+1024 frames each way; a sender that outruns its listener waits, and a peer that
+stops reading is disconnected.
 
 CLI
 
   cartridge run <event> '<json>'     start the profile, send, print the first answer, stop
   cartridge call <event> '<json>'    the same on the running host
-  cartridge send <event> '<json>'    every listener's answer on the running host
+  cartridge send <event> '<json>'    every listener's outcome on the running host
   cartridge follow lifecycle | <cartridge>.<channel>
   cartridge status | reload [<id>] | stop

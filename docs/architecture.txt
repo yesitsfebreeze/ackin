@@ -67,8 +67,11 @@ Each base run has a directory under `$XDG_RUNTIME_DIR/cartridge` or
 `/tmp/cartridge-<uid>` holding one socket per node, stable for the run, and
 `host.sock`, the base's own socket for nodes and the command line. A base that
 serves a project links `<project tag>.sock` to it and writes its token beside
-it, 0600, so the command line finds it. Each node has one token, minted by the
-base, for the connections it accepts and the questions it asks the base.
+it, 0600, so the command line finds it. The base mints a token per edge: one
+for each cartridge that may send an event to a listener, and one for each node
+to ask the base. A listener's node knows which events each token it accepts may
+send. The base sends its own events (`run`, `call`, `send`, `verify`) through
+the same code the nodes send with, to active listeners only.
 
 RELOAD
 

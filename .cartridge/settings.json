@@ -16,6 +16,13 @@
       "max": 3600,
       "doc": "How long a cartridge has to serve and apply, and how long a cartridge retries reaching another."
     },
+    "event_timeout_ms": {
+      "type": "integer",
+      "default": 60000,
+      "min": 1,
+      "max": 86400000,
+      "doc": "How long a sender waits for each listener of an event that declares no `timeout_ms`."
+    },
     "shutdown_timeout_secs": {
       "type": "integer",
       "default": 15,

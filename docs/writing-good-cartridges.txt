@@ -17,8 +17,11 @@ Pick the send by what you do with the answers:
 
   emit      nothing; fire and forget
   bail      the first answer; the listeners are alternatives, in profile order
-  parallel  none, but every listener must succeed
-  gather    all of them, attributed
+  gather    every listener's outcome, attributed: answered, declined, failed,
+            timed_out or unavailable
+
+Give an event that does slow work a `timeout_ms` that fits it; a sender stops
+waiting for a listener at that deadline.
 
 An optional feature with several possible providers is an event prefix in
 `needs` (`"tool.*"`): every event with that prefix another enabled cartridge

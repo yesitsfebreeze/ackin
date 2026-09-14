@@ -17,8 +17,10 @@ cartridge.listen("session.start", function(data) fs.watch(data.cwd) end)
 Everything between cartridges is an event. `cartridge.json` declares the
 events a cartridge defines (with a JSON Schema), listens to and needs. The base
 refuses, before a cartridge starts, a subscription to an event nobody declares,
-and refuses, before it is sent, a payload its schema rejects. Each cartridge
-runs as its own sandboxed node; events go straight from sender to listener.
+and refuses a payload its schema rejects both when it is sent and when it
+arrives. A cartridge sends only the events it defines or needs, over a token
+minted for that one sender and listener. Each cartridge runs as its own
+sandboxed node; events go straight from sender to listener.
 
 ## Status
 
@@ -32,9 +34,11 @@ Early (`0.1.0`). Interfaces change without notice.
 - **Profile**: `.cartridge/init.lua` lists the cartridges a project runs and
   `.cartridge/config.lua` configures them. Installed cartridges not listed
   there are known but not started.
-- **Events**: `emit`, `bail`, `parallel` and `gather` send an event to its
-  listeners and differ in what they do with the answers. A tool is an event
-  its owner listens to.
+- **Events**: `emit`, `bail` and `gather` send an event to its listeners and
+  differ in what they do with the answers. Each listener's outcome is answered,
+  declined, failed, timed out or unavailable, within the event's deadline.
+  Handlers run as coroutines, so a node serves many events at once. A tool is
+  an event its owner listens to.
 - **Streams**: a cartridge publishes on named channels and keeps a replay
   buffer; others subscribe.
 - **Settings**: every tunable value is declared, then settled in layers: the
@@ -57,11 +61,11 @@ cartridge doctor                  # ask every composed cartridge whether it is h
 cartridge run <event> '<json>'    # start the profile, send, print the first answer, stop
 cartridge daemon                  # start the profile and keep it running
 cartridge call <event> '<json>'   # send on the running base, print the first answer
-cartridge send <event> '<json>'   # send on the running base, print every answer
+cartridge send <event> '<json>'   # send on the running base, print every listener's outcome
 cartridge follow <channel>        # print a channel: lifecycle, or <cartridge>.<channel>
 cartridge status                  # every cartridge and its state
 cartridge reload [<cartridge>]    # reload the profile, or restart one cartridge
-cartridge list                    # the profile and what each need binds to
+cartridge list                    # the profile and whom each cartridge's sends reach, cycles marked
 cartridge settings [<id>]         # every setting and the file that settled it
 cartridge verify [<cartridge>]    # send the contracts cartridges declare
 cartridge help [<address>]        # the documentation of the base and every cartridge

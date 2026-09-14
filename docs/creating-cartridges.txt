@@ -91,8 +91,9 @@ A module function blocks the whole node while it runs, so a wait on the base
 (a bail to another cartridge) belongs in init.lua, where it yields: the module
 builds the request, the listener bails, the module shapes the answer. A
 cartridge that does long work keeps its own threads or runtime inside the
-module. Those threads never call into Lua: they write protocol lines to a
-FIFO from `cartridge.pipe()` in init.lua, and the node serves them.
+module, or waits in Lua, where a send yields. Those threads never call into
+Lua: they write protocol lines to a FIFO from `cartridge.pipe()` in init.lua,
+and the node serves them.
 
 A HELPER PROGRAM
 

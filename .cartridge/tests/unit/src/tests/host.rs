@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 use super::{built, write};
 use crate::host::{Host, State};
+use crate::transport::cartridge::Outcome;
 
 /// A cartridge folder: its manifest and its `init.lua`.
 fn cartridge(dir: &Path, id: &str, manifest: Value, init: &str) {
@@ -170,7 +171,7 @@ async fn a_node_refuses_to_listen_to_what_it_did_not_declare() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn gather_parallel_and_emit_reach_every_listener() {
+async fn gather_and_emit_reach_every_listener() {
 	let dir = tempfile::tempdir().unwrap();
 	for id in ["a", "b"] {
 		cartridge(
@@ -188,22 +189,155 @@ async fn gather_parallel_and_emit_reach_every_listener() {
 		json!({"name": "asker", "entry": "init.lua", "events": {"ping": {}, "ask": {}}, "listen": ["ask"]}),
 		r#"cartridge.listen("ask", function(data)
 			local all = cartridge.gather("ping", data)
-			cartridge.parallel("ping", data)
 			cartridge.emit("ping", data)
-			return { count = #all, first = all[1].from, second = all[2].from }
+			return { count = #all, first = all[1].from, second = all[2].from, outcome = all[1].outcome }
 		end)"#,
 	);
 	profile(dir.path(), &["a", "b", "asker"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(
 		host.bail("ask", json!(1)).await.unwrap(),
-		Some(json!({"count": 2, "first": "a", "second": "b"}))
+		Some(json!({"count": 2, "first": "a", "second": "b", "outcome": "answered"}))
 	);
-	let answers = host.emit("ping", json!(2)).await.unwrap();
+	let answers = host.gather("ping", json!(2)).await.unwrap();
 	assert_eq!(answers.len(), 2);
 	assert_eq!(
 		answers[0],
-		("a".to_owned(), Ok(json!({"from": "a", "data": 2})))
+		Outcome::Answered {
+			from: "a".into(),
+			data: json!({"from": "a", "data": 2})
+		}
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cartridge_sends_only_what_it_defines_or_needs() {
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	cartridge(
+		dir.path(),
+		"stranger",
+		json!({"name": "stranger", "entry": "init.lua", "events": {"try": {}}, "listen": ["try"]}),
+		r#"cartridge.listen("try", function(args)
+			local ok, error = pcall(cartridge.bail, "greet", args)
+			return tostring(error)
+		end)"#,
+	);
+	profile(dir.path(), &["greeter", "stranger"]);
+	let host = boot(dir.path()).await;
+	let answer = host
+		.bail("try", json!({"name": "x"}))
+		.await
+		.unwrap()
+		.unwrap();
+	assert!(
+		answer.as_str().unwrap().contains("defines or needs"),
+		"{answer}"
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_call_that_comes_back_into_its_sender_is_answered() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"left",
+		json!({"name": "left", "entry": "init.lua",
+			"events": {"go": {}, "ping": {}}, "listen": ["go", "pong"]}),
+		r#"cartridge.listen("go", function() return cartridge.bail("ping", {}) end)
+		cartridge.listen("pong", function() return "pong from left" end)"#,
+	);
+	cartridge(
+		dir.path(),
+		"right",
+		json!({"name": "right", "entry": "init.lua",
+			"events": {"pong": {}}, "listen": ["ping"]}),
+		r#"cartridge.listen("ping", function() return cartridge.bail("pong", {}) end)"#,
+	);
+	profile(dir.path(), &["left", "right"]);
+	let host = boot(dir.path()).await;
+	let answer = tokio::time::timeout(Duration::from_secs(5), host.bail("go", json!(null)))
+		.await
+		.expect("left serves pong while its go handler waits");
+	assert_eq!(answer.unwrap(), Some(json!("pong from left")));
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hung_listener_times_out_and_its_node_keeps_serving() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"stuck",
+		json!({"name": "stuck", "entry": "init.lua",
+			"events": {"hang": {"timeout_ms": 300}, "quick": {}},
+			"listen": ["hang", "quick"],
+			"grant": {"exec": ["/bin/sleep"]}}),
+		r#"local sleeper = cartridge.spawn({"/bin/sleep", "60"})
+		cartridge.listen("hang", function() return sleeper:request({}) end)
+		cartridge.listen("quick", function() return "here" end)"#,
+	);
+	profile(dir.path(), &["stuck"]);
+	let host = boot(dir.path()).await;
+	let hung = tokio::spawn({
+		let host = host.clone();
+		async move { host.gather("hang", json!(null)).await }
+	});
+	tokio::time::sleep(Duration::from_millis(50)).await;
+	let quick = tokio::time::timeout(Duration::from_millis(200), host.bail("quick", json!(null)))
+		.await
+		.expect("the node answers while another handler waits");
+	assert_eq!(quick.unwrap(), Some(json!("here")));
+	assert_eq!(
+		hung.await.unwrap().unwrap(),
+		vec![Outcome::TimedOut {
+			from: "stuck".into()
+		}]
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_waiting_cartridge_starts_when_the_profile_adds_its_listener() {
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	cartridge(
+		dir.path(),
+		"welcome",
+		json!({"name": "welcome", "entry": "init.lua", "events": {"welcome": {}}, "needs": ["greet"], "listen": ["welcome"]}),
+		r#"cartridge.listen("welcome", function(args) return cartridge.bail("greet", args) end)"#,
+	);
+	cartridge(
+		dir.path(),
+		"shadow",
+		json!({"name": "shadow", "entry": "init.lua", "events": {"greet": {}}}),
+		"",
+	);
+	profile(dir.path(), &["shadow", "welcome"]);
+	let host = boot(dir.path()).await;
+	assert_eq!(status(&host, "welcome").state, State::Waiting);
+
+	profile(dir.path(), &["greeter", "welcome"]);
+	host.reconcile().await.unwrap();
+	assert_eq!(status(&host, "shadow").state, State::Disabled);
+	assert_eq!(status(&host, "welcome").state, State::Active);
+	assert_eq!(
+		host.bail("welcome", json!({"name": "late"})).await.unwrap(),
+		Some(json!("hello late"))
+	);
+
+	profile(dir.path(), &["welcome"]);
+	host.reconcile().await.unwrap();
+	assert_eq!(status(&host, "greeter").state, State::Disabled);
+	let error = host
+		.bail("welcome", json!({"name": "gone"}))
+		.await
+		.unwrap_err();
+	assert!(
+		error.contains("defines or needs") || error.contains("not an event"),
+		"{error}"
 	);
 	host.stop().await;
 }
