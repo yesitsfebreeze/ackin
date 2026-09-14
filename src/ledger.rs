@@ -21,13 +21,14 @@ pub struct Installed {
 	/// The document's own `name`. Empty when the document would not read.
 	pub name: String,
 	/// Keys offered, private to this cartridge's own subtree. A nested
-	/// cartridge's `provide` is seen by every lookup made from inside its
+	/// cartridge's `on` is seen by every lookup made from inside its
 	/// parent's subtree — the walk passes the parent's scope — and by nothing
 	/// outside the parent unless a parent passes it on: that is the settled
 	/// reading of "inner cartridges are hidden until passed on", and
 	/// the-manifest's "satisfies its parent's needs and nothing else" names
 	/// the graph outside the parent, not the siblings within it.
-	pub provide: Vec<String>,
+	/// Events this cartridge listens to: what a `needs` of another resolves to.
+	pub on: Vec<String>,
 	/// Keys asked for, resolved outward from here by [`Ledger::resolve`].
 	pub needs: Vec<String>,
 	/// Why the document would not read, when it would not.
@@ -41,13 +42,13 @@ impl Installed {
 	}
 
 	pub fn offers(&self) -> impl Iterator<Item = &String> {
-		self.provide.iter()
+		self.on.iter()
 	}
 }
 
 /// What a lookup found, and where the walk stopped.
 pub enum Bound<'a> {
-	/// Exactly one entry of the nearest offering scope provides it.
+	/// Exactly one entry of the nearest offering scope listens to it.
 	One(&'a Installed),
 	/// Two or more entries of *one* scope offer the key, in path order. The
 	/// ask has no answer until the tree names them differently.
@@ -135,12 +136,12 @@ impl Ledger {
 	/// does the search step outward, one containing subtree at a time. A key one
 	/// subtree over is invisible however identical its name, because it was never
 	/// offered into any scope this walk passes through. The one visible side of
-	/// that privacy: a nested cartridge's `provide` is a candidate for every
+	/// that privacy: a nested cartridge's `on` is a candidate for every
 	/// lookup whose walk passes its parent's scope, so everything inside the
 	/// parent's subtree — the parent, the other children, their descendants —
 	/// sees it, and nothing outside the parent does until a parent passes it on.
 	///
-	/// The settled rule — two cartridges may provide the same key without
+	/// The settled rule — two cartridges may listen to the same event without
 	/// colliding — holds across scopes and does not hold inside one. Where two
 	/// entries of the *same* scope offer the key the walk stops and says so
 	/// ([`Bound::Clashed`]) rather than quietly taking the first in path order:
@@ -217,7 +218,7 @@ fn read_entry(folder: &Path, path: String) -> Installed {
 			path,
 			dir: folder.to_path_buf(),
 			name: doc.name,
-			provide: doc.provide,
+			on: doc.on,
 			needs: doc.needs,
 			unread: None,
 		},
@@ -225,7 +226,7 @@ fn read_entry(folder: &Path, path: String) -> Installed {
 			path,
 			dir: folder.to_path_buf(),
 			name: String::new(),
-			provide: Vec::new(),
+			on: Vec::new(),
 			needs: Vec::new(),
 			unread: Some(e.to_string()),
 		},

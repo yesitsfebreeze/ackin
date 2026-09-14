@@ -98,24 +98,21 @@ impl Host {
 		Ok(entries)
 	}
 
-	/// `inject = {"tool.*"}` names every key with that prefix the other enabled
-	/// entries provide.
+	/// `inject = {"tool.*"}` names every declared event with that prefix another
+	/// enabled entry listens to.
 	fn expand(self: &Arc<Self>, entries: &mut [Entry]) -> Result<()> {
 		let globbed = |entry: &Entry| entry.inject.iter().any(|key| key.ends_with('*'));
 		if !entries.iter().any(globbed) {
 			return Ok(());
 		}
-		let provided: Vec<(String, Vec<String>)> = entries
+		let listened: Vec<(String, Vec<String>)> = entries
 			.iter()
 			.filter(|entry| !entry.disabled)
 			.map(|entry| {
 				let mut exact = entry.clone();
 				exact.inject.retain(|key| !key.ends_with('*'));
-				let provide = self
-					.plan(&exact)
-					.map(|plan| plan.provide)
-					.unwrap_or_default();
-				(entry.id.clone(), provide)
+				let on = self.plan(&exact).map(|plan| plan.on).unwrap_or_default();
+				(entry.id.clone(), on)
 			})
 			.collect();
 		for entry in entries.iter_mut().filter(|entry| globbed(entry)) {
@@ -133,10 +130,10 @@ impl Host {
 						entry.id
 					)));
 				}
-				let mut matched: Vec<String> = provided
+				let mut matched: Vec<String> = listened
 					.iter()
 					.filter(|(id, _)| *id != entry.id)
-					.flat_map(|(_, provide)| provide.iter())
+					.flat_map(|(_, on)| on.iter())
 					.filter(|key| key.starts_with(prefix))
 					.cloned()
 					.collect();
@@ -193,11 +190,16 @@ impl Host {
 					Ok(grant) => (Some(grant), None),
 					Err(e) => (None, Some(e.to_string())),
 				};
-				let (needs, provide, on, error) = if entry.disabled {
+				let (needs, events, on, error) = if entry.disabled {
 					(Vec::new(), Vec::new(), Vec::new(), None)
 				} else {
 					match self.plan(&entry) {
-						Ok(plan) => (plan.needs, plan.provide, plan.on, None),
+						Ok(plan) => (
+							plan.needs,
+							plan.events.keys().cloned().collect(),
+							plan.on,
+							None,
+						),
 						Err(e) => {
 							let e = unread.is_none().then(|| e.to_string());
 							(Vec::new(), Vec::new(), Vec::new(), e)
@@ -207,7 +209,7 @@ impl Host {
 				CartridgeInfo {
 					entry,
 					needs,
-					provide,
+					events,
 					on,
 					grant,
 					unread,

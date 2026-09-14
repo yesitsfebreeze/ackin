@@ -1,6 +1,6 @@
 //! The Lua interpreter every entry and configuration file runs in.
 
-use mlua::{Lua, LuaOptions, LuaSerdeExt, StdLib, Table};
+use mlua::{Lua, LuaOptions, StdLib, Table};
 
 /// The `os` functions a cartridge keeps: the clock and the environment.
 const OS_KEPT: &[&str] = &["clock", "date", "difftime", "getenv", "time"];
@@ -25,49 +25,7 @@ pub fn interpreter() -> mlua::Result<Lua> {
 	for name in BASE_DROPPED {
 		globals.set(*name, mlua::Value::Nil)?;
 	}
-	install_globals(&lua)?;
 	Ok(lua)
-}
-
-/// What `cartridge.process(command, {inject = {...}})` returns.
-pub(crate) struct Process {
-	pub(crate) command: Vec<String>,
-	pub(crate) inject: Vec<String>,
-}
-
-impl mlua::UserData for Process {}
-
-fn install_globals(lua: &Lua) -> mlua::Result<()> {
-	let cartridge = lua.create_table()?;
-	cartridge.set(
-		"process",
-		lua.create_function(|lua, (command, options): (mlua::Value, Option<Table>)| {
-			let command = match command {
-				mlua::Value::String(s) => {
-					s.to_str()?.split_whitespace().map(str::to_owned).collect()
-				}
-				value => lua.from_value::<Vec<String>>(value)?,
-			};
-			if command.first().is_none_or(String::is_empty) {
-				return Err(mlua::Error::RuntimeError(
-					"cartridge.process needs a nonempty command".into(),
-				));
-			}
-			let inject = match options {
-				Some(options) => match options.get::<mlua::Value>("inject")? {
-					mlua::Value::Nil => Vec::new(),
-					value => lua.from_value::<Vec<String>>(value)?,
-				},
-				None => Vec::new(),
-			};
-			Ok(Process { command, inject })
-		})?,
-	)?;
-	cartridge.set(
-		"trace",
-		lua.create_function(|_, ()| Ok(transport::cartridge::trace()))?,
-	)?;
-	lua.globals().set("cartridge", cartridge)
 }
 
 #[cfg(test)]

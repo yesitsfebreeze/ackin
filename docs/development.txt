@@ -7,21 +7,21 @@ BUILD AND TEST
   cargo clippy --workspace --all-targets
   cargo fmt --all
 
-The host tests start real cartridges: Lua cartridges, a Rust process cartridge
-built from .cartridge/tests/unit/src/tests/fixtures/echo_fixture.rs, and, when
-Bun is installed, a TypeScript cartridge using src/transport/wire.ts. Process
-cartridges run inside the sandbox, so the tests exercise it too.
+The host tests start real nodes from the built `cartridge` binary: Lua
+cartridges, a Rust cartridge as a native module built from
+.cartridge/tests/unit/src/tests/fixtures/native, and a helper program started
+with `cartridge.spawn`. Nodes run inside the sandbox, so the tests exercise it too.
 
 RUNNING
 
-  cartridge --dir <cartridge root> run <key> '<json>'
+  cartridge --dir <cartridge root> run <event> '<json>'
   cartridge --dir <cartridge root> daemon
 
 The profile is the nearest .cartridge/init.lua at or above the working
 directory. `cartridge socket` prints the project's host socket; `cartridge
 status`, `call`, `send`, `follow`, `reload` and `stop` talk to the host serving it.
-`cartridge mcp` serves the `mcp` cartridge over this terminal's stdio, for an
-MCP client such as `claude mcp add cartridge -- cartridge mcp`.
+`cartridge mcp` hands this terminal's stdio to the cartridge listening to `mcp`,
+for an MCP client such as `claude mcp add cartridge -- cartridge mcp`.
 
 TROUBLESHOOTING
 
@@ -31,8 +31,8 @@ TROUBLESHOOTING
   cartridge list                    the profile and what each need binds to
   cartridge settings <id>           a cartridge's settled configuration
 
-A process cartridge that fails to start reports the last lines of its stderr in
-its error. Everything a cartridge writes to stderr goes to the diagnostics file
+A node that fails to start reports the last lines of its stderr in its error;
+a cartridge refused at planning says which event it names that nobody declares. Everything a cartridge writes to stderr goes to the diagnostics file
 named by CARTRIDGE_DIAGNOSTICS; CARTRIDGE_LOG selects the host's own log level.
 
 A cartridge denied by the sandbox usually fails with "Operation not permitted"

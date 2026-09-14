@@ -150,8 +150,9 @@ async fn stdio(host: Arc<Host>) -> Result<Value> {
 		let (host, replies) = (host.clone(), replies.clone());
 		serving.spawn(async move {
 			let result = host
-				.call("mcp", json!({ "op": "message", "line": line }))
-				.await;
+				.bail("mcp", json!({ "op": "message", "line": line }))
+				.await
+				.map(|answer| answer.unwrap_or(Value::Null));
 			if let Some(reply) = mcp_bridge_reply(&line, result) {
 				let _ = replies.send(format!("{reply}\n")).await;
 			}

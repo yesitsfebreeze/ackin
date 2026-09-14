@@ -1,21 +1,21 @@
 # Cartridge: guide for models
 
-Cartridge is a host that runs programs as cartridges and wires them together
-over local JSON-RPC sockets. Start with `cartridge help`: it lists the host and
-every installed cartridge, and `cartridge help <id>` prints one cartridge's
-declarations and documents. Then read what the task needs:
+Cartridge is a base that runs programs as cartridges and wires them together
+with events. Start with `cartridge help`: it lists the base and every installed
+cartridge, and `cartridge help <id>` prints one cartridge's declarations and
+documents. Then read what the task needs:
 
-- [Architecture](docs/architecture.txt): what the host does, lifecycle, sockets,
-  tokens, sandbox, reload.
-- [Transport](docs/transport.txt): the protocol, method by method. A cartridge in
-  any language implements this.
-- [Creating cartridges](docs/creating-cartridges.txt): a Lua cartridge, a process
-  cartridge in Rust or TypeScript, manifest fields, registration, contracts.
-- [Writing good cartridges](docs/writing-good-cartridges.txt): needs versus
-  events, isolation, what belongs in a cartridge.
+- [Transport](docs/transport.txt): the event model, the declarations, the checks
+  the base makes, and the `cartridge` global every init.lua gets.
+- [Creating cartridges](docs/creating-cartridges.txt): a Lua cartridge, a Rust
+  cartridge as a native module, a helper program, manifest fields, contracts.
+- [Architecture](docs/architecture.txt): what the base does, lifecycle, nodes,
+  sandbox, reload.
+- [Writing good cartridges](docs/writing-good-cartridges.txt): defining, listening
+  and needing events; schemas; isolation.
 - [Settings](docs/settings.txt): declared settings and the layers that settle them.
-- [Development](docs/development.txt): building, testing and troubleshooting the host.
+- [Development](docs/development.txt): building, testing and troubleshooting the base.
 
-`cartridge.json` is the declaration: `provide`, `needs`, `on`, `grant`,
+`cartridge.json` is the whole declaration: `events`, `on`, `needs`, `grant`,
 `settings`, contracts (`selftest`, `integration`). Nothing is declared anywhere
 else, and nothing is read by running the cartridge.

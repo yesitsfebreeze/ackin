@@ -24,7 +24,7 @@ impl Host {
 		.is_ok()
 	}
 
-	/// Start the profile, call `key`, hand the answer to `then`, stop everything.
+	/// Start the profile, send `key` and take the first answer, hand it to `then`, stop everything.
 	pub async fn run_then<F, Fut>(
 		self: &Arc<Self>,
 		key: &str,
@@ -40,21 +40,16 @@ impl Host {
 			self.reconcile().await?;
 			watcher = Some(self.watch()?);
 			self.settled(crate::settings::host().verify_timeout()).await;
-			let provider = self.provider(key).ok_or_else(|| Error::Unavailable {
-				key: key.to_owned(),
-				why: "nothing in the profile provides it".into(),
-			})?;
-			if !self
-				.status()
-				.iter()
-				.any(|s| s.id == provider && s.state == State::Active)
-			{
-				return Err(Error::Unavailable {
-					key: key.to_owned(),
-					why: stalled(&self.status()).join("; "),
-				});
-			}
-			let reply = self.call(key, args).await?;
+			let reply = match self.bail(key, args).await {
+				Ok(answer) => answer.unwrap_or(serde_json::Value::Null),
+				Err(Error::Unavailable { key, .. }) => {
+					return Err(Error::Unavailable {
+						key,
+						why: stalled(&self.status()).join("; "),
+					})
+				}
+				Err(error) => return Err(error),
+			};
 			then(reply).await
 		}
 		.await;
@@ -182,7 +177,7 @@ impl Host {
 			));
 		}
 		for (id, obligation, key) in &contracts {
-			match self.call(key, serde_json::Value::Null).await {
+			match self.send_to(id, key, serde_json::Value::Null).await {
 				Ok(serde_json::Value::Bool(false)) => {
 					failures.push(format!("{id} {obligation} `{key}` returned false"))
 				}

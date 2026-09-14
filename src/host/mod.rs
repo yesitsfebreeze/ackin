@@ -2,7 +2,6 @@
 //! each its directory, and stops them. Calls and events between cartridges do
 //! not pass through it.
 
-mod lua;
 mod plan;
 mod process;
 mod run;
@@ -13,18 +12,19 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::transport::cartridge::Directory;
+use crate::transport::rpc::{Incoming, Peer};
 use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
-use transport::cartridge::{Directory, Scope};
-use transport::rpc::{Incoming, Peer};
 
 use crate::error::{Error, Result};
 use crate::loader::{Entry, Source};
 
-pub use plan::{executable, Kind, Plan};
+pub use plan::Plan;
+pub use process::NODE_BIN_ENV;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -45,7 +45,7 @@ pub struct Status {
 	pub error: Option<String>,
 	#[serde(skip_serializing_if = "Vec::is_empty")]
 	pub waiting: Vec<String>,
-	pub provide: Vec<String>,
+	pub events: Vec<String>,
 	pub needs: Vec<String>,
 	pub on: Vec<String>,
 	pub socket: PathBuf,
@@ -96,9 +96,9 @@ pub struct Host {
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
 	sockets: PathBuf,
 	host_token: String,
-	edges: Mutex<HashMap<(String, String, Scope), String>>,
+	edges: Mutex<HashMap<(String, String), String>>,
 	slots: Mutex<Vec<Slot>>,
-	providers: Mutex<HashMap<String, String>>,
+	listeners: Mutex<HashMap<String, Vec<String>>>,
 	op: tokio::sync::Mutex<()>,
 	lifecycle: broadcast::Sender<Value>,
 	inner: std::sync::OnceLock<tokio::task::JoinHandle<()>>,
@@ -135,10 +135,10 @@ impl Host {
 			yolo,
 			lua,
 			solo: Mutex::new(None),
-			host_token: transport::token(),
+			host_token: crate::transport::token(),
 			edges: Mutex::default(),
 			slots: Mutex::default(),
-			providers: Mutex::default(),
+			listeners: Mutex::default(),
 			op: tokio::sync::Mutex::new(()),
 			lifecycle: broadcast::channel(crate::settings::host().lifecycle_queue).0,
 			inner: std::sync::OnceLock::new(),
@@ -182,7 +182,7 @@ impl Host {
 
 	pub fn status(&self) -> Vec<Status> {
 		let slots = self.slots.lock();
-		let providers = self.providers.lock();
+		let listeners = self.listeners.lock();
 		let active: HashSet<&str> = slots
 			.iter()
 			.filter(|s| s.state == State::Active)
@@ -197,9 +197,9 @@ impl Host {
 					State::Waiting => needs
 						.iter()
 						.filter(|key| {
-							providers
-								.get(*key)
-								.is_none_or(|p| !active.contains(p.as_str()))
+							!listeners.get(*key).is_some_and(|ids| {
+								ids.iter().any(|id| active.contains(id.as_str()))
+							})
 						})
 						.cloned()
 						.collect(),
@@ -210,7 +210,9 @@ impl Host {
 					state: slot.state,
 					error: slot.error.clone(),
 					waiting,
-					provide: plan.map(|p| p.provide.clone()).unwrap_or_default(),
+					events: plan
+						.map(|p| p.events.keys().cloned().collect())
+						.unwrap_or_default(),
 					needs,
 					on: plan.map(|p| p.on.clone()).unwrap_or_default(),
 					socket: self.socket(&slot.entry.id),
@@ -290,7 +292,8 @@ impl Host {
 		Ok(())
 	}
 
-	/// Recompute providers and directories, and tell running cartridges what changed.
+	/// Recompute the event catalogue and every directory, fail what declares
+	/// twice or names an unknown event, and tell running cartridges what changed.
 	async fn rewire(self: &Arc<Self>) {
 		let updates: Vec<(Peer, Directory)> = {
 			let mut slots = self.slots.lock();
@@ -299,13 +302,21 @@ impl Host {
 				.filter(|s| s.state != State::Failed || s.running.is_some())
 				.filter_map(|s| s.plan.clone())
 				.collect();
-			let (_, clashes) = plan::providers(&all);
-			for slot in slots.iter_mut() {
-				if let Some(clash) = clashes.get(&slot.entry.id) {
-					if slot.running.is_none() {
-						slot.state = State::Failed;
-						slot.error = Some(clash.clone());
+			let (catalogue, clashes) = plan::catalogue(&all);
+			for slot in slots.iter_mut().filter(|s| s.running.is_none()) {
+				let Some(plan) = slot.plan.clone() else {
+					continue;
+				};
+				let refusal = clashes
+					.get(&slot.entry.id)
+					.cloned()
+					.or_else(|| plan::unmatched(&plan, &catalogue));
+				if let Some(why) = refusal {
+					if slot.state != State::Failed {
+						tracing::error!(target: "cartridge", cartridge = %slot.entry.id, "{why}");
 					}
+					slot.state = State::Failed;
+					slot.error = Some(why);
 				}
 			}
 			let plans: Vec<Arc<Plan>> = slots
@@ -313,13 +324,13 @@ impl Host {
 				.filter(|s| s.state != State::Failed || s.running.is_some())
 				.filter_map(|s| s.plan.clone())
 				.collect();
-			let (providers, _) = plan::providers(&plans);
+			let (catalogue, _) = plan::catalogue(&plans);
 			let mut updates = Vec::new();
 			for slot in slots.iter_mut() {
 				let Some(plan) = slot.plan.clone() else {
 					continue;
 				};
-				let directory = plan::directory(self, &plan, &plans, &providers);
+				let directory = plan::directory(self, &plan, &plans, &catalogue);
 				if directory != slot.directory {
 					slot.directory = directory.clone();
 					if let Some(running) = &slot.running {
@@ -327,7 +338,7 @@ impl Host {
 					}
 				}
 			}
-			*self.providers.lock() = providers;
+			*self.listeners.lock() = plan::listeners(&plans);
 			updates
 		};
 		for (peer, directory) in updates {
@@ -342,7 +353,7 @@ impl Host {
 		loop {
 			let ready: Vec<(String, Arc<Plan>, Directory, u64)> = {
 				let mut slots = self.slots.lock();
-				let providers = self.providers.lock().clone();
+				let listeners = self.listeners.lock().clone();
 				let active: HashSet<String> = slots
 					.iter()
 					.filter(|s| s.state == State::Active)
@@ -353,10 +364,11 @@ impl Host {
 					let Some(plan) = slot.plan.clone() else {
 						continue;
 					};
-					let served = plan
-						.needs
-						.iter()
-						.all(|key| providers.get(key).is_some_and(|p| active.contains(p)));
+					let served = plan.needs.iter().all(|key| {
+						listeners
+							.get(key)
+							.is_some_and(|ids| ids.iter().any(|id| active.contains(id)))
+					});
 					if served {
 						slot.state = State::Starting;
 						slot.generation += 1;
@@ -417,12 +429,7 @@ impl Host {
 		directory: &Directory,
 		generation: u64,
 	) -> Result<Running> {
-		match &plan.kind {
-			Kind::Process(command) => {
-				process::start(self, plan, command, directory, generation).await
-			}
-			Kind::Lua(apply) => lua::start(self, plan, apply.clone(), directory).await,
-		}
+		process::start(self, plan, directory, generation).await
 	}
 
 	/// A cartridge process ended on its own.
@@ -555,25 +562,74 @@ impl Host {
 			.and_then(|s| s.running.as_ref().map(|r| r.peer.clone()))
 	}
 
-	/// The cartridge providing `key`, when one is planned.
-	pub fn provider(&self, key: &str) -> Option<String> {
-		self.providers.lock().get(key).cloned()
+	/// The active listeners of `name`, in composition order.
+	fn listening(&self, name: &str) -> Vec<(String, Peer)> {
+		let ids = self.listeners.lock().get(name).cloned().unwrap_or_default();
+		ids.into_iter()
+			.filter_map(|id| Some((id.clone(), self.peer_of(&id)?)))
+			.collect()
 	}
 
-	/// Call `key` on the cartridge providing it.
-	pub async fn call(&self, key: &str, args: Value) -> Result<Value> {
-		let provider = self
-			.provider(key)
-			.ok_or_else(|| Error::NotProvided(key.to_owned()))?;
-		let peer = self.peer_of(&provider).ok_or_else(|| Error::Unavailable {
-			key: key.to_owned(),
-			why: format!("`{provider}` is not active"),
+	fn check(&self, name: &str, data: &Value) -> Result<()> {
+		let schema = {
+			let slots = self.slots.lock();
+			let Some(event) = slots
+				.iter()
+				.filter_map(|s| s.plan.as_ref())
+				.find_map(|p| p.events.get(name))
+			else {
+				return Err(Error::NotProvided(name.to_owned()));
+			};
+			event.schema.clone()
+		};
+		if let Some(schema) = schema {
+			let validator = jsonschema::validator_for(&schema)
+				.map_err(|e| Error::Profile(format!("`{name}` has an invalid schema: {e}")))?;
+			let errors: Vec<String> = validator.iter_errors(data).map(|e| e.to_string()).collect();
+			if !errors.is_empty() {
+				return Err(Error::Argument(format!(
+					"`{name}` payload rejected by its schema: {}",
+					errors.join("; ")
+				)));
+			}
+		}
+		Ok(())
+	}
+
+	/// Send `name` to one active cartridge and take its answer.
+	pub async fn send_to(&self, id: &str, name: &str, data: Value) -> Result<Value> {
+		self.check(name, &data)?;
+		let peer = self.peer_of(id).ok_or_else(|| Error::Unavailable {
+			key: name.to_owned(),
+			why: format!("`{id}` is not active"),
 		})?;
-		let trace =
-			transport::cartridge::trace().unwrap_or_else(|| crate::trace::mint().to_string());
-		peer.call("call", json!({ "key": key, "args": args, "trace": trace }))
-			.await
-			.map_err(|e| Error::Remote(e.message))
+		let trace = crate::transport::cartridge::trace()
+			.unwrap_or_else(|| crate::trace::mint().to_string());
+		peer.call(
+			"event",
+			json!({ "name": name, "data": data, "trace": trace }),
+		)
+		.await
+		.map_err(|e| Error::Remote(e.message))
+	}
+
+	/// Ask listeners in order; the first non-null answer.
+	pub async fn bail(&self, name: &str, data: Value) -> Result<Option<Value>> {
+		self.check(name, &data)?;
+		let listeners = self.listening(name);
+		if listeners.is_empty() {
+			return Err(Error::Unavailable {
+				key: name.to_owned(),
+				why: "no active listener".into(),
+			});
+		}
+		for (id, _) in listeners {
+			let answer = self.send_to(&id, name, data.clone()).await?;
+			if !answer.is_null() {
+				return Ok(Some(answer));
+			}
+		}
+		Ok(None)
 	}
 
 	/// Send an event to every active listener; one answer or error per listener.
@@ -581,30 +637,22 @@ impl Host {
 		&self,
 		name: &str,
 		data: Value,
-	) -> Vec<(String, std::result::Result<Value, String>)> {
-		let listeners: Vec<(String, Peer)> = self
-			.slots
-			.lock()
-			.iter()
-			.filter(|s| {
-				s.state == State::Active
-					&& s.plan
-						.as_ref()
-						.is_some_and(|p| p.on.iter().any(|n| n == name))
-			})
-			.filter_map(|s| Some((s.entry.id.clone(), s.running.as_ref()?.peer.clone())))
-			.collect();
-		futures::future::join_all(listeners.into_iter().map(|(id, peer)| {
-			let data = data.clone();
-			async move {
-				let answer = peer
-					.call("event", json!({ "name": name, "data": data }))
-					.await
-					.map_err(|e| e.message);
-				(id, answer)
-			}
-		}))
-		.await
+	) -> Result<Vec<(String, std::result::Result<Value, String>)>> {
+		self.check(name, &data)?;
+		let listeners = self.listening(name);
+		Ok(
+			futures::future::join_all(listeners.into_iter().map(|(id, peer)| {
+				let data = data.clone();
+				async move {
+					let answer = peer
+						.call("event", json!({ "name": name, "data": data }))
+						.await
+						.map_err(|e| e.message);
+					(id, answer)
+				}
+			}))
+			.await,
+		)
 	}
 
 	/// The cartridge a host token was issued to.
@@ -612,8 +660,8 @@ impl Host {
 		self.edges
 			.lock()
 			.iter()
-			.find(|((_, to, _), issued)| to == "host" && *issued == token)
-			.map(|((from, _, _), _)| from.clone())
+			.find(|((_, to), issued)| to == "host" && *issued == token)
+			.map(|((from, _), _)| from.clone())
 	}
 
 	/// Enabled cartridges that are running, with their folders.
@@ -630,7 +678,7 @@ impl Host {
 
 	/// The composition as data: every entry, its state, wiring, sources and context paths.
 	pub fn snapshot(&self) -> Value {
-		let providers = self.providers.lock().clone();
+		let listeners = self.listeners.lock().clone();
 		let slots = self.slots.lock();
 		let existing = |root: &Path, name: &str| {
 			let path = root.join(name);
@@ -645,7 +693,7 @@ impl Host {
 				let needs = plan.map(|p| p.needs.clone()).unwrap_or_default();
 				let dependencies: Vec<Value> = needs
 					.iter()
-					.map(|key| json!({ "key": key, "provider": providers.get(key) }))
+					.map(|key| json!({ "key": key, "listeners": listeners.get(key) }))
 					.collect();
 				let sources: Vec<Value> = slot
 					.sources
@@ -666,7 +714,7 @@ impl Host {
 					"path": file,
 					"dir": root,
 					"inject": needs,
-					"provide": plan.map(|p| p.provide.clone()).unwrap_or_default(),
+					"events": plan.map(|p| p.events.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
 					"on": plan.map(|p| p.on.clone()).unwrap_or_default(),
 					"dependencies": dependencies,
 					"sources": sources,
@@ -707,7 +755,7 @@ impl Host {
 			.any(|s| s.entry.id == id && s.entry.config["bridge"] == true)
 	}
 
-	/// Active cartridges that ship a client module, and the services they provide.
+	/// Active cartridges that ship a client module, and the events they answer.
 	pub fn bridge_status(&self) -> Value {
 		let slots = self.slots.lock();
 		Value::Array(
@@ -720,14 +768,14 @@ impl Host {
 						"id": s.entry.id,
 						"generation": s.generation,
 						"module": module,
-						"services": s.plan.as_ref().map(|p| p.provide.clone()).unwrap_or_default(),
+						"services": s.plan.as_ref().map(|p| p.on.clone()).unwrap_or_default(),
 					}))
 				})
 				.collect(),
 		)
 	}
 
-	/// A client module's call into a service its own cartridge provides.
+	/// A client module's event to its own cartridge.
 	pub async fn bridge_call(
 		&self,
 		owner: &str,
@@ -752,14 +800,14 @@ impl Host {
 			if !slot
 				.plan
 				.as_ref()
-				.is_some_and(|p| p.provide.iter().any(|k| k == key))
+				.is_some_and(|p| p.on.iter().any(|k| k == key))
 			{
 				return Err(Error::Reload(
-					"a bridge client may only call services provided by its own cartridge".into(),
+					"a bridge client may only send events its own cartridge listens to".into(),
 				));
 			}
 		}
-		self.call(key, args).await
+		self.send_to(owner, key, args).await
 	}
 
 	/// A new connection to an active cartridge, authenticated as the host.
@@ -778,10 +826,11 @@ pub(crate) async fn connect(
 	socket: &Path,
 	token: &str,
 ) -> Result<(Peer, mpsc::UnboundedReceiver<Incoming>)> {
-	let adapter =
-		transport::typed::connect(&transport::typed::Endpoint::Unix(socket.to_path_buf()))
-			.await
-			.map_err(|e| Error::Remote(format!("{}: {e}", socket.display())))?;
+	let adapter = crate::transport::typed::connect(&crate::transport::typed::Endpoint::Unix(
+		socket.to_path_buf(),
+	))
+	.await
+	.map_err(|e| Error::Remote(format!("{}: {e}", socket.display())))?;
 	let (peer, incoming) = Peer::spawn(adapter, None);
 	peer.call("auth", json!({ "token": token }))
 		.await

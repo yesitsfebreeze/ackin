@@ -7,6 +7,7 @@ publish = false
 rust-version = "1.89"
 autotests = false
 default-run = "cartridge"
+build = "build.rs"
 
 [lib]
 path = "src/lib.rs"
@@ -15,27 +16,30 @@ path = "src/lib.rs"
 name = "cartridge"
 path = "src/main.rs"
 
-# A process cartridge the host tests start: speaks the transport protocol.
-[[example]]
-name = "echo_fixture"
-path = ".cartridge/tests/unit/src/tests/fixtures/echo_fixture.rs"
-
 [dependencies]
 tokio = { version = "1.53", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
 futures = "0.3"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-transport = { path = "src/transport" }
-libc = "0.2"
+jsonschema = { version = "0.56", default-features = false }
 thiserror = "2"
-mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde", "async"] }
+getrandom = "0.3"
+libc = "0.2"
+libloading = "0.9"
+mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "registry", "std"] }
 notify = "9.0.0-rc.5"
 clap = { version = "4", features = ["derive"] }
 # The `help` picker: raw keys and the alternate screen.
 crossterm = "0.29"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1.53", features = ["full", "test-util"] }
@@ -43,9 +47,10 @@ tokio = { version = "1.53", features = ["full", "test-util"] }
 [lints.rust]
 warnings = "deny"
 
-# Keep the runtime and its isolated worktrees independent of a containing workspace.
+# Independent of any containing workspace. The native fixture is its own: a
+# Lua module links against the base's Lua, so it cannot share mlua features.
 [workspace]
-members = ["src/transport", "src/transport/macros"]
+exclude = [".cartridge/tests/unit/src/tests/fixtures/native"]
 
 [profile.dev]
 debug = 0

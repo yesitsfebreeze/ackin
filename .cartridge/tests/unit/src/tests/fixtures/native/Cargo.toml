@@ -1,0 +1,14 @@
+[package]
+name = "native_fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mlua = { version = "0.12", features = ["lua54", "module"] }
+
+[workspace]

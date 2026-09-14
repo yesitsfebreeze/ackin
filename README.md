@@ -1,21 +1,24 @@
 # Cartridge
 
-A host that runs programs as cartridges and wires them together.
+A base that runs programs as cartridges and wires them together with events.
 
-A cartridge is a directory with a `cartridge.json` manifest and a Lua entry. The
-entry is either the cartridge itself, run inside the host, or one line that
-starts a program in any language:
+A cartridge is a folder with a `cartridge.json` and an `init.lua`. The base
+injects a `cartridge` global into every entry: the event system, streams and
+registration. Everything a cartridge registers there is published in the base.
+Code in another language ships as a Lua module the entry loads, or as a helper
+program the entry talks to; neither imports anything from the base.
 
 ```lua
-return cartridge.process("my-program")
+local fs = cartridge.load("fs")
+cartridge.on("tool.read", fs.read)
+cartridge.on("session.start", function(data) fs.watch(data.cwd) end)
 ```
 
-Every cartridge serves JSON-RPC on its own local socket. The host reads the
-profile, binds each cartridge's needs to the cartridge providing them, starts
-cartridges in dependency order inside the sandbox their manifest's `grant`
-describes, and hands each one a directory of the sockets and tokens it may use.
-Calls, events and streams then go directly between cartridges. The host
-restarts a cartridge when its sources change and stops everything cleanly.
+Everything between cartridges is an event. `cartridge.json` declares the
+events a cartridge defines (with a JSON Schema), listens to and needs. The base
+refuses, before a cartridge starts, a subscription to an event nobody declares,
+and refuses, before it is sent, a payload its schema rejects. Each cartridge
+runs as its own sandboxed node; events go straight from sender to listener.
 
 ## Status
 
@@ -23,19 +26,17 @@ Early (`0.1.0`). Interfaces change without notice.
 
 ## Concepts
 
-- **Cartridge**: declares in `cartridge.json` the keys it `provide`s, the keys
-  it `needs`, the events it listens to (`on`), the machine access it asks for
-  (`grant`) and its `settings`.
+- **Cartridge**: `cartridge.json` declares `events` (name, description,
+  schema), `on` (listened), `needs` (must have a listener), `grant` (machine
+  access) and `settings`. `init.lua` registers into the base.
 - **Profile**: `.cartridge/init.lua` lists the cartridges a project runs and
   `.cartridge/config.lua` configures them. Installed cartridges not listed
   there are known but not started.
-- **Isolation**: a cartridge reaches another only through a key it declared in
-  `needs`, or by sending an event another declared in `on`. The host enforces
-  this with one token per edge.
 - **Events**: `emit`, `bail`, `parallel` and `gather` send an event to its
-  listeners and differ in what they do with the answers.
+  listeners and differ in what they do with the answers. A tool is an event
+  its owner listens to.
 - **Streams**: a cartridge publishes on named channels and keeps a replay
-  buffer; cartridges that need it subscribe.
+  buffer; others subscribe.
 - **Settings**: every tunable value is declared, then settled in layers: the
   declaration, `~/.cartridge/config.lua`, the project's `.cartridge/config.lua`.
 
@@ -48,29 +49,24 @@ cargo build --release
 cargo test --workspace
 ```
 
-`src/transport/` is the protocol: a crate of its own, so cartridges written in
-Rust depend on it without the host, and re-exported by the host as
-`cartridge::transport`. `src/transport/wire.ts` is the same protocol for
-TypeScript cartridges.
-
 ## Usage
 
 ```sh
-cartridge run <key> '<json>'      # start the profile, call one key, stop
+cartridge run <event> '<json>'    # start the profile, send, print the first answer, stop
 cartridge daemon                  # start the profile and keep it running
-cartridge call <key> '<json>'     # call a key on the running host
-cartridge send <event> '<json>'   # send an event to its listeners
+cartridge call <event> '<json>'   # send on the running base, print the first answer
+cartridge send <event> '<json>'   # send on the running base, print every answer
 cartridge follow <channel>        # print a channel: lifecycle, or <cartridge>.<channel>
 cartridge status                  # every cartridge and its state
 cartridge reload [<cartridge>]    # reload the profile, or restart one cartridge
 cartridge list                    # the profile and what each need binds to
 cartridge settings [<id>]         # every setting and the file that settled it
-cartridge verify [<cartridge>]    # run the contracts cartridges declare
-cartridge help [<address>]        # the documentation of the host and every cartridge
+cartridge verify [<cartridge>]    # send the contracts cartridges declare
+cartridge help [<address>]        # the documentation of the base and every cartridge
 ```
 
 `cartridge mcp` and `cartridge launch` start the profile and hand this terminal
-to the cartridges that provide `mcp` and `proxy`.
+to the cartridges that listen to `mcp` and `proxy`.
 
 ## Writing a cartridge
 
@@ -78,10 +74,10 @@ See [docs/creating-cartridges.txt](docs/creating-cartridges.txt).
 
 ## Documentation
 
-- [docs/architecture.txt](docs/architecture.txt): the host, lifecycle, sockets, sandbox
-- [docs/transport.txt](docs/transport.txt): the protocol every cartridge speaks
-- [docs/creating-cartridges.txt](docs/creating-cartridges.txt): writing a cartridge
-- [docs/writing-good-cartridges.txt](docs/writing-good-cartridges.txt): dependencies, events, isolation
+- [docs/architecture.txt](docs/architecture.txt): the base, lifecycle, nodes, sandbox
+- [docs/transport.txt](docs/transport.txt): events, declarations, checks, the Lua global
+- [docs/creating-cartridges.txt](docs/creating-cartridges.txt): Lua, Rust and helper programs
+- [docs/writing-good-cartridges.txt](docs/writing-good-cartridges.txt): defining, listening, needing
 - [docs/settings.txt](docs/settings.txt): declaring and settling configuration
 - [docs/development.txt](docs/development.txt): building, testing, troubleshooting
 

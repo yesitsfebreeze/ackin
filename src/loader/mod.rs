@@ -8,20 +8,20 @@
 //!   "commands": { "test": {"argv": ["just", "test", "store"], "cwd": "."} },
 //!   "binary": "store-bin",      // executable basename, when it differs from the folder
 //!   "ui": "ui/index.ts",
-//!   "selftest": "store.check",  // a provided key proving behaviour
-//!   "integration": "store.wire",// a provided key proving wiring
+//!   "selftest": "store.check",  // an event it listens to, proving behaviour
+//!   "integration": "store.wire",// an event it listens to, proving wiring
 //!   "source": "https://…",
 //!   "settings": { "max_bytes": {"type": "integer", "default": 67108864, "min": 1024, "doc": "Read budget."} },
-//!   "provide": ["store.get"],
-//!   "needs": ["log.write"],
+//!   "events": { "store.changed": {"description": "…", "schema": {"type": "object"}} },
+//!   "needs": ["log.write"],     // events that must have a listener
 //!   "on": ["store.flush"],      // events this cartridge listens to
 //!   "grant": { "read": ["data"], "write": ["cache"], "net": ["api.host"], "exec": ["rg"] }
 //! }
 //! ```
 //!
 //! Every declared setting holds a value by the time the cartridge starts. An
-//! absent `grant` grants nothing. Where the document declares `provide`,
-//! `needs` or `on`, it wins over what a Lua entry returns.
+//! absent `grant` grants nothing. The document is the whole declaration; the
+//! Lua entry registers what it declared.
 
 mod document;
 pub(crate) mod entries;
@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 
 use document::classify;
 pub(crate) use document::{document, resolve, Declared};
-pub use document::{Cartridge, Command, Grant, MANIFEST};
+pub use document::{Cartridge, Command, Event, Grant, MANIFEST};
 
 /// A profile entry: a cartridge folder, or a bare Lua file.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
@@ -56,7 +56,7 @@ impl Entry {
 pub struct CartridgeInfo {
 	pub entry: Entry,
 	pub needs: Vec<String>,
-	pub provide: Vec<String>,
+	pub events: Vec<String>,
 	pub on: Vec<String>,
 	/// `None` when the document could not be read.
 	pub grant: Option<Grant>,

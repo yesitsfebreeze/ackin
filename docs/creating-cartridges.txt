@@ -1,9 +1,9 @@
 # Creating a cartridge
 
-Read architecture.txt for how the host runs cartridges and transport.txt for the
-protocol. writing-good-cartridges.txt covers what makes one good.
+Read architecture.txt for how the base runs cartridges and transport.txt for
+the event model. writing-good-cartridges.txt covers what makes one good.
 
-A LUA CARTRIDGE
+A CARTRIDGE
 
 Two files in a folder under the cartridge root, here `hello/`.
 
@@ -11,121 +11,138 @@ cartridge.json:
 {
   "name": "hello",
   "entry": "init.lua",
-  "description": "Returns the JSON value supplied by its caller.",
-  "provide": ["hello.echo"]
+  "description": "Greets whoever asks.",
+  "events": {
+    "hello.greet": {
+      "description": "A greeting for a name.",
+      "schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}
+    }
+  },
+  "on": ["hello.greet"]
 }
 
 init.lua:
-return {
-  apply = function(ctx, config)
-    ctx:provide("hello.echo", function(input) return input end)
-  end,
-}
+cartridge.on("hello.greet", function(args)
+  return "hello " .. args.name
+end)
 
 Enable it in .cartridge/init.lua:
   return { {id = "hello", path = "hello"} }
 
-and call it:
-  cartridge run hello.echo '{"message":"hello"}'
+and send it an event:
+  cartridge run hello.greet '{"name":"you"}'
 
-The Lua ctx:
+Everything the entry can do is on the `cartridge` global; transport.txt lists
+it. To use another cartridge's event, declare it in `needs` and send it:
 
-  ctx:provide(key, fn)            serve a key declared in `provide`
-  ctx.<need>(args), ctx:call(key, args)
-                                  call a key declared in `needs`
-  ctx:on(name, fn)                listen to an event declared in `on`
-  ctx:emit(name, data)            send to every listener, do not wait
-  ctx:bail(name, data)            ask listeners in order; first non-nil answer
-  ctx:parallel(name, data)        ask all; fail if any failed
-  ctx:gather(name, data)          every answer as {from, data}
-  ctx:notify(name, data)          emit and publish on the channel `name`
-  ctx:publish(channel, data)
-  ctx:subscribe(cartridge, channel, fn)   the cartridge must be a need's provider
-  ctx:host(method, params)        status, snapshot, cartridges
-  ctx:on_dispose(fn)              `apply` may also return a function to run on stop
-  ctx:name(), ctx:needs()
+  "needs": ["hello.greet"]
+  cartridge.on("welcome", function(args) return cartridge.bail("hello.greet", args) end)
 
-A PROCESS CARTRIDGE
+A RUST CARTRIDGE
 
-Any program that serves the protocol. init.lua:
+The Rust code is a Lua module the entry loads. Cargo.toml:
 
-  return cartridge.process("hello")
-
-The program is found in the cartridge's .cartridge/bin, bin, beside the host
-binary, then PATH; a name with a `/` is relative to the cartridge folder. A
-command may be a string or a list: cartridge.process({"./run", "--flag"}).
-The process runs in the project root, so a script finds its own files from its
-own path. It runs inside its `grant`: exec must name any interpreter or
-program it starts, read and write the paths it touches, net the hosts it
-reaches.
-
-In Rust, depend on the transport crate:
-
+  [lib]
+  crate-type = ["cdylib"]
   [dependencies]
-  transport = { path = "../cartridge.ctg/src/transport" }
-  tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-  serde_json = "1"
+  mlua = { version = "0.12", features = ["lua54", "module"] }
 
-  #[tokio::main]
-  async fn main() {
-      transport::cartridge::run(|ctx, _config| async move {
-          ctx.provide("hello.echo", |input| async move { Ok(input) });
-          Ok(())
-      })
-      .await;
+build.rs (macOS resolves the Lua API against the base at load time):
+
+  fn main() {
+      if cfg!(target_os = "macos") {
+          println!("cargo:rustc-cdylib-link-arg=-undefined");
+          println!("cargo:rustc-cdylib-link-arg=dynamic_lookup");
+      }
   }
 
-`Ctx` has the same operations as the Lua ctx: provide, call, on, emit, bail,
-parallel, gather, notify, publish, subscribe, host, on_dispose, needs, name.
+src/lib.rs:
 
-In TypeScript, copy src/transport/wire.ts into the cartridge:
+  use mlua::prelude::*;
 
-  import { Wire } from "./wire";
-  const wire = new Wire();
-  wire.on("apply", async config => {});
-  wire.on("hello.echo", async input => input);
+  fn greet(_: &Lua, args: LuaTable) -> LuaResult<String> {
+      Ok(format!("hello {}", args.get::<String>("name")?))
+  }
 
-with call, listen (events), emit, bail, gather, notify, publish, ask (host
-queries), onClose. In another language, implement docs/transport.txt: bind
-CARTRIDGE_SOCKET, accept `auth`, `apply`, `call`, `event`, `subscribe`,
-`dispose`, and exit when stdin closes.
+  // Reaching the base from Rust: the global is already in the Lua state.
+  fn remember(lua: &Lua, note: String) -> LuaResult<LuaValue> {
+      let cartridge: LuaTable = lua.globals().get("cartridge")?;
+      cartridge.call_function("bail", ("memory.remember", note))
+  }
+
+  #[mlua::lua_module]
+  fn hello(lua: &Lua) -> LuaResult<LuaTable> {
+      let module = lua.create_table()?;
+      module.set("greet", lua.create_function(greet)?)?;
+      module.set("remember", lua.create_function(remember)?)?;
+      Ok(module)
+  }
+
+init.lua:
+
+  local hello = cartridge.load("hello")
+  cartridge.on("hello.greet", hello.greet)
+
+The module's crate must not share a Cargo workspace with the base. Ship the
+built `libhello.dylib` (or `.so`) in the cartridge folder; while developing,
+`target/release` and `target/debug` beside init.lua are searched too.
+
+Functions are called on a runtime thread and may block; a cartridge that does
+long work keeps its own threads or runtime inside the module.
+
+A HELPER PROGRAM
+
+A cartridge may start a program in any language and speak to it over lines of
+JSON; the program knows nothing of the base.
+
+  local app = cartridge.spawn({"bun", cartridge.root .. "/src/main.ts"})
+  cartridge.on("live.status", function(args) return app:request({op = "status"}) end)
+  app:on_line(function(line) if line.event then cartridge.emit(line.event, line.data) end end)
+
+`request` writes one line with an `id` and returns the line the program writes
+back with that `id`; every other line goes to `on_line`. The program's stderr is
+recorded by the base. Its executable must be in the cartridge's `grant.exec`.
 
 MANIFEST FIELDS
 
 name and entry are required; entry is a relative .lua path inside the folder.
 
   description     one line of purpose
-  provide         keys served
-  needs           keys called; the profile can add more with `inject`
+  events          name -> {description?, schema?}; events this cartridge defines
   on              events listened to
+  needs           events that must have a listener before this cartridge starts;
+                  the profile can add more with `inject`
   grant           {read, write, net, exec}; absent grants nothing
   settings        dotted key -> {type, default, optional?, min?, max?, doc?}; see settings.txt
   config          author defaults laid over the declared ones
-  selftest        a provided key that proves the cartridge's behaviour
-  integration     a provided key that proves its wiring to a real dependency
-  commands        label -> {argv, cwd, description?}; documentation, never run by the host
+  selftest        an event in `on` that proves the cartridge's behaviour
+  integration     an event in `on` that proves its wiring to a real dependency
+  commands        label -> {argv, cwd, description?}; documentation, never run by the base
   binary          executable basename when it differs from the folder
   ui              a JavaScript or TypeScript client module inside the folder
   source          where the source lives
 
-Keys are nonempty exact strings. Unknown fields are refused.
+Names are nonempty exact strings. Unknown fields are refused. A schema that is
+not a JSON Schema is refused.
 
 CONTRACTS
 
-`cartridge verify` starts the profile and calls every `selftest` and
-`integration` key with null; an error or `false` fails. `cartridge verify <id>`
-starts only that cartridge and what its needs resolve to in the ledger.
+`cartridge verify` starts the profile and sends every `selftest` and
+`integration` event to its cartridge with null; an error or `false` fails.
+`cartridge verify <id>` starts only that cartridge and what its needs resolve
+to in the ledger.
 
 THE HELP PAGE
 
 Ship .cartridge/help.md: a title, two to four sentences on what the cartridge
-owns and who reaches it, a "## Use" list of its keys and how to call them, and a
-"## Read next" list of its own documents. `cartridge help <id>` prints it, then
-the declarations from cartridge.json and every other document the cartridge
-ships. Do not restate provide, needs or settings on the page.
+owns and who reaches it, a "## Use" list of its events and how to send them,
+and a "## Read next" list of its own documents. `cartridge help <id>` prints
+it, then the declarations from cartridge.json and every other document the
+cartridge ships. Do not restate events, needs or settings on the page.
 
 LOCAL STATE
 
-A cartridge keeps its state under the project's .cartridge/<its folder>. In its
-own repository, .cartridge/.gitignore is a whitelist: `/*` ignores the folder
-and `!/name` brings back durable entries (help.md, docs/, tests/).
+A cartridge keeps its state under the project's .cartridge/<its folder> and
+names it in `grant.write` (`${config.dir}`, `$PROJECT/...`). In its own
+repository, .cartridge/.gitignore is a whitelist: `/*` ignores the folder and
+`!/name` brings back durable entries (help.md, docs/, tests/).

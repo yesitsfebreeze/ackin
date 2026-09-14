@@ -1,17 +1,17 @@
 # host
 
-The host runs cartridges. A cartridge is a folder with a `cartridge.json` and a
-Lua entry, installed by placing it under the cartridge root and enabled by
-naming it in `.cartridge/init.lua`. Every cartridge serves on its own socket;
-the host starts them in dependency order and hands each the sockets and tokens
-it may use.
+The base runs cartridges. A cartridge is a folder with a `cartridge.json` and an
+`init.lua`, installed by placing it under the cartridge root and enabled by
+naming it in `.cartridge/init.lua`. Everything between cartridges is an event,
+declared with a schema and checked by the base; each cartridge runs as its own
+sandboxed node with the `cartridge` global injected.
 
 ## Use
 
 - `cartridge help [<id>[/<file>[#<section>]]]`: the documentation of the host and every cartridge.
 - `cartridge list`: the profile and what each need binds to.
 - `cartridge settings [<id>|<id>.<key>]`: every setting and the file that settled it.
-- `cartridge run <key> '<json>'`: start the profile, call one key, stop.
+- `cartridge run <event> '<json>'`: start the profile, send one event, print the first answer, stop.
 - `cartridge daemon`, then `cartridge status`, `call`, `send`, `follow`, `reload`, `stop`.
 - `cartridge verify [<id>]`: run declared contracts.
 

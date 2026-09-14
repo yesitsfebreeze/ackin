@@ -4,12 +4,12 @@
 //! Methods, after `auth {token}`. A cartridge's token (from its directory) is
 //! granted `status`, `snapshot` and `cartridges`, and `bridge.*` where its
 //! profile entry sets `bridge = true`; the host token is granted everything.
-//!   status                        -> [{id, state, error, waiting, provide, needs, on, socket}]
+//!   status                        -> [{id, state, error, waiting, events, needs, on, socket}]
 //!   snapshot                      -> {host_pid, profile, cartridge_root, entries}
 //!   cartridges                    -> [{id, dir}]
 //!   bridge.status                 -> [{id, generation, module, services}]
 //!   bridge.call {owner, generation, key, args}
-//!   call {key, args, trace?}      -> the provider's answer
+//!   bail {name, data}             -> the first listener's answer, or null
 //!   emit {name, data}             -> [{from, data} | {from, error}]
 //!   reload {cartridge?}           -> {}
 //!   subscribe {channel, since?}   -> {}; `lifecycle`, or `<cartridge>.<channel>`
@@ -18,9 +18,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::transport::rpc::{self, Incoming, Peer, Request};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use transport::rpc::{self, Incoming, Peer, Request};
 
 use crate::error::{Error, Result};
 
@@ -58,7 +58,7 @@ pub fn base() -> Result<PathBuf> {
 }
 
 fn tag(profile: &Path) -> String {
-	transport::typed::path_tag(profile)[..12].to_owned()
+	crate::transport::typed::path_tag(profile)[..12].to_owned()
 }
 
 /// The host socket of the project whose profile is `profile`.
@@ -108,15 +108,19 @@ pub(crate) fn file_name(id: &str) -> String {
 		})
 		.take(24)
 		.collect();
-	let hash = transport::typed::path_tag(Path::new(id));
+	let hash = crate::transport::typed::path_tag(Path::new(id));
 	format!("{readable}-{}.sock", &hash[..6])
 }
 
-pub(crate) async fn listen(path: &Path) -> Result<transport::typed::LocalListener> {
+pub(crate) async fn listen(path: &Path) -> Result<crate::transport::typed::LocalListener> {
 	let _ = std::fs::remove_file(path);
-	match transport::typed::bind(&transport::typed::Endpoint::Unix(path.to_path_buf())).await {
-		Ok(transport::typed::BindOutcome::Bound(listener)) => Ok(listener),
-		Ok(transport::typed::BindOutcome::AlreadyRunning) => Err(Error::Remote(format!(
+	match crate::transport::typed::bind(&crate::transport::typed::Endpoint::Unix(
+		path.to_path_buf(),
+	))
+	.await
+	{
+		Ok(crate::transport::typed::BindOutcome::Bound(listener)) => Ok(listener),
+		Ok(crate::transport::typed::BindOutcome::AlreadyRunning) => Err(Error::Remote(format!(
 			"{} is already served",
 			path.display()
 		))),
@@ -127,7 +131,7 @@ pub(crate) async fn listen(path: &Path) -> Result<transport::typed::LocalListene
 /// Answer cartridges on the host's inner socket for as long as the host lives.
 pub(crate) async fn accept(
 	host: std::sync::Weak<Host>,
-	mut listener: transport::typed::LocalListener,
+	mut listener: crate::transport::typed::LocalListener,
 ) {
 	while let Ok(adapter) = listener.accept().await {
 		let Some(host) = host.upgrade() else { break };
@@ -141,9 +145,11 @@ pub(crate) async fn accept(
 pub async fn serve(host: Arc<Host>) -> Result<bool> {
 	let path = path(&host.profile)?;
 	let mut listener =
-		match transport::typed::bind(&transport::typed::Endpoint::Unix(path.clone())).await {
-			Ok(transport::typed::BindOutcome::Bound(listener)) => listener,
-			Ok(transport::typed::BindOutcome::AlreadyRunning) => return Ok(false),
+		match crate::transport::typed::bind(&crate::transport::typed::Endpoint::Unix(path.clone()))
+			.await
+		{
+			Ok(crate::transport::typed::BindOutcome::Bound(listener)) => listener,
+			Ok(crate::transport::typed::BindOutcome::AlreadyRunning) => return Ok(false),
 			Err(error) => return Err(Error::Remote(format!("{}: {error}", path.display()))),
 		};
 	let token = token_path(&host.profile)?;
@@ -184,7 +190,7 @@ enum Caller {
 
 async fn connection(
 	host: Arc<Host>,
-	adapter: transport::typed::LocalAdapter,
+	adapter: crate::transport::typed::LocalAdapter,
 	stop: mpsc::Sender<()>,
 ) {
 	let (peer, mut incoming) = Peer::spawn(adapter, Some(1 << 26));
@@ -279,23 +285,31 @@ async fn answer(
 				.await;
 			request.reply(result.map_err(application));
 		}
-		"call" => {
-			let key = params["key"].as_str().unwrap_or_default().to_owned();
-			let result = host.call(&key, params["args"].clone()).await;
-			request.reply(result.map_err(application));
+		"bail" => {
+			let name = params["name"].as_str().unwrap_or_default().to_owned();
+			let result = host.bail(&name, params["data"].clone()).await;
+			request.reply(
+				result
+					.map(|answer| answer.unwrap_or(Value::Null))
+					.map_err(application),
+			);
 		}
 		"emit" => {
 			let name = params["name"].as_str().unwrap_or_default().to_owned();
-			let answers: Vec<Value> = host
+			let result = host
 				.emit(&name, params["data"].clone())
 				.await
-				.into_iter()
-				.map(|(from, answer)| match answer {
-					Ok(data) => json!({ "from": from, "data": data }),
-					Err(error) => json!({ "from": from, "error": error }),
-				})
-				.collect();
-			request.reply(Ok(json!(answers)));
+				.map(|answers| {
+					let rows: Vec<Value> = answers
+						.into_iter()
+						.map(|(from, answer)| match answer {
+							Ok(data) => json!({ "from": from, "data": data }),
+							Err(error) => json!({ "from": from, "error": error }),
+						})
+						.collect();
+					json!(rows)
+				});
+			request.reply(result.map_err(application));
 		}
 		"reload" => {
 			let result = match params["cartridge"].as_str() {

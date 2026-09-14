@@ -1,5 +1,5 @@
-//! A process cartridge: spawned inside its grant with its socket path, reached
-//! once it serves, applied, and stopped.
+//! A node: the base binary re-run on a cartridge's `init.lua`, inside its
+//! grant, reached once it serves, applied, and stopped.
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -8,16 +8,18 @@ use std::time::Duration;
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::oneshot;
-use transport::cartridge::{Directory, CONNECT_TIMEOUT_ENV, HOST_TOKEN_ENV, SOCKET_ENV};
 
 use crate::error::{Error, Result};
+use crate::transport::cartridge::{Directory, CONNECT_TIMEOUT_ENV, HOST_TOKEN_ENV, SOCKET_ENV};
 
 use super::{Host, Plan, Running};
+
+/// The binary a node runs as; this one unless a test names the built CLI.
+pub const NODE_BIN_ENV: &str = "CARTRIDGE_NODE_BIN";
 
 pub(super) async fn start(
 	host: &Arc<Host>,
 	plan: &Plan,
-	command: &[String],
 	directory: &Directory,
 	generation: u64,
 ) -> Result<Running> {
@@ -25,8 +27,13 @@ pub(super) async fn start(
 	let socket = host.socket(&plan.id);
 	let _ = std::fs::remove_file(&socket);
 	let sockets = socket.parent().map(std::path::Path::to_path_buf);
+	let exe = match std::env::var_os(NODE_BIN_ENV) {
+		Some(exe) => std::path::PathBuf::from(exe),
+		None => std::env::current_exe().map_err(|e| Error::file("cartridge", e))?,
+	};
+	let command = vec![exe.to_string_lossy().into_owned(), "node".to_owned()];
 	let mut child = tokio::process::Command::from(
-		crate::sandbox::command(command, &plan.grant, &plan.root, sockets.as_deref())
+		crate::sandbox::command(&command, &plan.grant, &plan.root, sockets.as_deref())
 			.map_err(|e| Error::process(&plan.id, e))?,
 	)
 	.env(SOCKET_ENV, &socket)
@@ -35,12 +42,15 @@ pub(super) async fn start(
 		CONNECT_TIMEOUT_ENV,
 		settings.startup_timeout_secs.to_string(),
 	)
+	.env(crate::node::ENTRY_ENV, &plan.entry)
+	.env(crate::node::ROOT_ENV, &plan.root)
+	.env(crate::node::ON_ENV, serde_json::to_string(&plan.on)?)
 	.stdin(Stdio::piped())
 	.stdout(Stdio::null())
 	.stderr(Stdio::piped())
 	.kill_on_drop(true)
 	.spawn()
-	.map_err(|e| Error::process(&command[0], e))?;
+	.map_err(|e| Error::process(&plan.id, e))?;
 	let stdin = child.stdin.take();
 	let tail = Arc::new(std::sync::Mutex::new(
 		std::collections::VecDeque::<String>::new(),

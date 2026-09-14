@@ -38,24 +38,21 @@ pub(crate) enum Command {
 	/// Serve the profile's tools to an MCP client over this terminal's stdio:
 	/// `claude mcp add cartridge -- cartridge mcp`
 	Mcp,
-	/// Start the profile, call one service, and stop it
+	/// Start the profile, send one event, print the first answer, and stop
 	Run {
-		key: String,
+		event: String,
 		#[arg(default_value = "null")]
-		args: String,
+		data: String,
 	},
-	/// Call a provided key on the running host with one JSON argument
+	/// Send an event on the running host and print the first answer
 	Call {
-		key: String,
+		event: String,
 		#[arg(default_value = "null")]
-		args: String,
-		/// Tag this call with a trace id; one is minted when absent
-		#[arg(long)]
-		trace: Option<String>,
+		data: String,
 	},
-	/// Send an event to its listeners on the running host and print their answers
+	/// Send an event on the running host and print every listener's answer
 	Send {
-		name: String,
+		event: String,
 		#[arg(default_value = "null")]
 		data: String,
 	},
@@ -108,6 +105,9 @@ pub(crate) enum Command {
 		/// A ledger path from the cartridge root, or the folder it sits in
 		cartridge: Option<String>,
 	},
+	/// Run one cartridge's `init.lua` as a node of the base that started this process
+	#[command(hide = true)]
+	Node,
 }
 
 impl Cli {

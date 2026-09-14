@@ -1,89 +1,78 @@
 # Architecture
 
-THE HOST
+THE BASE
 
-The host loads and wires; it is not on the path of calls or events.
+The base loads and wires; it is not on the path of events.
 
   src/loader/     cartridge.json (document.rs) and the profile (entries.rs):
                   installed cartridges, init.lua over them, config.lua over each entry
   src/host/       the running composition
-    plan.rs       what an entry runs as, its settled config, and its directory
-    mod.rs        slots, start order, reconcile, restart, stop, host queries
-    process.rs    starting a process cartridge inside its sandbox
-    lua.rs        serving a Lua cartridge in-process, and the Lua ctx API
+    plan.rs       what an entry declares, its settled config, the event catalogue
+                  and the directory each node is handed
+    mod.rs        slots, start order, launch checks, reconcile, restart, stop, host queries
+    process.rs    starting a node inside its sandbox
     socket.rs     socket locations, the host socket and its methods
     watch.rs      restarting on source changes, reconciling on profile changes
-    run.rs        `run` and `verify`: start, call, stop
+    run.rs        `run` and `verify`: start, send, stop
+  src/node.rs     a node: init.lua with the `cartridge` global, native modules, helpers
   src/ledger.rs   every cartridge installed under the cartridge root
-  src/lua.rs      the sandboxed Lua interpreter and the `cartridge` global
+  src/lua.rs      the sandboxed Lua interpreter
   src/sandbox.rs  a grant compiled into an operating-system policy
-  src/settings/   settings files and the host's own settings
+  src/settings/   settings files and the base's own settings
   src/trace.rs    trace ids and the diagnostics sink
   src/cli/        the command line
-  src/transport/  the protocol crate, re-exported as `cartridge::transport`: JSON-RPC
-                  peer, sockets, the cartridge side, settings, and wire.ts for TypeScript
+  src/transport/  the internal wire between the base and its nodes
 
 THE PROFILE
 
 Every folder under the cartridge root (`--dir`, default `builtin`) holding a
 `cartridge.json` is installed and starts disabled. `.cartridge/init.lua`
 returns entries `{id, path, config?, inject?, disabled?}` that enable and
-configure them; a `path` may also name a bare `.lua` file. `inject` adds keys to
-an entry's needs; `inject = {"tool.*"}` names every key with that prefix another
-enabled entry provides. `~/.cartridge/config.lua` and `.cartridge/config.lua`
-map entry ids to config laid over each entry.
+configure them. `inject` adds events to an entry's needs; `inject = {"tool.*"}`
+names every event with that prefix another enabled entry listens to.
+`~/.cartridge/config.lua` and `.cartridge/config.lua` map entry ids to config
+laid over each entry.
 
-PLANNING
+PLANNING AND CHECKS
 
-For each enabled entry the host evaluates its Lua entry. A table
-`{provide?, needs?, on?, apply}` is a Lua cartridge; `cartridge.process(cmd,
-{inject?})` is a process cartridge, its program resolved in the cartridge's
-`.cartridge/bin`, `bin`, beside the host, then PATH. Where `cartridge.json`
-declares `provide`, `needs` or `on`, it wins over the table. Each key is
-provided by one entry; a second provider fails the later entry.
+For each enabled entry the base reads cartridge.json: the events it defines,
+listens to and needs, its grant and its settled configuration. It never runs
+the entry itself. From all enabled entries it builds the event catalogue and
+refuses, before anything starts: an event defined twice (the later entry
+fails) and an `on` or `needs` naming an event nobody defines.
 
 LIFECYCLE
 
   disabled  not listed, or `disabled = true`
-  waiting   a need has no active provider yet
+  waiting   a needed event has no active listener yet
   starting  being started and applied
   active    serving
   stopping  being disposed
-  failed    would not plan, start or apply, or exited on its own
+  failed    refused at planning, would not start or apply, or exited on its own
 
-The host starts every waiting cartridge whose needs all have active providers,
-wave by wave. A cycle, or a need nothing provides, leaves the cartridges
-waiting; `cartridge status` names what they wait for.
+The base starts every waiting cartridge whose needs all have active listeners,
+wave by wave. `cartridge status` names what a waiting cartridge waits for.
 
-SOCKETS AND TOKENS
+NODES
 
-Each host run has a directory under `$XDG_RUNTIME_DIR/cartridge` or
-`/tmp/cartridge-<uid>` holding one socket per cartridge, stable for the run,
-and `host.sock`, where cartridges ask the host questions. The project's host
-socket for the command line sits beside it, with the host token in a 0600 file.
-Tokens are minted per edge: consumer to provider for calls, emitter to listener
-for events, cartridge to host for host queries. docs/transport.txt has the wire.
+Each cartridge runs as a node: the base binary re-run with `node`, inside a
+sandbox built from the cartridge's `grant` (macOS: sandbox-exec; Linux is
+refused until Landlock is implemented), with access to the base's socket
+directory. The node runs init.lua in the sandboxed Lua interpreter with the
+`cartridge` global injected, loads the native modules the entry asks for, and
+serves the cartridge on its own socket. Its stdin closes when the base goes
+away; its stderr is recorded. When a node fails to start, the error carries the
+last lines it wrote.
 
-PROCESS CARTRIDGES
-
-A process cartridge runs in the project root, inside a sandbox built from its
-`grant` (macOS: sandbox-exec; Linux is refused until Landlock is implemented),
-with read and write access to the host's socket directory. It gets
-CARTRIDGE_SOCKET, CARTRIDGE_HOST_TOKEN and CARTRIDGE_CONNECT_TIMEOUT_SECS, a
-stdin that closes when the host goes away, and a stderr the host records. The
-host waits until the socket answers, authenticates, and calls `apply`. When it
-fails to start, the error carries the last lines it wrote to stderr.
-
-LUA CARTRIDGES
-
-A Lua cartridge's `apply(ctx, config)` runs in the host's interpreter and is
-served on its own socket like any other cartridge, so other cartridges cannot
-tell the difference. The interpreter has no `io`, no `require`, and an `os`
-that only reads the clock and the environment.
+Each base run has a directory under `$XDG_RUNTIME_DIR/cartridge` or
+`/tmp/cartridge-<uid>` holding one socket per node, stable for the run, and
+`host.sock` where nodes ask the base questions. The project's host socket for
+the command line sits beside it with the host token in a 0600 file. Tokens are
+minted per edge: sender to listener for events, node to base for host queries.
 
 RELOAD
 
-A changed source restarts its cartridge: dispose, wait, start on the same socket
-with the same tokens. Dependents keep running and reconnect. A changed
+A changed source restarts its node: dispose, wait, start on the same socket
+with the same tokens. Other nodes keep running and reconnect. A changed
 `init.lua` or `config.lua` reconciles the profile: removed or changed entries
-stop, new ones start, and running cartridges whose directory changed receive it.
+stop, new ones start, and running nodes whose directory changed receive it.

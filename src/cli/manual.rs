@@ -165,7 +165,8 @@ impl Manual {
 				Err(e) => format!("error: {e}"),
 			};
 			let mut declared = Doc::new(DECLARATIONS.into(), declarations(c, &document, &dir));
-			declared.about = "what it provides and needs, its settings and commands".into();
+			declared.about =
+				"the events it declares, listens to and needs, its settings and commands".into();
 			let mut docs = vec![declared];
 			docs.extend(documents(&dir, None));
 			modules.push(Module {
@@ -560,8 +561,9 @@ fn declarations(c: &CartridgeInfo, document: &Result<loader::Cartridge>, dir: &P
 	if let Some(d) = &doc.description {
 		let _ = writeln!(out, "{d}\n");
 	}
+	let events: Vec<String> = doc.events.keys().cloned().collect();
 	for (label, keys) in [
-		("provides", &doc.provide),
+		("events", &events),
 		("needs", &doc.needs),
 		("on", &doc.on),
 		("wired", &c.needs),

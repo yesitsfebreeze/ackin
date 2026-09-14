@@ -35,6 +35,15 @@ fn code_of(error: &Error) -> u8 {
 pub fn main() -> ExitCode {
 	cartridge::trace::subscribe();
 	let cli = Cli::parse();
+	if matches!(cli.command, Command::Node) {
+		let runtime = match tokio::runtime::Runtime::new() {
+			Ok(runtime) => runtime,
+			Err(error) => return fail(FAILED, error),
+		};
+		return runtime
+			.block_on(cartridge::node::main())
+			.unwrap_or_else(|error| fail(FAILED, error));
+	}
 	let outcome = cli
 		.check()
 		.and_then(|()| project::locate(cli.dir.clone(), cli.yolo))
@@ -47,29 +56,29 @@ pub fn main() -> ExitCode {
 
 async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 	match command {
-		Command::Run { key, args } => host::run(project, &key, json_arg(&args)?).await,
+		Command::Run { event, data } => host::run(project, &event, json_arg(&data)?).await,
 		Command::Launch { agent, model, args } => host::launch(project, agent, model, args).await,
 		Command::Mcp => host::mcp(project).await,
 		Command::Daemon => host::daemon(project).await,
 		Command::Verify { cartridge } => host::verify(project, cartridge.as_deref()).await,
-		Command::Call { key, args, trace } => {
-			let trace = trace.unwrap_or_else(|| cartridge::trace::mint().to_string());
+		Command::Call { event, data } => {
 			client::ask(
 				project,
-				"call",
-				json!({ "key": key, "args": json_arg(&args)?, "trace": trace }),
+				"bail",
+				json!({ "name": event, "data": json_arg(&data)? }),
 			)
 			.await
 		}
-		Command::Send { name, data } => {
+		Command::Send { event, data } => {
 			client::ask(
 				project,
 				"emit",
-				json!({ "name": name, "data": json_arg(&data)? }),
+				json!({ "name": event, "data": json_arg(&data)? }),
 			)
 			.await
 		}
 		Command::Follow { channel, since } => client::follow(project, &channel, since).await,
+		Command::Node => cartridge::node::main().await,
 		Command::Status => client::ask(project, "status", Value::Null).await,
 		Command::Reload { cartridge } => {
 			client::ask(project, "reload", json!({ "cartridge": cartridge })).await

@@ -22,11 +22,10 @@ pub struct Cartridge {
 	pub binary: Option<String>,
 	/// Optional Solid UI module, relative to this cartridge's folder.
 	pub ui: Option<String>,
-	/// Optional contract: a key this cartridge provides that proves its own
-	/// behaviour. Declaring it is opt-in; [`Host::verify`] calls it.
+	/// A contract: an event this cartridge listens to that proves its behaviour;
+	/// `cartridge verify` emits it.
 	pub selftest: Option<String>,
-	/// Optional contract: a key this cartridge provides that proves its wiring
-	/// to what it injects, by calling a real dependency.
+	/// A contract: an event this cartridge listens to that proves its wiring.
 	pub integration: Option<String>,
 	/// Repository URL or other retrieval reference when source is not installed.
 	pub source: Option<String>,
@@ -44,10 +43,10 @@ pub struct Cartridge {
 	/// A cartridge that declares its keys carries no fallbacks of its own.
 	#[serde(default)]
 	pub settings: crate::settings::Specs,
-	/// Keys this cartridge offers.
+	/// Events this cartridge defines: name to description and payload schema.
 	#[serde(default)]
-	pub provide: Vec<String>,
-	/// Keys this cartridge asks for.
+	pub events: std::collections::BTreeMap<String, Event>,
+	/// Events that must have a listener before this cartridge starts.
 	#[serde(default)]
 	pub needs: Vec<String>,
 	/// Events this cartridge listens to.
@@ -58,6 +57,17 @@ pub struct Cartridge {
 	/// tightest policy and not the loosest.
 	#[serde(default)]
 	pub grant: Grant,
+}
+
+/// One event a cartridge defines. `schema` is a JSON Schema for the payload;
+/// absent, any payload passes.
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Event {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub description: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub schema: Option<serde_json::Value>,
 }
 
 /// An argument array to run from `cwd`, relative to the manifest's folder.
@@ -198,11 +208,12 @@ impl Cartridge {
 			}
 			Ok(())
 		};
-		let mut seen = std::collections::HashSet::new();
-		for k in &self.provide {
-			key("provide", k)?;
-			if !seen.insert(k.as_str()) {
-				return Err(at(&format!("duplicate provide declaration `{k}`")));
+		for (name, event) in &self.events {
+			key("events", name)?;
+			if let Some(schema) = &event.schema {
+				jsonschema::validator_for(schema).map_err(|e| {
+					at(&format!("`events.{name}.schema` is not a JSON Schema: {e}"))
+				})?;
 			}
 		}
 		let mut heard = std::collections::HashSet::new();
@@ -218,24 +229,15 @@ impl Cartridge {
 			if !asked.insert(k.as_str()) {
 				return Err(at(&format!("duplicate needs declaration `{k}`")));
 			}
-			if self.provide.contains(k) {
-				return Err(at(&format!(
-					"`{k}` is provided here, so it is not also needed from outside"
-				)));
-			}
 		}
-		for (field, keys) in [
+		for (field, contract) in [
 			("selftest", &self.selftest),
 			("integration", &self.integration),
 		] {
-			if let Some(k) = keys {
-				// The guard on an empty `provide` is required, not forgotten: `harness`
-				// in ~/dev/sys/builtin declares `selftest: "harness.selftest"` with no
-				// document-level `provide`, because its Lua entry is what provides.
-				// Dropping the guard would refuse a manifest that is already written.
-				if !self.provide.is_empty() && !self.provide.contains(k) {
+			if let Some(k) = contract {
+				if !self.on.contains(k) {
 					return Err(at(&format!(
-						"`{field}` names `{k}`, which this cartridge does not provide"
+						"`{field}` names `{k}`, which this cartridge does not listen to"
 					)));
 				}
 			}
@@ -254,7 +256,7 @@ impl Grant {
 			for p in paths {
 				let path = Path::new(p);
 				// A path is blank on the same terms a key is: `trim()` on both, so
-				// `"   "` is refused in a grant exactly as it is in `provide`.
+				// `"   "` is refused in a grant exactly as it is in `on`.
 				if p.trim().is_empty() || p.contains('\0') {
 					return Err(at(&format!(
 						"`grant.{field}` entry `{p}` must be a nonempty exact path"
@@ -305,7 +307,7 @@ pub(crate) struct Declared {
 	pub(crate) entry: PathBuf,
 	pub(crate) name: String,
 	pub(crate) sources: Vec<PathBuf>,
-	pub(crate) provide: Vec<String>,
+	pub(crate) events: std::collections::BTreeMap<String, Event>,
 	pub(crate) needs: Vec<String>,
 	pub(crate) on: Vec<String>,
 	pub(crate) config: serde_json::Value,
@@ -334,7 +336,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 			entry: path.clone(),
 			name,
 			sources: vec![path],
-			provide: Vec::new(),
+			events: Default::default(),
 			needs: Vec::new(),
 			on: Vec::new(),
 			config: serde_json::Value::Null,
@@ -353,7 +355,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		entry,
 		name: manifest.name,
 		sources,
-		provide: manifest.provide,
+		events: manifest.events,
 		needs: manifest.needs,
 		on: manifest.on,
 		config: manifest.config,

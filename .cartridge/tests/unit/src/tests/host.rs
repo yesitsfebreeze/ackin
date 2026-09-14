@@ -2,282 +2,395 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::{built, write};
 use crate::host::{Host, State};
 
-const PROVIDER: &str = r#"return {provide={"greet"}, apply=function(ctx)
-	ctx:provide("greet", function(args) return "hello " .. args.name end)
-end}"#;
+/// A cartridge folder: its manifest and its `init.lua`.
+fn cartridge(dir: &Path, id: &str, manifest: Value, init: &str) {
+	write(dir, &format!("{id}/cartridge.json"), &manifest.to_string());
+	write(dir, &format!("{id}/init.lua"), init);
+}
 
-const CONSUMER: &str = r#"return {needs={"greet"}, provide={"welcome"}, apply=function(ctx)
-	ctx:provide("welcome", function(args) return ctx.greet(args) end)
-end}"#;
-
-fn profile(dir: &Path, entries: &str) {
+fn profile(dir: &Path, ids: &[&str]) {
+	let entries: Vec<String> = ids
+		.iter()
+		.map(|id| format!("{{id={id:?}, path={id:?}}}"))
+		.collect();
 	write(
 		dir,
 		".cartridge/init.lua",
-		&format!("return {{ {entries} }}"),
+		&format!("return {{ {} }}", entries.join(", ")),
 	);
 }
 
+fn greeter(dir: &Path) {
+	cartridge(
+		dir,
+		"greeter",
+		json!({
+			"name": "greeter", "entry": "init.lua",
+			"events": {"greet": {"description": "a greeting", "schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}}},
+			"on": ["greet"],
+		}),
+		r#"cartridge.on("greet", function(args) return "hello " .. args.name end)"#,
+	);
+}
+
+/// The test binary is not the base; nodes run the built `cartridge`.
+fn node_binary() {
+	static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+	let bin = BIN.get_or_init(|| built(&["--bin", "cartridge"]));
+	std::env::set_var(crate::host::NODE_BIN_ENV, bin);
+}
+
 async fn boot(dir: &Path) -> Arc<Host> {
+	node_binary();
 	let host = Host::new(dir, dir.join(".cartridge"), false).unwrap();
 	host.reconcile().await.unwrap();
 	host
 }
 
-fn state(host: &Host, id: &str) -> State {
-	host.status()
-		.into_iter()
-		.find(|s| s.id == id)
+fn status(host: &Host, id: &str) -> crate::host::Status {
+	host.status().into_iter().find(|s| s.id == id).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cartridge_answers_the_events_it_listens_to() {
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	cartridge(
+		dir.path(),
+		"welcome",
+		json!({
+			"name": "welcome", "entry": "init.lua",
+			"events": {"welcome": {}}, "needs": ["greet"], "on": ["welcome"],
+		}),
+		r#"return { apply = function(ctx, config)
+			ctx.on("welcome", function(args) return ctx.bail("greet", args) end)
+		end }"#,
+	);
+	profile(dir.path(), &["welcome", "greeter"]);
+	let host = boot(dir.path()).await;
+	assert_eq!(status(&host, "greeter").state, State::Active);
+	assert_eq!(status(&host, "welcome").state, State::Active);
+	assert_eq!(
+		host.bail("welcome", json!({"name": "you"})).await.unwrap(),
+		Some(json!("hello you"))
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_payload_the_schema_rejects_never_reaches_the_listener() {
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	profile(dir.path(), &["greeter"]);
+	let host = boot(dir.path()).await;
+	let error = host.bail("greet", json!({"name": 7})).await.unwrap_err();
+	assert!(error.contains("rejected by its schema"), "{error}");
+	let error = host.bail("nobody.declares", json!(null)).await.unwrap_err();
+	assert!(error.contains("not provided"), "{error}");
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_undeclared_event_fails_the_cartridge_before_it_starts() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"stray",
+		json!({"name": "stray", "entry": "init.lua", "on": ["nobody.declares"]}),
+		"",
+	);
+	cartridge(
+		dir.path(),
+		"needy",
+		json!({"name": "needy", "entry": "init.lua", "needs": ["also.undeclared"]}),
+		"",
+	);
+	profile(dir.path(), &["stray", "needy"]);
+	let host = boot(dir.path()).await;
+	let stray = status(&host, "stray");
+	assert_eq!(stray.state, State::Failed);
+	assert!(stray
+		.error
 		.unwrap()
-		.state
+		.contains("listens to `nobody.declares`, which no cartridge declares"));
+	let needy = status(&host, "needy");
+	assert_eq!(needy.state, State::Failed);
+	assert!(needy.error.unwrap().contains("needs `also.undeclared`"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn lua_cartridges_call_what_they_need() {
+async fn an_event_declared_twice_fails_the_later_entry() {
 	let dir = tempfile::tempdir().unwrap();
-	write(dir.path(), "provider.lua", PROVIDER);
-	write(dir.path(), "consumer.lua", CONSUMER);
-	profile(
+	greeter(dir.path());
+	cartridge(
 		dir.path(),
-		r#"{id="consumer", path="consumer.lua"}, {id="provider", path="provider.lua"}"#,
+		"twin",
+		json!({"name": "twin", "entry": "init.lua", "events": {"greet": {}}}),
+		"",
 	);
+	profile(dir.path(), &["greeter", "twin"]);
 	let host = boot(dir.path()).await;
-	assert_eq!(state(&host, "provider"), State::Active);
-	assert_eq!(state(&host, "consumer"), State::Active);
-	assert_eq!(
-		host.call("welcome", json!({"name": "you"})).await.unwrap(),
-		json!("hello you")
-	);
+	assert_eq!(status(&host, "greeter").state, State::Active);
+	let twin = status(&host, "twin");
+	assert_eq!(twin.state, State::Failed);
+	assert!(twin
+		.error
+		.unwrap()
+		.contains("already declared by `greeter`"));
 	host.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_cartridge_cannot_call_what_it_did_not_declare() {
+async fn a_node_refuses_to_listen_to_what_it_did_not_declare() {
 	let dir = tempfile::tempdir().unwrap();
-	write(dir.path(), "provider.lua", PROVIDER);
-	write(
+	greeter(dir.path());
+	cartridge(
 		dir.path(),
-		"sneaky.lua",
-		r#"return {provide={"peek"}, apply=function(ctx)
-			ctx:provide("peek", function() return ctx:call("greet", {name="x"}) end)
-		end}"#,
+		"sneaky",
+		json!({"name": "sneaky", "entry": "init.lua", "events": {"sneak": {}}, "on": ["sneak"]}),
+		r#"cartridge.on("sneak", function()
+			local ok, error = pcall(cartridge.on, "greet", function() end)
+			return tostring(error)
+		end)"#,
 	);
-	profile(
-		dir.path(),
-		r#"{id="provider", path="provider.lua"}, {id="sneaky", path="sneaky.lua"}"#,
-	);
+	profile(dir.path(), &["greeter", "sneaky"]);
 	let host = boot(dir.path()).await;
-	let error = host.call("peek", json!(null)).await.unwrap_err();
-	assert!(error.contains("is not a need"), "{error}");
-	host.stop().await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn events_go_straight_to_listeners() {
-	let dir = tempfile::tempdir().unwrap();
-	write(
-		dir.path(),
-		"listener.lua",
-		r#"return {on={"ping"}, apply=function(ctx)
-			ctx:on("ping", function(data) return {pong=data} end)
-		end}"#,
-	);
-	write(
-		dir.path(),
-		"asker.lua",
-		r#"return {provide={"ask", "undeclared"}, apply=function(ctx)
-			ctx:provide("ask", function(data)
-				local first = ctx:bail("ping", data)
-				local all = ctx:gather("ping", data)
-				return {first=first, from=all[1].from, count=#all}
-			end)
-			ctx:provide("undeclared", function()
-				local ok, error = pcall(function() ctx:on("other", function() end) end)
-				return tostring(error)
-			end)
-		end}"#,
-	);
-	profile(
-		dir.path(),
-		r#"{id="listener", path="listener.lua"}, {id="asker", path="asker.lua"}"#,
-	);
-	let host = boot(dir.path()).await;
-	assert_eq!(
-		host.call("ask", json!(7)).await.unwrap(),
-		json!({"first": {"pong": 7}, "from": "listener", "count": 1})
-	);
-	let answers = host.emit("ping", json!(2)).await;
-	assert_eq!(
-		answers,
-		vec![("listener".to_owned(), Ok(json!({"pong": 2})))]
-	);
-	let refusal = host.call("undeclared", json!(null)).await.unwrap();
+	let answer = host.bail("sneak", json!(null)).await.unwrap().unwrap();
 	assert!(
-		refusal.as_str().unwrap().contains("not declared in `on`"),
-		"{refusal}"
+		answer.as_str().unwrap().contains("not declared in `on`"),
+		"{answer}"
 	);
 	host.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_process_cartridge_serves_calls_events_and_streams() {
-	let binary = built(&["--example", "echo_fixture"]);
+async fn gather_parallel_and_emit_reach_every_listener() {
 	let dir = tempfile::tempdir().unwrap();
-	write(
+	for id in ["a", "b"] {
+		cartridge(
+			dir.path(),
+			id,
+			json!({"name": id, "entry": "init.lua", "on": ["ping"]}),
+			&format!(
+				r#"cartridge.on("ping", function(data) return {{ from = {id:?}, data = data }} end)"#
+			),
+		);
+	}
+	cartridge(
 		dir.path(),
-		"echo/cartridge.json",
-		&json!({
-			"name": "echo",
-			"entry": "init.lua",
-			"provide": ["echo", "whoami", "relay"],
-			"needs": ["lua.name"],
-			"on": ["ping"],
-		})
-		.to_string(),
+		"asker",
+		json!({"name": "asker", "entry": "init.lua", "events": {"ping": {}, "ask": {}}, "on": ["ask"]}),
+		r#"cartridge.on("ask", function(data)
+			local all = cartridge.gather("ping", data)
+			cartridge.parallel("ping", data)
+			cartridge.emit("ping", data)
+			return { count = #all, first = all[1].from, second = all[2].from }
+		end)"#,
 	);
-	write(
-		dir.path(),
-		"echo/init.lua",
-		&format!(
-			"return cartridge.process({:?})",
-			binary.display().to_string()
-		),
-	);
-	write(
-		dir.path(),
-		"named.lua",
-		r#"return {provide={"lua.name"}, apply=function(ctx)
-			ctx:provide("lua.name", function(args) return "lua saw " .. tostring(args) end)
-		end}"#,
-	);
-	write(
-		dir.path(),
-		"watcher.lua",
-		r#"return {needs={"echo"}, provide={"seen"}, apply=function(ctx)
-			local seen = {}
-			ctx:subscribe("echo", "ticks", function(envelope)
-				if envelope.kind == "data" then table.insert(seen, envelope.data) end
-			end)
-			ctx:provide("seen", function() return seen end)
-		end}"#,
-	);
-	profile(
-		dir.path(),
-		r#"{id="echo", path="echo"}, {id="named", path="named.lua"}, {id="watcher", path="watcher.lua"}"#,
-	);
+	profile(dir.path(), &["a", "b", "asker"]);
 	let host = boot(dir.path()).await;
-	let status = host.status();
-	assert!(
-		status.iter().all(|s| s.state == State::Active),
-		"{status:?}"
+	assert_eq!(
+		host.bail("ask", json!(1)).await.unwrap(),
+		Some(json!({"count": 2, "first": "a", "second": "b"}))
+	);
+	let answers = host.emit("ping", json!(2)).await.unwrap();
+	assert_eq!(answers.len(), 2);
+	assert_eq!(
+		answers[0],
+		("a".to_owned(), Ok(json!({"from": "a", "data": 2})))
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_native_module_reaches_the_base_through_the_global() {
+	let module = built(&[
+		"--manifest-path",
+		".cartridge/tests/unit/src/tests/fixtures/native/Cargo.toml",
+	]);
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	cartridge(
+		dir.path(),
+		"native",
+		json!({
+			"name": "native", "entry": "init.lua",
+			"events": {"twice": {"schema": {"type": "integer"}}, "relay": {}},
+			"needs": ["greet"], "on": ["twice", "relay"],
+		}),
+		r#"local native = cartridge.load("native_fixture")
+		cartridge.on("twice", function(n) return native.twice(n) end)
+		cartridge.on("relay", function(args) return native.ask("greet", args) end)"#,
+	);
+	std::fs::copy(
+		&module,
+		dir.path().join("native").join(module.file_name().unwrap()),
+	)
+	.unwrap();
+	profile(dir.path(), &["greeter", "native"]);
+	let host = boot(dir.path()).await;
+	let native = status(&host, "native");
+	assert_eq!(native.state, State::Active, "{:?}", native.error);
+	assert_eq!(
+		host.bail("twice", json!(21)).await.unwrap(),
+		Some(json!(42))
 	);
 	assert_eq!(
-		host.call("echo", json!({"a": 1})).await.unwrap(),
-		json!({"a": 1})
+		host.bail("relay", json!({"name": "rust"})).await.unwrap(),
+		Some(json!("hello rust"))
 	);
-	assert_eq!(
-		host.call("relay", json!(5)).await.unwrap(),
-		json!("lua saw 5")
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_spawned_program_answers_requests_by_id() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"echoer",
+		json!({
+			"name": "echoer", "entry": "init.lua",
+			"events": {"echo": {}}, "on": ["echo"],
+			"grant": {"exec": ["/bin/cat"]},
+		}),
+		r#"local cat = cartridge.spawn({"/bin/cat"})
+		cartridge.on("echo", function(data) return cat:request({ data = data }) end)"#,
 	);
-	assert_eq!(
-		host.call("whoami", json!(null)).await.unwrap(),
-		json!({"name": "echo", "needs": ["lua.name"]})
+	profile(dir.path(), &["echoer"]);
+	let host = boot(dir.path()).await;
+	let answer = host.bail("echo", json!("hi")).await.unwrap().unwrap();
+	assert_eq!(answer["data"], "hi");
+	assert!(answer["id"].is_u64());
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn streams_replay_and_then_deliver_live() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"source",
+		json!({"name": "source", "entry": "init.lua", "events": {"tick": {}}, "on": ["tick"]}),
+		r#"cartridge.on("tick", function(n) cartridge.publish("ticks", n) return true end)"#,
 	);
-	let answers = host.emit("ping", json!("tick")).await;
-	assert_eq!(
-		answers,
-		vec![("echo".to_owned(), Ok(json!({"pong": "tick"})))]
+	cartridge(
+		dir.path(),
+		"watcher",
+		json!({"name": "watcher", "entry": "init.lua", "events": {"seen": {}}, "needs": ["tick"], "on": ["seen"]}),
+		r#"local seen = {}
+		cartridge.subscribe("source", "ticks", function(envelope)
+			if envelope.kind == "data" then table.insert(seen, envelope.data) end
+		end)
+		cartridge.on("seen", function() return seen end)"#,
 	);
+	profile(dir.path(), &["source", "watcher"]);
+	let host = boot(dir.path()).await;
+	host.bail("tick", json!(1)).await.unwrap();
+	host.bail("tick", json!(2)).await.unwrap();
 	let mut seen = json!([]);
 	for _ in 0..50 {
-		seen = host.call("seen", json!(null)).await.unwrap();
-		if seen == json!(["tick"]) {
+		seen = host
+			.bail("seen", json!(null))
+			.await
+			.unwrap()
+			.unwrap_or_default();
+		if seen == json!([1, 2]) {
 			break;
 		}
 		tokio::time::sleep(Duration::from_millis(20)).await;
 	}
-	assert_eq!(seen, json!(["tick"]));
+	assert_eq!(seen, json!([1, 2]));
 	host.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_restart_keeps_its_dependents_working() {
 	let dir = tempfile::tempdir().unwrap();
-	write(dir.path(), "provider.lua", PROVIDER);
-	write(dir.path(), "consumer.lua", CONSUMER);
-	profile(
+	greeter(dir.path());
+	cartridge(
 		dir.path(),
-		r#"{id="provider", path="provider.lua"}, {id="consumer", path="consumer.lua"}"#,
+		"welcome",
+		json!({"name": "welcome", "entry": "init.lua", "events": {"welcome": {}}, "needs": ["greet"], "on": ["welcome"]}),
+		r#"cartridge.on("welcome", function(args) return cartridge.bail("greet", args) end)"#,
 	);
+	profile(dir.path(), &["greeter", "welcome"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(
-		host.call("welcome", json!({"name": "a"})).await.unwrap(),
-		json!("hello a")
+		host.bail("welcome", json!({"name": "a"})).await.unwrap(),
+		Some(json!("hello a"))
 	);
 	write(
 		dir.path(),
-		"provider.lua",
-		&PROVIDER.replace("hello ", "hi "),
+		"greeter/init.lua",
+		r#"cartridge.on("greet", function(args) return "hi " .. args.name end)"#,
 	);
-	host.replace("provider").await.unwrap();
-	assert_eq!(state(&host, "consumer"), State::Active);
+	host.replace("greeter").await.unwrap();
+	assert_eq!(status(&host, "welcome").state, State::Active);
 	assert_eq!(
-		host.call("welcome", json!({"name": "b"})).await.unwrap(),
-		json!("hi b")
+		host.bail("welcome", json!({"name": "b"})).await.unwrap(),
+		Some(json!("hi b"))
 	);
 	host.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_missing_need_waits_and_says_for_what() {
+async fn a_missing_listener_waits_and_says_for_what() {
 	let dir = tempfile::tempdir().unwrap();
-	write(dir.path(), "consumer.lua", CONSUMER);
-	profile(dir.path(), r#"{id="consumer", path="consumer.lua"}"#);
+	cartridge(
+		dir.path(),
+		"welcome",
+		json!({"name": "welcome", "entry": "init.lua", "events": {"greet": {}, "welcome": {}}, "needs": ["greet"], "on": ["welcome"]}),
+		"",
+	);
+	profile(dir.path(), &["welcome"]);
 	let host = boot(dir.path()).await;
-	let status = host
-		.status()
-		.into_iter()
-		.find(|s| s.id == "consumer")
-		.unwrap();
-	assert_eq!(status.state, State::Waiting);
-	assert_eq!(status.waiting, vec!["greet".to_owned()]);
-	assert!(host.call("welcome", json!(null)).await.is_err());
+	let welcome = status(&host, "welcome");
+	assert_eq!(welcome.state, State::Waiting);
+	assert_eq!(welcome.waiting, vec!["greet".to_owned()]);
+	assert!(host.bail("welcome", json!(null)).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_key_provided_twice_fails_the_later_entry() {
+async fn a_cartridge_asks_the_host_what_only_the_host_knows() {
 	let dir = tempfile::tempdir().unwrap();
-	write(dir.path(), "first.lua", PROVIDER);
-	write(dir.path(), "second.lua", PROVIDER);
-	profile(
+	greeter(dir.path());
+	cartridge(
 		dir.path(),
-		r#"{id="first", path="first.lua"}, {id="second", path="second.lua"}"#,
+		"curious",
+		json!({"name": "curious", "entry": "init.lua", "events": {"ask": {}}, "on": ["ask"]}),
+		r#"cartridge.on("ask", function()
+			local cartridges = cartridge.host("cartridges", nil)
+			local snapshot = cartridge.host("snapshot", nil)
+			local ok, refused = pcall(cartridge.host, "bridge.status", nil)
+			return { count = #cartridges, entries = #snapshot.entries, bridge = ok, refused = tostring(refused),
+				needs = cartridge.needs(), events = cartridge.events() }
+		end)"#,
 	);
+	profile(dir.path(), &["greeter", "curious"]);
 	let host = boot(dir.path()).await;
-	assert_eq!(state(&host, "first"), State::Active);
-	let second = host
-		.status()
-		.into_iter()
-		.find(|s| s.id == "second")
-		.unwrap();
-	assert_eq!(second.state, State::Failed);
-	assert!(second
-		.error
-		.unwrap()
-		.contains("already provided by `first`"));
+	let answer = host.bail("ask", json!(null)).await.unwrap().unwrap();
+	assert_eq!(answer["count"], 2);
+	assert_eq!(answer["entries"], 2);
+	assert_eq!(answer["bridge"], false);
+	assert!(
+		answer["refused"].as_str().unwrap().contains("not granted"),
+		"{answer}"
+	);
+	assert_eq!(answer["events"]["greet"]["owner"], "greeter");
+	assert_eq!(answer["events"]["greet"]["description"], "a greeting");
 	host.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_host_socket_answers_the_command_line() {
 	let dir = tempfile::tempdir().unwrap();
-	write(dir.path(), "provider.lua", PROVIDER);
-	profile(dir.path(), r#"{id="provider", path="provider.lua"}"#);
+	greeter(dir.path());
+	profile(dir.path(), &["greeter"]);
 	let host = boot(dir.path()).await;
 	let served = tokio::spawn(crate::host::socket::serve(host.clone()));
 	let profile = host.profile().to_path_buf();
@@ -291,7 +404,7 @@ async fn the_host_socket_answers_the_command_line() {
 	}
 	let (peer, _incoming) = client.expect("the host socket serves");
 	let answer = peer
-		.call("call", json!({"key": "greet", "args": {"name": "cli"}}))
+		.call("bail", json!({"name": "greet", "data": {"name": "cli"}}))
 		.await
 		.unwrap();
 	assert_eq!(answer, json!("hello cli"));
@@ -303,51 +416,16 @@ async fn the_host_socket_answers_the_command_line() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_cartridge_asks_the_host_what_only_the_host_knows() {
+async fn verify_sends_every_declared_contract() {
 	let dir = tempfile::tempdir().unwrap();
-	write(dir.path(), "provider.lua", PROVIDER);
-	write(
+	cartridge(
 		dir.path(),
-		"curious.lua",
-		r#"return {provide={"ask"}, apply=function(ctx)
-			ctx:provide("ask", function()
-				local cartridges = ctx:host("cartridges")
-				local snapshot = ctx:host("snapshot")
-				local ok, refused = pcall(function() return ctx:host("bridge.status") end)
-				return {count=#cartridges, entries=#snapshot.entries, bridge=ok, refused=tostring(refused)}
-			end)
-		end}"#,
+		"checked",
+		json!({"name": "checked", "entry": "init.lua", "events": {"checked.ok": {}}, "on": ["checked.ok"], "selftest": "checked.ok"}),
+		r#"cartridge.on("checked.ok", function() return true end)"#,
 	);
-	profile(
-		dir.path(),
-		r#"{id="provider", path="provider.lua"}, {id="curious", path="curious.lua"}"#,
-	);
-	let host = boot(dir.path()).await;
-	let answer = host.call("ask", json!(null)).await.unwrap();
-	assert_eq!(answer["count"], 2);
-	assert_eq!(answer["entries"], 2);
-	assert_eq!(answer["bridge"], false);
-	assert!(
-		answer["refused"].as_str().unwrap().contains("not granted"),
-		"{answer}"
-	);
-	host.stop().await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn verify_calls_every_declared_contract() {
-	let dir = tempfile::tempdir().unwrap();
-	write(
-		dir.path(),
-		"checked/cartridge.json",
-		&json!({"name": "checked", "entry": "init.lua", "provide": ["checked.ok"], "selftest": "checked.ok"}).to_string(),
-	);
-	write(
-		dir.path(),
-		"checked/init.lua",
-		r#"return {apply=function(ctx) ctx:provide("checked.ok", function() return true end) end}"#,
-	);
-	profile(dir.path(), r#"{id="checked", path="checked"}"#);
+	profile(dir.path(), &["checked"]);
+	node_binary();
 	let host = Host::new(dir.path(), dir.path().join(".cartridge"), false).unwrap();
 	assert_eq!(host.verify().await.unwrap(), (1, Vec::new()));
 }
@@ -355,22 +433,17 @@ async fn verify_calls_every_declared_contract() {
 #[tokio::test(flavor = "multi_thread")]
 async fn grant_paths_name_the_project_and_settings() {
 	let dir = tempfile::tempdir().unwrap();
-	write(
+	cartridge(
 		dir.path(),
-		"store/cartridge.json",
-		&json!({
+		"store",
+		json!({
 			"name": "store", "entry": "init.lua",
 			"settings": {"dir": {"type": "string", "default": ".cartridge/store"}},
 			"grant": {"write": ["${config.dir}", "$PROJECT/logs", "$TMPDIR/x"], "read": ["$HOME/.config"]},
-		})
-		.to_string(),
+		}),
+		"",
 	);
-	write(
-		dir.path(),
-		"store/init.lua",
-		"return {apply=function() end}",
-	);
-	profile(dir.path(), r#"{id="store", path="store"}"#);
+	profile(dir.path(), &["store"]);
 	let host = Host::new(dir.path(), dir.path().join(".cartridge"), false).unwrap();
 	let entry = host
 		.entries()
@@ -393,93 +466,17 @@ async fn grant_paths_name_the_project_and_settings() {
 }
 
 #[test]
-fn a_document_refuses_a_duplicate_or_wildcard_listener() {
+fn a_document_refuses_a_bad_schema_or_a_contract_it_does_not_listen_to() {
 	let dir = tempfile::tempdir().unwrap();
-	for on in [json!(["a", "a"]), json!(["a.*"])] {
-		write(
-			dir.path(),
-			"cartridge.json",
-			&json!({"name": "p", "entry": "init.lua", "on": on}).to_string(),
+	for manifest in [
+		json!({"name": "p", "entry": "init.lua", "events": {"a": {"schema": {"type": "no-such-type"}}}}),
+		json!({"name": "p", "entry": "init.lua", "on": ["a", "a"]}),
+		json!({"name": "p", "entry": "init.lua", "selftest": "a"}),
+	] {
+		write(dir.path(), "cartridge.json", &manifest.to_string());
+		assert!(
+			crate::loader::Cartridge::document(&dir.path().join("cartridge.json")).is_err(),
+			"{manifest}"
 		);
-		assert!(crate::loader::Cartridge::document(&dir.path().join("cartridge.json")).is_err());
 	}
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_typescript_cartridge_speaks_the_same_wire() {
-	let Ok(bun) = which("bun") else {
-		return;
-	};
-	let dir = tempfile::tempdir().unwrap();
-	let wire = std::fs::read_to_string(concat!(
-		env!("CARGO_MANIFEST_DIR"),
-		"/src/transport/wire.ts"
-	))
-	.unwrap();
-	write(dir.path(), "ts/wire.ts", &wire);
-	write(
-		dir.path(),
-		"ts/main.ts",
-		r#"import { Wire } from "./wire";
-const wire = new Wire();
-wire.on("apply", async () => {});
-wire.on("ts.echo", async args => ({ ts: args }));
-wire.on("ts.relay", async args => wire.call("greet", args));
-wire.listen("ping", async data => ({ pong: data }));
-"#,
-	);
-	write(
-		dir.path(),
-		"ts/cartridge.json",
-		&json!({
-			"name": "ts", "entry": "init.lua",
-			"provide": ["ts.echo", "ts.relay"], "needs": ["greet"], "on": ["ping"],
-			"grant": {"exec": [bun.display().to_string()], "read": ["/"]},
-		})
-		.to_string(),
-	);
-	let main = dir.path().canonicalize().unwrap().join("ts/main.ts");
-	write(
-		dir.path(),
-		"ts/init.lua",
-		&format!(
-			"return cartridge.process({{{:?}, {:?}}})",
-			bun.display().to_string(),
-			main.display().to_string()
-		),
-	);
-	write(dir.path(), "provider.lua", PROVIDER);
-	profile(
-		dir.path(),
-		r#"{id="provider", path="provider.lua"}, {id="ts", path="ts"}"#,
-	);
-	let host = boot(dir.path()).await;
-	let status = host.status();
-	assert!(
-		status.iter().all(|s| s.state == State::Active),
-		"{status:?}"
-	);
-	assert_eq!(
-		host.call("ts.echo", json!(1)).await.unwrap(),
-		json!({"ts": 1})
-	);
-	assert_eq!(
-		host.call("ts.relay", json!({"name": "bun"})).await.unwrap(),
-		json!("hello bun")
-	);
-	assert_eq!(
-		host.emit("ping", json!(3)).await,
-		vec![("ts".to_owned(), Ok(json!({"pong": 3})))]
-	);
-	host.stop().await;
-}
-
-fn which(program: &str) -> Result<std::path::PathBuf, ()> {
-	std::env::var_os("PATH")
-		.into_iter()
-		.flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
-		.map(|dir| dir.join(program))
-		.find(|path| path.is_file())
-		.and_then(|path| path.canonicalize().ok())
-		.ok_or(())
 }

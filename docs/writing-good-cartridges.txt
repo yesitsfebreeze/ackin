@@ -2,50 +2,57 @@
 
 ONE CAPABILITY
 
-A cartridge owns one capability and everything that belongs to it: its keys,
-its settings, its state, its tests and its help page. Another cartridge reaches
-it only through what it declares.
+A cartridge owns one capability and everything that belongs to it: its
+events, its settings, its state, its tests and its help page. Another
+cartridge reaches it only through the events it declares.
 
-NEEDS OR EVENTS
+DEFINE, LISTEN, NEED
 
-Use a need when the cartridge cannot work without the other one: it declares the
-key in `needs`, the host starts it only once the provider is active, and it calls
-the key directly. Use an event when the cartridge tells whoever cares: it emits
-without knowing the listeners, and the listeners declare the event in `on`.
+Define an event where its meaning lives: a tool's owner defines the tool event
+with its input schema and listens to it; a session store defines
+`session.start` and emits it. Listen to what you answer. Need what you cannot
+run without: the base starts you only once a listener is active.
 
-Pick the dispatch by what the emitter does with the answers:
+Pick the send by what you do with the answers:
 
   emit      nothing; fire and forget
   bail      the first answer; the listeners are alternatives, in profile order
   parallel  none, but every listener must succeed
   gather    all of them, attributed
 
-An optional feature with several possible providers is a key prefix the
-consumer injects in the profile (`inject = {"tool.*"}`) and a key each provider
-brings under it. The consumer lists them with its needs and calls each.
+An optional feature with several possible providers is an event prefix the
+consumer injects in the profile (`inject = {"tool.*"}`); `cartridge.needs()`
+lists what arrived.
+
+SCHEMAS
+
+Give every event a schema. It is the contract listeners rely on and the check
+that stops a wrong payload at the sender with a field named, instead of a
+confusing failure somewhere down the line.
 
 ISOLATION
 
-A cartridge reaches another only through a key in its needs, a key the profile
-injects into it, or an event another declares. It carries no sibling's protocol
-for an optional feature and names no sibling it did not declare. The host
-enforces this: a token only opens the keys and events it was minted for.
+A cartridge sends only events it declares or needs, to listeners it does not
+choose, over a token minted for that edge. It carries no sibling's protocol
+and names no sibling. Its native code runs inside its own sandboxed node with
+the grant it declared.
 
 STREAMS
 
 Publish what others may want to watch as it happens on a channel, and keep the
 payload self-contained: a subscriber may join late and read the replay. Name
-channels after what they carry; a watcher writes `<cartridge>.<channel>`.
+channels after what they carry.
 
 STATE AND RESTARTS
 
 A cartridge can be restarted at any time: its socket and tokens stay the same,
-calls in flight fail, and callers reconnect. Keep durable state on disk, make
-startup cheap, and make operations safe to retry. Clean up in on_dispose.
+sends in flight fail, and senders reconnect. Keep durable state on disk under a
+granted path, make startup cheap, and make operations safe to retry. Clean up
+in on_dispose.
 
 ERRORS
 
-A handler's error travels to the caller as the error's message. A listener that
-fails publishes the failure on its own `error` channel; the emitter is not the
-party that broke. Diagnostics go to stderr, one JSON object per line where
-possible; the host records them.
+A listener's error travels to the sender as its message. A listener that fails
+publishes the failure on its own `error` channel; the sender is not the party
+that broke. Diagnostics go to stderr, one JSON object per line where possible;
+the base records them.

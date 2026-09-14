@@ -64,12 +64,12 @@ fn a_walk_answers_from_the_asker_subtree_then_steps_outward() {
 	cartridge(
 		dir.path(),
 		"outer/inner",
-		json!({"name": "inner", "entry": "init.lua", "provide": ["store.get"]}),
+		json!({"name": "inner", "entry": "init.lua", "on": ["store.get"]}),
 	);
 	cartridge(
 		dir.path(),
 		"other",
-		json!({"name": "other", "entry": "init.lua", "provide": ["store.get"]}),
+		json!({"name": "other", "entry": "init.lua", "on": ["store.get"]}),
 	);
 	let ledger = Ledger::scan(dir.path());
 	match ledger.resolve("outer", "store.get") {
@@ -103,7 +103,7 @@ fn a_walk_from_a_nested_scope_steps_outward() {
 	cartridge(
 		dir.path(),
 		"outer",
-		json!({"name": "outer", "entry": "init.lua", "provide": ["outer.top"]}),
+		json!({"name": "outer", "entry": "init.lua", "on": ["outer.top"]}),
 	);
 	cartridge(
 		dir.path(),
@@ -149,7 +149,7 @@ fn a_child_provide_is_seen_by_its_parent_subtree_and_not_by_the_graph_outside() 
 	cartridge(
 		dir.path(),
 		"outer/inner",
-		json!({"name": "inner", "entry": "init.lua", "provide": ["store.get"]}),
+		json!({"name": "inner", "entry": "init.lua", "on": ["store.get"]}),
 	);
 	cartridge(
 		dir.path(),
@@ -215,12 +215,12 @@ fn two_entries_of_one_scope_offering_one_key_is_a_clash() {
 	cartridge(
 		dir.path(),
 		"left",
-		json!({"name": "left", "entry": "init.lua", "provide": ["store.get"]}),
+		json!({"name": "left", "entry": "init.lua", "on": ["store.get"]}),
 	);
 	cartridge(
 		dir.path(),
 		"right",
-		json!({"name": "right", "entry": "init.lua", "provide": ["store.get"]}),
+		json!({"name": "right", "entry": "init.lua", "on": ["store.get"]}),
 	);
 	let ledger = Ledger::scan(dir.path());
 	let bound = ledger.resolve("asker", "store.get");
@@ -254,7 +254,7 @@ fn an_unreadable_document_is_an_entry_with_its_reason() {
 	let ledger = Ledger::scan(dir.path());
 	assert_eq!(ledger.len(), 1);
 	let entry = ledger.get("broken").unwrap();
-	assert_eq!(entry.provide.len() + entry.needs.len(), 0);
+	assert_eq!(entry.on.len() + entry.needs.len(), 0);
 	assert!(entry.unread.is_some());
 }
 

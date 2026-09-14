@@ -1,30 +1,23 @@
-//! What an entry will run as, and the directory each cartridge is handed.
+//! What an entry declares, settled, and the directory each node is handed.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mlua::{Function, LuaSerdeExt};
-use transport::cartridge::{Address, Directory, Grant as Access, Scope};
+use crate::transport::cartridge::{Address, Directory, EventEntry, Grant as Access};
 
 use crate::error::{Error, Result};
-use crate::loader::{Declared, Entry, Grant};
+use crate::loader::{Declared, Entry, Event, Grant};
 
 use super::Host;
-
-#[derive(Clone)]
-pub enum Kind {
-	Process(Vec<String>),
-	Lua(Function),
-}
 
 #[derive(Clone)]
 pub struct Plan {
 	pub id: String,
 	pub name: String,
 	pub root: PathBuf,
-	pub kind: Kind,
-	pub provide: Vec<String>,
+	pub entry: PathBuf,
+	pub events: BTreeMap<String, Event>,
 	pub needs: Vec<String>,
 	pub on: Vec<String>,
 	pub config: serde_json::Value,
@@ -34,15 +27,8 @@ pub struct Plan {
 
 impl Plan {
 	/// Everything that changes what the other cartridges are told.
-	pub(crate) fn wiring(&self) -> (&[String], &[String], &[String]) {
-		(&self.provide, &self.needs, &self.on)
-	}
-}
-
-fn keys(lua: &mlua::Lua, table: &mlua::Table, field: &str) -> mlua::Result<Vec<String>> {
-	match table.get::<mlua::Value>(field)? {
-		mlua::Value::Nil => Ok(Vec::new()),
-		value => lua.from_value(value),
+	pub(crate) fn wiring(&self) -> (Vec<&String>, &[String], &[String]) {
+		(self.events.keys().collect(), &self.needs, &self.on)
 	}
 }
 
@@ -50,7 +36,7 @@ fn exact(keys: &[String]) -> Result<()> {
 	for key in keys {
 		if key.trim().is_empty() || key.contains('*') {
 			return Err(Error::Profile(format!(
-				"`{key}` must be a nonempty exact key (wildcards are unsupported)"
+				"`{key}` must be a nonempty exact event name (wildcards are unsupported)"
 			)));
 		}
 	}
@@ -63,95 +49,35 @@ fn dedup(keys: &mut Vec<String>) {
 }
 
 impl Host {
-	/// Evaluate an entry's Lua and settle its configuration, without starting it.
+	/// Read an entry's declaration and settle its configuration, without running it.
 	pub(crate) fn plan(self: &Arc<Self>, entry: &Entry) -> Result<Plan> {
 		crate::loader::entries::validate(entry)?;
 		let declared = crate::loader::resolve(&self.dir.join(&entry.path))?;
 		let config = self.settle_config(&declared, entry.config.clone())?;
-		let source = std::fs::read_to_string(&declared.entry)
-			.map_err(|e| Error::file(&declared.entry, e))?;
-		let module: mlua::Value = self
-			.lua
-			.load(&source)
-			.set_name(declared.entry.to_string_lossy())
-			.eval()?;
 		let root = declared
 			.entry
 			.parent()
 			.expect("resolved entry has a folder")
 			.to_path_buf();
-		let mut sources = declared.sources.clone();
-		let (kind, mut provide, mut needs, extra, mut on) = match &module {
-			mlua::Value::UserData(descriptor) => {
-				let process = descriptor.borrow::<crate::lua::Process>()?;
-				let mut command = process.command.clone();
-				let executable = executable(&command[0], &root)?;
-				command[0] = executable.to_string_lossy().into_owned();
-				sources.push(executable);
-				(
-					Kind::Process(command),
-					Vec::new(),
-					Vec::new(),
-					process.inject.clone(),
-					Vec::new(),
-				)
-			}
-			mlua::Value::Table(table) => {
-				let apply: Function = table.get("apply")?;
-				let mut needs = keys(&self.lua, table, "needs")?;
-				needs.extend(keys(&self.lua, table, "inject")?);
-				(
-					Kind::Lua(apply),
-					keys(&self.lua, table, "provide")?,
-					needs,
-					Vec::new(),
-					keys(&self.lua, table, "on")?,
-				)
-			}
-			_ => {
-				return Err(Error::Profile(format!(
-					"{}: an entry returns a table with `apply` or cartridge.process(...)",
-					declared.entry.display()
-				)))
-			}
-		};
-		if !declared.provide.is_empty() {
-			provide = declared.provide.clone();
-		}
-		if !declared.needs.is_empty() {
-			needs = declared.needs.clone();
-		}
-		if !declared.on.is_empty() {
-			on = declared.on.clone();
-		}
-		needs.extend(extra);
+		let mut needs = declared.needs.clone();
 		needs.extend(entry.inject.iter().cloned());
-		exact(&provide)?;
+		let mut on = declared.on.clone();
 		exact(&needs)?;
 		exact(&on)?;
 		dedup(&mut needs);
 		dedup(&mut on);
-		let mut seen = std::collections::HashSet::new();
-		for key in &provide {
-			if !seen.insert(key) {
-				return Err(Error::Profile(format!(
-					"duplicate provide declaration `{key}`"
-				)));
-			}
-		}
-		needs.retain(|key| !provide.contains(key));
 		let grant = self.expand_grant(&declared.grant, &config)?;
 		Ok(Plan {
 			id: entry.id.clone(),
 			name: declared.name.clone(),
 			root,
-			kind,
-			provide,
+			entry: declared.entry.clone(),
+			events: declared.events.clone(),
 			needs,
 			on,
 			config,
 			grant,
-			sources,
+			sources: declared.sources.clone(),
 		})
 	}
 
@@ -229,35 +155,66 @@ impl Host {
 		})
 	}
 
-	pub(crate) fn token(&self, from: &str, to: &str, scope: Scope) -> String {
+	pub(crate) fn token(&self, from: &str, to: &str) -> String {
 		self.edges
 			.lock()
-			.entry((from.to_owned(), to.to_owned(), scope))
-			.or_insert_with(transport::token)
+			.entry((from.to_owned(), to.to_owned()))
+			.or_insert_with(crate::transport::token)
 			.clone()
 	}
 }
 
-/// Which plan provides each key. A key provided twice is an error on the later entry.
-pub(crate) fn providers(plans: &[Arc<Plan>]) -> (HashMap<String, String>, HashMap<String, String>) {
-	let mut providers = HashMap::new();
+/// Every event the plans declare, by name, with its owner; and the plans that
+/// declare one twice, with why they fail.
+pub(crate) fn catalogue(
+	plans: &[Arc<Plan>],
+) -> (BTreeMap<String, (String, Event)>, HashMap<String, String>) {
+	let mut catalogue = BTreeMap::new();
 	let mut clashes = HashMap::new();
 	for plan in plans {
-		for key in &plan.provide {
-			match providers.get(key) {
-				Some(first) => {
+		for (name, event) in &plan.events {
+			match catalogue.get(name) {
+				Some((first, _)) => {
 					clashes.insert(
 						plan.id.clone(),
-						format!("`{key}` is already provided by `{first}`"),
+						format!("`{name}` is already declared by `{first}`"),
 					);
 				}
 				None => {
-					providers.insert(key.clone(), plan.id.clone());
+					catalogue.insert(name.clone(), (plan.id.clone(), event.clone()));
 				}
 			}
 		}
 	}
-	(providers, clashes)
+	(catalogue, clashes)
+}
+
+/// Why `plan` may not start against `catalogue`: a listened-to or needed event
+/// nobody declares.
+pub(crate) fn unmatched(
+	plan: &Plan,
+	catalogue: &BTreeMap<String, (String, Event)>,
+) -> Option<String> {
+	for (what, names) in [("listens to", &plan.on), ("needs", &plan.needs)] {
+		if let Some(name) = names.iter().find(|name| !catalogue.contains_key(*name)) {
+			return Some(format!("{what} `{name}`, which no cartridge declares"));
+		}
+	}
+	None
+}
+
+/// Which plans listen to each event, in composition order.
+pub(crate) fn listeners(plans: &[Arc<Plan>]) -> HashMap<String, Vec<String>> {
+	let mut listeners: HashMap<String, Vec<String>> = HashMap::new();
+	for plan in plans {
+		for name in &plan.on {
+			listeners
+				.entry(name.clone())
+				.or_default()
+				.push(plan.id.clone());
+		}
+	}
+	listeners
 }
 
 /// The directory of `plan` within `plans`.
@@ -265,114 +222,47 @@ pub(crate) fn directory(
 	host: &Host,
 	plan: &Plan,
 	plans: &[Arc<Plan>],
-	providers: &HashMap<String, String>,
+	catalogue: &BTreeMap<String, (String, Event)>,
 ) -> Directory {
-	let by_id: HashMap<&str, &Arc<Plan>> = plans.iter().map(|p| (p.id.as_str(), p)).collect();
 	let mut directory = Directory {
+		needs: plan.needs.clone(),
 		host: Some(Address {
 			cartridge: "host".into(),
 			socket: host.inner_socket(),
-			token: host.token(&plan.id, "host", Scope::Call),
+			token: host.token(&plan.id, "host"),
 		}),
 		..Directory::default()
 	};
-	for key in &plan.needs {
-		if let Some(provider) = providers.get(key) {
-			directory.needs.insert(
-				key.clone(),
-				Address {
-					cartridge: provider.clone(),
-					socket: host.socket(provider),
-					token: host.token(&plan.id, provider, Scope::Call),
-				},
-			);
-		}
-	}
-	for listener in plans.iter().filter(|p| !p.on.is_empty()) {
-		for name in &listener.on {
-			directory
-				.events
-				.entry(name.clone())
-				.or_default()
-				.push(Address {
-					cartridge: listener.id.clone(),
-					socket: host.socket(&listener.id),
-					token: host.token(&plan.id, &listener.id, Scope::Event),
-				});
-		}
-	}
-	let mut callers: BTreeMap<String, Vec<String>> = BTreeMap::new();
-	for other in plans {
-		for key in &other.needs {
-			if providers.get(key).is_some_and(|p| *p == plan.id) {
-				callers
-					.entry(other.id.clone())
-					.or_default()
-					.push(key.clone());
-			}
-		}
-	}
-	for (from, names) in callers {
-		directory.accept.insert(
-			host.token(&from, &plan.id, Scope::Call),
-			Access {
-				from,
-				scope: Scope::Call,
-				names,
+	for (name, (owner, event)) in catalogue {
+		let listeners = plans
+			.iter()
+			.filter(|p| p.on.iter().any(|n| n == name))
+			.map(|listener| Address {
+				cartridge: listener.id.clone(),
+				socket: host.socket(&listener.id),
+				token: host.token(&plan.id, &listener.id),
+			})
+			.collect();
+		directory.events.insert(
+			name.clone(),
+			EventEntry {
+				owner: owner.clone(),
+				description: event.description.clone(),
+				schema: event.schema.clone(),
+				listeners,
 			},
 		);
 	}
 	if !plan.on.is_empty() {
-		for other in by_id.keys() {
+		for other in plans.iter().filter(|p| p.id != plan.id) {
 			directory.accept.insert(
-				host.token(other, &plan.id, Scope::Event),
+				host.token(&other.id, &plan.id),
 				Access {
-					from: (*other).to_owned(),
-					scope: Scope::Event,
+					from: other.id.clone(),
 					names: plan.on.clone(),
 				},
 			);
 		}
 	}
 	directory
-}
-
-/// Resolve a program name: the cartridge's `.cartridge/bin` and `bin`, beside
-/// the running host, then `PATH`. A path with a separator is relative to the cartridge.
-pub fn executable(program: &str, root: &std::path::Path) -> Result<PathBuf> {
-	use std::os::unix::fs::PermissionsExt;
-	let path = std::path::Path::new(program);
-	let candidates: Vec<PathBuf> = if path.components().count() > 1 || path.is_absolute() {
-		vec![root.join(path)]
-	} else {
-		let beside = std::env::current_exe()
-			.ok()
-			.and_then(|exe| exe.parent().map(|dir| dir.join(program)));
-		[
-			root.join(".cartridge/bin").join(program),
-			root.join("bin").join(program),
-		]
-		.into_iter()
-		.chain(beside)
-		.chain(std::env::var_os("PATH").into_iter().flat_map(|paths| {
-			std::env::split_paths(&paths)
-				.map(|dir| dir.join(program))
-				.collect::<Vec<_>>()
-		}))
-		.collect()
-	};
-	candidates
-		.into_iter()
-		.find(|path| {
-			path.metadata()
-				.is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-		})
-		.ok_or_else(|| {
-			Error::process(
-				program,
-				"process executable was not found or is not executable",
-			)
-		})?
-		.canonicalize()
-		.map_err(|e| Error::file(program, e))
 }

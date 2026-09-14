@@ -2,9 +2,9 @@
 
 use std::process::ExitCode;
 
+use cartridge::transport::rpc::Incoming;
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
-use transport::rpc::Incoming;
 
 use super::Project;
 
