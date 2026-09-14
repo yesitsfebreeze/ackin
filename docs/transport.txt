@@ -77,17 +77,13 @@ The base injects `cartridge` into every init.lua:
 
 init.lua registers at top level. A function it returns runs on dispose.
 
-Every listener runs as a coroutine. A call that waits on the base (bail,
-parallel, gather, host, subscribe, a helper's :request) yields, so a node
-serves other events while one listener waits. Where Lua cannot yield, from a
-native module's Rust code or inside a sort comparator, the same call blocks
-the node until it returns; keep long waits in init.lua.
-
 Every listener, subscriber, line handler, disposer and init.lua itself runs as
 a coroutine. `bail`, `gather`, `subscribe`, `host` and a helper's `request` and
 `send` yield while they wait, so one node serves many events at once, and an
 event that comes back to its sender is answered while the sender's handler
-waits.
+waits. Where Lua cannot yield, from a native module's Rust code or inside a
+sort comparator, the same call blocks the node until it returns; keep long
+waits in init.lua.
 
 NATIVE MODULES
 
