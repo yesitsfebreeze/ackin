@@ -282,8 +282,8 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 		));
 	}
 	// Metadata of any path, so creating a granted directory can walk its parents;
-	// POSIX semaphores, which embedded stores (LMDB) use for their locks.
-	profile.push_str("(allow file-read-metadata)\n(allow ipc-posix-sem)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow process-fork)\n");
+	// POSIX and System V semaphores, which embedded stores (LMDB) use for their locks.
+	profile.push_str("(allow file-read-metadata)\n(allow ipc-posix-sem)\n(allow ipc-sysv-sem)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow process-fork)\n");
 	profile
 }
 
