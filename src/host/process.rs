@@ -77,6 +77,9 @@ pub(super) async fn start(
 	.env(crate::node::ENTRY_ENV, &plan.entry)
 	.env(crate::node::ENTRY_SHA256_ENV, &plan.entry_sha256)
 	.env(crate::node::ROOT_ENV, &plan.root)
+	// The binary this host runs as, so a helper that re-enters the CLI execs
+	// the one its exec grant resolved to, not a stale sibling build.
+	.env("CARTRIDGE_BIN", &exe)
 	.env(
 		crate::node::LISTEN_ENV,
 		serde_json::to_string(&plan.listen)?,
