@@ -53,7 +53,7 @@ The base injects `cartridge` into every init.lua:
   cartridge.on_dispose(fn)        runs when the cartridge stops
   cartridge.load(name)            a native Lua module shipped by this cartridge
   cartridge.spawn(cmd, opts)      a helper program: :request(v), :send(v), :on_line(fn), :kill()
-  cartridge.pipe(fn)              a FIFO path; every line written to it reaches fn on the node thread
+  cartridge.pipe([fn])            a FIFO path a module's threads write lines to
   cartridge.name, cartridge.config, cartridge.root, cartridge.trace()
   cartridge.array_metatable       the table that marks a Lua table as a JSON array
 
@@ -69,8 +69,24 @@ state it reads the `cartridge` global to send events. A module's own mlua does
 not share the base's array marker, so a table it means as a JSON array (an empty
 one above all) gets `cartridge.array_metatable` set as its metatable. A module's
 own threads must not call into Lua: the module's mlua and the base's lock the
-state separately. A thread that has something to say writes a line to a
-`cartridge.pipe`; the handler runs on the node thread and may call anything. init.lua loads it with
+state separately. A thread that has something to say writes a protocol line
+(below) to a `cartridge.pipe`; the node serves it itself.
+
+PROTOCOL LINES
+
+A helper program's stdout and a pipe carry lines of JSON. The node serves these
+shapes in Rust, without touching Lua, so they work while a Lua handler is busy
+waiting, for example on `:request`:
+
+  {"emit"|"notify": name, "data": …}                     sent to listeners
+  {"publish": channel, "data": …}                        published on this cartridge's channel
+  {"ask": id, "bail"|"gather": name, "args": …}          answered as {"ask": id, "result"|"error": …}
+  {"ask": id, "host": method, "params": …}               the same, for a host query
+
+On a helper's stdout the answer to an ask is written to its stdin. A line with
+an `id` answers the `:request` with that id; any other line reaches the
+`:on_line` handler (or the pipe's `fn`) on the node thread, which the handler
+must not block on. init.lua loads it with
 `cartridge.load("<name>")` from the cartridge folder (or target/{release,debug}
 while developing) and wires its functions to events.
 

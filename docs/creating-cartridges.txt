@@ -87,8 +87,10 @@ The module's crate must not share a Cargo workspace with the base. Ship the
 built `libhello.dylib` (or `.so`) in the cartridge folder; while developing,
 `target/release` and `target/debug` beside init.lua are searched too.
 
-Functions are called on a runtime thread and may block; a cartridge that does
-long work keeps its own threads or runtime inside the module.
+Functions are called on the node thread and may block; a cartridge that does
+long work keeps its own threads or runtime inside the module. Those threads
+never call into Lua: they write protocol lines to a FIFO from
+`cartridge.pipe()` in init.lua, and the node serves them.
 
 A HELPER PROGRAM
 
@@ -100,8 +102,11 @@ JSON; the program knows nothing of the base.
   app:on_line(function(line) if line.event then cartridge.emit(line.event, line.data) end end)
 
 `request` writes one line with an `id` and returns the line the program writes
-back with that `id`; every other line goes to `on_line`. The program's stderr is
-recorded by the base. Its executable must be in the cartridge's `grant.exec`.
+back with that `id`. A program that needs the base while answering writes an
+ask line, `{"ask": "a1", "bail": "memory", "args": …}`, and reads the answer on
+its stdin; it emits and publishes with `{"emit": …}` and `{"publish": …}` lines
+(transport.txt, PROTOCOL LINES). Every other line goes to `on_line`. Its stderr
+is recorded by the base. Its executable must be in the cartridge's `grant.exec`.
 
 MANIFEST FIELDS
 

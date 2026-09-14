@@ -515,3 +515,35 @@ async fn a_pipe_wakes_the_node_from_outside() {
 	assert_eq!(seen, json!([{"n": 1}, "plain"]));
 	host.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_helper_asks_the_base_while_answering() {
+	let dir = tempfile::tempdir().unwrap();
+	greeter(dir.path());
+	// A helper in shell: for the request line it asks `greet`, then answers with what came back.
+	write(
+		dir.path(),
+		"asker/helper.sh",
+		r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  printf '{"ask":"a1","bail":"greet","args":{"name":"helper"}}\n'
+  IFS= read -r reply
+  answer=$(printf '%s' "$reply" | sed -n 's/.*"result":"\([^"]*\)".*/\1/p')
+  printf '{"id":%s,"result":"%s"}\n' "$id" "$answer"
+done
+"#,
+	);
+	cartridge(
+		dir.path(),
+		"asker",
+		json!({"name": "asker", "entry": "init.lua", "events": {"ask": {}}, "needs": ["greet"], "listen": ["ask"], "grant": {"exec": ["/bin/sh", "/usr/bin/sed", "/usr/bin/printf"]}}),
+		r#"local app = cartridge.spawn({"/bin/sh", cartridge.root .. "/helper.sh"})
+		cartridge.listen("ask", function() return app:request({}) end)"#,
+	);
+	profile(dir.path(), &["greeter", "asker"]);
+	let host = boot(dir.path()).await;
+	let answer = host.bail("ask", json!(null)).await.unwrap().unwrap();
+	assert_eq!(answer["result"], "hello helper");
+	host.stop().await;
+}

@@ -116,14 +116,11 @@ fn interpreter(binary: &Path) -> Option<PathBuf> {
 	path.canonicalize().ok()
 }
 
-/// The interpreters one shebang resolves into, including the launcher
-/// variants the platform inserts between the shebang and the real shell.
-fn interpreters(binary: &Path) -> Vec<PathBuf> {
-	let Some(first) = interpreter(binary) else {
-		return Vec::new();
-	};
-	let mut all = vec![first.clone()];
-	if first == Path::new("/bin/sh") {
+/// A program and the launcher variants the platform execs behind it:
+/// `/bin/sh` on macOS is a launcher for `/bin/bash` or `/bin/zsh`.
+fn with_variants(program: PathBuf) -> Vec<PathBuf> {
+	let mut all = vec![program.clone()];
+	if program == Path::new("/bin/sh") {
 		for variant in ["/bin/bash", "/bin/zsh"] {
 			let variant = PathBuf::from(variant);
 			if variant.is_file() {
@@ -132,6 +129,11 @@ fn interpreters(binary: &Path) -> Vec<PathBuf> {
 		}
 	}
 	all
+}
+
+/// The interpreters one shebang resolves into, with their launcher variants.
+fn interpreters(binary: &Path) -> Vec<PathBuf> {
+	interpreter(binary).map(with_variants).unwrap_or_default()
 }
 
 /// The executable basename or path a grant names, resolved the way the host
@@ -196,7 +198,7 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	exec.extend(interpreters(&binary));
 	for program in &grant.exec {
 		if let Some(path) = granted_exec(program, &root) {
-			exec.push(path);
+			exec.extend(with_variants(path));
 		}
 	}
 	exec.sort();

@@ -265,11 +265,18 @@ fn install(
 			Ok(module)
 		})?
 	})?;
-	global.set("spawn", lua.create_function(spawn)?)?;
 	global.set("pipe", {
-		let dir = socket_dir.clone();
+		let (dir, ctx) = (socket_dir.clone(), ctx.clone());
 		let counter = Arc::new(AtomicU64::new(1));
-		lua.create_function(move |lua, f: Function| pipe(lua, &dir, &counter, f))?
+		lua.create_function(move |lua, f: Option<Function>| pipe(lua, &ctx, &dir, &counter, f))?
+	})?;
+	global.set("spawn", {
+		let ctx = ctx.clone();
+		lua.create_function(
+			move |lua, (command, options): (mlua::Value, Option<Table>)| {
+				spawn(lua, &ctx, command, options)
+			},
+		)?
 	})?;
 	lua.globals().set("cartridge", global)
 }
@@ -306,9 +313,60 @@ fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> 
 	open.call::<mlua::Value>(name)
 }
 
-/// A FIFO the node reads: every line written to it, from any thread of a
-/// native module, reaches `f` on the node's Lua thread. Returns the path.
-fn pipe(lua: &Lua, dir: &Path, counter: &AtomicU64, f: Function) -> mlua::Result<String> {
+/// A protocol line from a helper or a pipe, served by the node in Rust without
+/// touching Lua, so it works while a Lua handler is busy:
+///   {"emit"|"notify"|"publish": name, "data"}
+///   {"ask": id, "bail"|"gather"|"host": name, "args"|"params"}  answered as {"ask": id, "result"|"error"}
+/// Anything else is not protocol and goes to the Lua handler.
+async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value)) -> bool {
+	let name = |key: &str| value[key].as_str().map(str::to_owned);
+	if let Some(name) = name("emit") {
+		let _ = ctx.emit(&name, value["data"].clone());
+		return true;
+	}
+	if let Some(name) = name("notify") {
+		let _ = ctx.notify(&name, value["data"].clone());
+		return true;
+	}
+	if let Some(channel) = name("publish") {
+		ctx.publish(&channel, value["data"].clone());
+		return true;
+	}
+	let Some(ask) = value.get("ask").cloned() else {
+		return false;
+	};
+	let result = if let Some(name) = name("bail") {
+		ctx.bail(&name, value["args"].clone())
+			.await
+			.map(|a| a.unwrap_or(Value::Null))
+	} else if let Some(name) = name("gather") {
+		ctx.gather(&name, value["args"].clone()).await.map(|rows| {
+			json!(rows
+				.into_iter()
+				.map(|(from, data)| json!({ "from": from, "data": data }))
+				.collect::<Vec<_>>())
+		})
+	} else if let Some(method) = name("host") {
+		ctx.host(&method, value["params"].clone()).await
+	} else {
+		return false;
+	};
+	answer(match result {
+		Ok(result) => json!({ "ask": ask, "result": result }),
+		Err(error) => json!({ "ask": ask, "error": error }),
+	});
+	true
+}
+
+/// A FIFO the node reads: protocol lines are served by the node itself; every
+/// other line reaches `f` on the node's Lua thread. Returns the path.
+fn pipe(
+	lua: &Lua,
+	ctx: &Ctx,
+	dir: &Path,
+	counter: &AtomicU64,
+	f: Option<Function>,
+) -> mlua::Result<String> {
 	let path = dir.join(format!(
 		"{}.{}.fifo",
 		std::process::id(),
@@ -324,7 +382,7 @@ fn pipe(lua: &Lua, dir: &Path, counter: &AtomicU64, f: Function) -> mlua::Result
 			std::io::Error::last_os_error()
 		)));
 	}
-	let lua = lua.clone();
+	let (lua, ctx) = (lua.clone(), ctx.clone());
 	let reader = path.clone();
 	tokio::spawn(async move {
 		// Held open for writing by the node itself, so readers never see EOF between writers.
@@ -341,6 +399,10 @@ fn pipe(lua: &Lua, dir: &Path, counter: &AtomicU64, f: Function) -> mlua::Result
 		let mut lines = BufReader::new(file).lines();
 		while let Ok(Some(line)) = lines.next_line().await {
 			let value: Value = serde_json::from_str(&line).unwrap_or(Value::String(line));
+			if relay(&ctx, &value, |_| {}).await {
+				continue;
+			}
+			let Some(f) = &f else { continue };
 			let result = tokio::task::block_in_place(|| -> mlua::Result<()> {
 				f.call::<()>(lua.to_value(&value)?)
 			});
@@ -366,7 +428,9 @@ struct Spawned {
 
 fn spawn(
 	lua: &Lua,
-	(command, options): (mlua::Value, Option<Table>),
+	ctx: &Ctx,
+	command: mlua::Value,
+	options: Option<Table>,
 ) -> mlua::Result<mlua::AnyUserData> {
 	let command: Vec<String> = match command {
 		mlua::Value::String(s) => s.to_str()?.split_whitespace().map(str::to_owned).collect(),
@@ -410,7 +474,7 @@ fn spawn(
 		timeout,
 		child: Mutex::new(Some(child)),
 	});
-	let (reader, reader_lua) = (spawned.clone(), lua.clone());
+	let (reader, reader_lua, ctx) = (spawned.clone(), lua.clone(), ctx.clone());
 	tokio::spawn(async move {
 		let lua = reader_lua;
 		let mut lines = BufReader::new(stdout).lines();
@@ -421,6 +485,16 @@ fn spawn(
 				.and_then(|id| reader.pending.lock().expect("pending lock").remove(&id));
 			if let Some(waiter) = waiter {
 				let _ = waiter.send(value);
+				continue;
+			}
+			let back = reader.clone();
+			if relay(&ctx, &value, move |answer| {
+				tokio::spawn(async move {
+					let _ = back.write(&answer).await;
+				});
+			})
+			.await
+			{
 				continue;
 			}
 			let handler = reader.on_line.lock().expect("on_line lock").clone();
