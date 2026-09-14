@@ -1,1 +1,0 @@
-{"rustc":10088478398040096810,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[6341269158792963701,"build_script_main",false,2281851524385849310]],"local":[{"RerunIfChanged":{"output":"debug/build/mlua-sys-68a68cdcb19ac526/output","paths":["build"]}}],"rustflags":[],"config":0,"compile_kind":0}
