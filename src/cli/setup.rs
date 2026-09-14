@@ -493,7 +493,7 @@ async fn run_setups(
 		]);
 	}
 	let profile = root.join(".cartridge");
-	let host = Host::new(dir, &profile, false)?;
+	let host = Host::new(dir, &profile)?;
 	let (config, mut report) = started(&host, || async {
 		let mut config = Map::new();
 		let mut report = Vec::new();
@@ -624,7 +624,7 @@ fn answer(id: &str, question: &Value, default: &Value) -> Result<Value> {
 /// `doctor`: every composed cartridge that declares a `doctor` event is asked
 /// whether it is healthy here, and the answers are printed one per line.
 pub(crate) async fn doctor(project: &Project) -> Result<ExitCode> {
-	let host = Host::new(&project.dir, &project.profile, false)?;
+	let host = Host::new(&project.dir, &project.profile)?;
 	let composed = host
 		.entries()
 		.map_err(|e| Error::Profile(format!("{}: {e}", project.profile.join(INIT).display())))?;

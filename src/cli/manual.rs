@@ -27,7 +27,7 @@ const HOST_ABOUT: &str =
 	"the runtime itself: what a cartridge is, how one is written, how this composition is read";
 
 pub(crate) fn help(project: &Project, what: &str, as_json: bool) -> Result<ExitCode> {
-	let host = Host::new(&project.dir, &project.profile, false)?;
+	let host = Host::new(&project.dir, &project.profile)?;
 	let cartridges = host.manifest().map_err(|e| {
 		Error::Profile(format!(
 			"{}: {e}",

@@ -19,7 +19,7 @@ fn exit(problems: usize) -> ExitCode {
 }
 
 pub(crate) fn list(project: &Project) -> Result<ExitCode> {
-	let host = Host::new(&project.dir, &project.profile, false)?;
+	let host = Host::new(&project.dir, &project.profile)?;
 	let cartridges = host.manifest().map_err(|e| {
 		Error::Profile(format!(
 			"{}: {e}",

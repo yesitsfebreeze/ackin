@@ -91,7 +91,6 @@ impl Slot {
 pub struct Host {
 	pub(crate) dir: PathBuf,
 	pub(crate) profile: PathBuf,
-	pub(crate) yolo: bool,
 	pub(crate) lua: mlua::Lua,
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
 	sockets: PathBuf,
@@ -118,11 +117,7 @@ impl Drop for Host {
 
 impl Host {
 	/// `dir` holds the cartridges, `profile` the `init.lua` and `config.lua`.
-	pub fn new(
-		dir: impl Into<PathBuf>,
-		profile: impl Into<PathBuf>,
-		yolo: bool,
-	) -> Result<Arc<Self>> {
+	pub fn new(dir: impl Into<PathBuf>, profile: impl Into<PathBuf>) -> Result<Arc<Self>> {
 		let dir: PathBuf = dir.into();
 		let profile: PathBuf = profile.into();
 		let lua = crate::lua::interpreter()?;
@@ -136,7 +131,6 @@ impl Host {
 			sockets: socket::run_dir(&profile)?,
 			dir: dir.canonicalize().unwrap_or(dir),
 			profile,
-			yolo,
 			lua,
 			solo: Mutex::new(None),
 			ctx: Ctx::new(

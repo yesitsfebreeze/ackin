@@ -132,19 +132,10 @@ impl Host {
 				carried = true;
 			}
 		}
-		let mut config = match declared.settings.is_empty() && !carried {
+		let config = match declared.settings.is_empty() && !carried {
 			true => serde_json::Value::Null,
 			false => crate::settings::apply(&declared.settings, settled, &declared.name)?,
 		};
-		if self.yolo && matches!(declared.name.as_str(), "agent" | "memo") {
-			if config.is_null() {
-				config = serde_json::json!({});
-			}
-			config
-				.as_object_mut()
-				.ok_or_else(|| Error::Settings("yolo requires object cartridge config".into()))?
-				.insert("yolo".into(), true.into());
-		}
 		Ok(config)
 	}
 

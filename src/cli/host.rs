@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use super::{fail, stopped, Project, FAILED};
 
 fn host(project: &Project) -> Result<Arc<Host>> {
-	Host::new(&project.dir, &project.profile, project.yolo)
+	Host::new(&project.dir, &project.profile)
 }
 
 /// Serve the host socket beside a foreground run, when no other host serves this project.

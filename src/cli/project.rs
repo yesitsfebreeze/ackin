@@ -10,7 +10,6 @@ use cartridge::{Error, Result};
 pub(crate) struct Project {
 	pub(crate) dir: PathBuf,
 	pub(crate) profile: PathBuf,
-	pub(crate) yolo: bool,
 }
 
 /// Bind this invocation to its project.
@@ -21,7 +20,7 @@ pub(crate) struct Project {
 /// project is decided once, here, before anything is loaded — and a command
 /// typed in a subdirectory joins the runtime already serving that project
 /// instead of starting a second one beside it.
-pub(crate) fn locate(dir: Option<PathBuf>, yolo: bool) -> Result<Project> {
+pub(crate) fn locate(dir: Option<PathBuf>) -> Result<Project> {
 	// Cartridges are found under the project itself unless `--dir` names another root.
 	let dir = dir.map(|dir| absolute(&dir));
 	let root = loader::root();
@@ -41,7 +40,7 @@ pub(crate) fn locate(dir: Option<PathBuf>, yolo: bool) -> Result<Project> {
 		}
 	}
 	cartridge::settings::settle(&profile);
-	Ok(Project { dir, profile, yolo })
+	Ok(Project { dir, profile })
 }
 
 /// A path pinned to the directory this process started in, lexically: the

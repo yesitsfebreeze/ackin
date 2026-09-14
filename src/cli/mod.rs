@@ -75,7 +75,7 @@ pub fn main() -> ExitCode {
 				ask,
 			} => trust::run(path.as_deref(), revoke, list, ask),
 			command => {
-				let project = project::locate(cli.dir, cli.yolo)?;
+				let project = project::locate(cli.dir)?;
 				runtime.block_on(run(command, &project))
 			}
 		}

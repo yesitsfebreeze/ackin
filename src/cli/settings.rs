@@ -18,7 +18,7 @@ pub(crate) fn settings(
 	as_json: bool,
 	template: bool,
 ) -> Result<ExitCode> {
-	let host = Host::new(&project.dir, &project.profile, false)?;
+	let host = Host::new(&project.dir, &project.profile)?;
 	let entries = host.settings().map_err(|e| {
 		Error::Profile(format!(
 			"{}: {e}",

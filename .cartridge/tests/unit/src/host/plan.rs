@@ -32,7 +32,7 @@ fn plan(id: &str, events: &[(&str, Option<u64>)], needs: &[&str], listen: &[&str
 /// `a.ask` too; `d` listens to `b.news` and sends nothing.
 fn composition() -> (Arc<Host>, Vec<Arc<Plan>>, BTreeMap<String, Directory>) {
 	let dir = tempfile::tempdir().unwrap();
-	let host = Host::new(dir.path(), dir.path().join(".cartridge"), false).unwrap();
+	let host = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();
 	let plans = vec![
 		plan("a", &[("a.ask", Some(5))], &[], &["a.ask"]),
 		plan("b", &[("b.news", None)], &["a.ask"], &[]),
