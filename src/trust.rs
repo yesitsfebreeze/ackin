@@ -176,12 +176,34 @@ fn collect(dir: &Path, into: &mut Vec<PathBuf>) -> Result<()> {
 
 /// Approve a directory as it is now, replacing any earlier record of it.
 pub fn record(dir: &Path) -> Result<Record> {
-	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
 	let mut found = Vec::new();
-	collect(&project, &mut found)?;
-	let files = found
-		.into_iter()
-		.map(|file| Ok((file.clone(), digest(&file)?)))
+	collect(
+		&dir.canonicalize().map_err(|e| Error::file(dir, e))?,
+		&mut found,
+	)?;
+	record_files(dir, &found)
+}
+
+/// Approve exactly the named files as they are now, under one directory,
+/// replacing any earlier record of it. The caller says what it approves:
+/// setup records what it wrote and chose, not what a tree happens to hold.
+/// Every file must live under `dir`; a missing one is an error, not a skip.
+pub fn record_files(dir: &Path, files: &[PathBuf]) -> Result<Record> {
+	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
+	let files = files
+		.iter()
+		.map(|file| {
+			let canonical = file.canonicalize().map_err(|e| Error::file(file, e))?;
+			if !canonical.starts_with(&project) {
+				return Err(Error::Profile(format!(
+					"{} is not under {}",
+					canonical.display(),
+					project.display()
+				)));
+			}
+			let digest = digest(&canonical)?;
+			Ok((canonical, digest))
+		})
 		.collect::<Result<_>>()?;
 	let trusted_at = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)

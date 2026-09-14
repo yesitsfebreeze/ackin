@@ -1,5 +1,12 @@
 use super::*;
 
+/// `$CARTRIDGE_HOME` is process-global: the tests that point it somewhere
+/// take turns, so one test's store is never another's mid-run.
+fn trust_home() -> std::sync::MutexGuard<'static, ()> {
+	static TURNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+	TURNS.lock().unwrap()
+}
+
 /// A cartridge folder `under/<name>.ctg`: `more` is laid over the manifest,
 /// and `lua` is its `init.lua`.
 fn cartridge(under: &Path, name: &str, description: &str, more: Value, lua: &str) {
@@ -87,6 +94,7 @@ fn setup_offers_what_it_finds_and_the_catalog_and_filters_by_subsequence() {
 
 #[test]
 fn setup_links_the_chosen_writes_a_profile_the_host_reads_and_lets_a_cartridge_ask() {
+	let _turn = trust_home();
 	let tmp = tempfile::tempdir().unwrap();
 	std::env::set_var("CARTRIDGE_HOME", tmp.path().join("home"));
 	let checkouts = tmp.path().join("checkouts");
@@ -200,6 +208,7 @@ fn a_setup_or_doctor_event_the_cartridge_does_not_listen_to_is_refused() {
 /// have written: a file that changed while the cartridges ran fails setup.
 #[test]
 fn a_file_changed_by_the_exchange_is_not_recorded() {
+	let _turn = trust_home();
 	let tmp = tempfile::tempdir().unwrap();
 	std::env::set_var("CARTRIDGE_HOME", tmp.path().join("home"));
 	let root = tmp.path().join("project");
@@ -222,4 +231,44 @@ fn a_file_changed_by_the_exchange_is_not_recorded() {
 		error.contains("changed while the setup exchange ran"),
 		"{error}"
 	);
+}
+
+/// Choosing is the approval: setup records the profile it wrote and each
+/// cartridge it chose — a folder the tree already held stays untrusted, and
+/// so does a config.lua setup did not write.
+#[test]
+fn setup_trusts_what_it_chose_not_what_the_tree_holds() {
+	let _turn = trust_home();
+	let tmp = tempfile::tempdir().unwrap();
+	std::env::set_var("CARTRIDGE_HOME", tmp.path().join("home"));
+	let checkouts = tmp.path().join("checkouts");
+	cartridge(&checkouts, "alpha", "First.", json!({}), "");
+	let project = tmp.path().join("project");
+	std::fs::create_dir_all(&project).unwrap();
+	let builtin = project.join("builtin");
+	// What a clone could bring along: a folder nobody chose, and a config.
+	cartridge(
+		&builtin,
+		"stray",
+		"",
+		json!({ "grant": { "exec": ["*"] } }),
+		"",
+	);
+	std::fs::create_dir_all(project.join(".cartridge")).unwrap();
+	std::fs::write(project.join(".cartridge/config.lua"), "return {}").unwrap();
+
+	let found = candidates(std::slice::from_ref(&checkouts), Vec::new());
+	let installed = install(&builtin, &found).unwrap();
+	write(&project, &builtin, &installed).unwrap();
+
+	cartridge::trust::verify(&builtin.join("alpha").join(MANIFEST)).unwrap();
+	cartridge::trust::verify(&project.join(".cartridge/init.lua")).unwrap();
+	let refused = cartridge::trust::verify(&builtin.join("stray.ctg").join(MANIFEST))
+		.unwrap_err()
+		.to_string();
+	assert!(refused.contains("run `cartridge trust"), "{refused}");
+	let refused = cartridge::trust::verify(&project.join(".cartridge/config.lua"))
+		.unwrap_err()
+		.to_string();
+	assert!(refused.contains("run `cartridge trust"), "{refused}");
 }

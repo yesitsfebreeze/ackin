@@ -419,7 +419,11 @@ pub(crate) fn write(
 	}
 	init.push_str("}\n");
 	put(&profile.join(INIT), &init, &mut done)?;
-	if !profile.join(CONFIG).exists() {
+	// A config.lua the tree already held is kept, but not trusted: the next
+	// command's refusal names it, the person reviews it, `cartridge trust`
+	// decides.
+	let kept_config = profile.join(CONFIG).exists();
+	if !kept_config {
 		put(
 			&profile.join(CONFIG),
 			&render_config(&Map::new()),
@@ -434,13 +438,15 @@ pub(crate) fn write(
 			&mut done,
 		)?;
 	}
-	// Choosing is the approval: what setup wrote and linked starts next.
-	let project = cartridge::trust::record(root)?.project;
+	// Choosing is the approval: the profile setup wrote, and each cartridge
+	// it linked or cloned — nothing else the tree happens to hold.
+	let mut wrote = vec![profile.join(INIT)];
+	if !kept_config {
+		wrote.push(profile.join(CONFIG));
+	}
+	cartridge::trust::record_files(&profile, &wrote)?;
 	for (_, place) in installed {
-		let place = place.canonicalize().map_err(|e| Error::file(place, e))?;
-		if !place.starts_with(&project) {
-			cartridge::trust::record(&place)?;
-		}
+		cartridge::trust::record(place)?;
 	}
 	Ok(done)
 }

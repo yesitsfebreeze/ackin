@@ -84,7 +84,8 @@ the chosen ones under the root, writes `.cartridge/init.lua`, and sends each a
 `setup` event it declares so it can ask what this project must decide.
 `--with a,b` or `--yes` take cartridges without asking. Setup records trust for
 the profile it writes and each cartridge it links or clones, because it starts
-them next.
+them next. A folder or `config.lua` the tree already held stays untrusted until
+you review it and run `cartridge trust`.
 
 `cartridge mcp` and `cartridge launch` start the profile and hand this terminal
 to the cartridges that listen to `mcp` and `proxy`.
