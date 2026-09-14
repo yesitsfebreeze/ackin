@@ -62,8 +62,14 @@ fn external(error: String) -> mlua::Error {
 	mlua::Error::RuntimeError(error)
 }
 
+const ENCODE: &str = "cartridge.encode";
+
+/// One call holds the state for the whole conversion, so a table another
+/// coroutine mutates meanwhile still encodes consistently.
 fn json(lua: &Lua, value: mlua::Value) -> mlua::Result<Value> {
-	lua.from_value(value)
+	let encode: Function = lua.named_registry_value(ENCODE)?;
+	let text: String = encode.call(value)?;
+	serde_json::from_str(&text).map_err(mlua::Error::external)
 }
 
 fn env(name: &str) -> Result<String> {
@@ -141,6 +147,12 @@ fn install(
 	listen: Vec<String>,
 	socket_dir: PathBuf,
 ) -> mlua::Result<()> {
+	lua.set_named_registry_value(
+		ENCODE,
+		lua.create_function(|lua, value: mlua::Value| {
+			Ok(lua.from_value::<Value>(value)?.to_string())
+		})?,
+	)?;
 	let global = lua.create_table()?;
 	global.set("root", root.to_string_lossy().into_owned())?;
 	// A native module's own mlua does not know this marker; it tags arrays with it.
@@ -169,7 +181,7 @@ fn install(
 				async move {
 					let run = async {
 						let out: mlua::Value = f.call_async(lua.to_value(&data)?).await?;
-						lua.from_value::<Value>(out)
+						json(&lua, out)
 					};
 					run.await.map_err(|e| e.to_string())
 				}
