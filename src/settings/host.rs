@@ -8,7 +8,6 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::{apply, defaults, get, layers, Specs};
-use crate::error::Error;
 
 /// The host's own document. It has no `cartridge.json` — nothing composes the
 /// host — so its declarations live in `.cartridge/settings.json`, in the same
@@ -75,10 +74,10 @@ impl Host {
 
 /// The settled table as [`Host`]. A key no declaration names survives the
 /// merge and `deny_unknown_fields` refuses it; one typo must not end every
-/// command, so the reason is said and the declared defaults stand.
-fn typed(settled: serde_json::Value) -> Host {
+/// command, so the reason is gathered and the declared defaults stand.
+fn typed(settled: serde_json::Value, refused: &mut Vec<String>) -> Host {
 	serde_json::from_value(settled).unwrap_or_else(|e| {
-		tracing::warn!(target: "cartridge", "settings: host: {e}; using declared defaults");
+		refused.push(format!("host: {e}"));
 		serde_json::from_value(defaults(host_specs()))
 			.expect("settled host settings match their declarations")
 	})
@@ -98,20 +97,27 @@ static HOST: OnceLock<Host> = OnceLock::new();
 /// against the profile it resolved, before anything else runs; everything
 /// downstream reads that one settled answer through [`host`].
 pub fn settle(profile: &Path) -> &'static Host {
-	HOST.get_or_init(|| {
-		let say = |e: Error| tracing::warn!(target: "cartridge", "settings: {e}; using declared defaults");
+	// The refusals are logged after the cell is set, never inside it: the
+	// event reaches the diagnostic sink, which reads
+	// `host.diagnostics_max_bytes` through here.
+	let mut refused: Vec<String> = Vec::new();
+	let settled = HOST.get_or_init(|| {
 		let configured = layers(profile)
 			.map(|files| get(&files, "host").cloned().unwrap_or_else(|| json!({})))
 			.unwrap_or_else(|e| {
-				say(e);
+				refused.push(e.to_string());
 				json!({})
 			});
 		let settled = apply(host_specs(), configured, "host").unwrap_or_else(|e| {
-			say(e);
+			refused.push(e.to_string());
 			defaults(host_specs())
 		});
-		typed(settled)
-	})
+		typed(settled, &mut refused)
+	});
+	for why in refused {
+		tracing::warn!(target: "cartridge", "settings: {why}; using declared defaults");
+	}
+	settled
 }
 
 /// The host's settings, settling them against the profile beside the working

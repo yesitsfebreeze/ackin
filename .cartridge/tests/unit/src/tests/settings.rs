@@ -55,3 +55,47 @@ fn a_configuration_file_that_never_returns_is_refused() {
 	assert!(refused.contains("Lua instructions"), "{refused}");
 	assert!(refused.contains("config.lua"), "{refused}");
 }
+
+/// A refused setting warns while the host settings are still being settled;
+/// with diagnostics on that warning must not re-enter the settling.
+#[test]
+fn refused_settings_do_not_wedge_the_process_when_diagnostics_are_on() {
+	let bin = super::built(&["--bin", "cartridge"]);
+	let dir = tempfile::tempdir().unwrap();
+	let home = dir.path().join("home");
+	super::write(dir.path(), ".cartridge/init.lua", "return {}");
+	super::write(dir.path(), ".cartridge/config.lua", "this is not lua ((");
+	let clean = |mut child: std::process::Child| {
+		// SAFETY: the loop below only reads `try_wait`; the kill is for a hang.
+		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+		while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+			std::thread::sleep(std::time::Duration::from_millis(50));
+		}
+		let exited = child.try_wait().unwrap().is_some();
+		let _ = child.kill();
+		exited
+	};
+	let trust = std::process::Command::new(&bin)
+		.arg("trust")
+		.arg(dir.path())
+		.env("CARTRIDGE_HOME", &home)
+		.stdout(std::process::Stdio::null())
+		.stderr(std::process::Stdio::null())
+		.spawn()
+		.unwrap();
+	assert!(clean(trust), "`cartridge trust` never returned");
+	let child = std::process::Command::new(bin)
+		.arg("socket")
+		.current_dir(dir.path())
+		.env("CARTRIDGE_HOME", &home)
+		.env(
+			"CARTRIDGE_DIAGNOSTICS",
+			dir.path().join("diagnostics.jsonl"),
+		)
+		.env_remove("CARTRIDGE_DIAGNOSTICS_MAX_BYTES")
+		.stdout(std::process::Stdio::null())
+		.stderr(std::process::Stdio::null())
+		.spawn()
+		.unwrap();
+	assert!(clean(child), "`cartridge socket` never returned");
+}
