@@ -117,6 +117,8 @@ fn apply(lua: &Lua, ctx: &Ctx, entry: &Path, config: Value) -> cartridge::Result
 fn install(lua: &Lua, ctx: Ctx, root: PathBuf, listen: Vec<String>) -> mlua::Result<()> {
 	let global = lua.create_table()?;
 	global.set("root", root.to_string_lossy().into_owned())?;
+	// A native module's own mlua does not know this marker; it tags arrays with it.
+	global.set("array_metatable", lua.array_metatable())?;
 	global.set(
 		"trace",
 		lua.create_function(|_, ()| Ok(cartridge::trace()))?,
