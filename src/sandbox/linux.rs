@@ -298,5 +298,5 @@ pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::conver
 }
 
 #[cfg(test)]
-#[path = "../.cartridge/tests/unit/src/sandbox/linux.rs"]
+#[path = "../../.cartridge/tests/unit/src/sandbox/linux.rs"]
 mod tests;

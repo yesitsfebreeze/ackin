@@ -122,5 +122,5 @@ pub fn evaluate<T: serde::de::DeserializeOwned>(path: &Path) -> crate::error::Re
 }
 
 #[cfg(test)]
-#[path = "../.cartridge/tests/unit/src/lua/tests.rs"]
+#[path = "../../.cartridge/tests/unit/src/lua/tests.rs"]
 mod tests;

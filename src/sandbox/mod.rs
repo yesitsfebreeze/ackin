@@ -40,7 +40,6 @@ use std::path::{Path, PathBuf};
 use crate::loader::Grant;
 
 #[cfg(target_os = "linux")]
-#[path = "sandbox_linux.rs"]
 mod linux;
 
 /// The operating-system policy launcher.
@@ -398,5 +397,5 @@ pub fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::convert::Infa
 }
 
 #[cfg(test)]
-#[path = "../.cartridge/tests/unit/src/sandbox/tests.rs"]
+#[path = "../../.cartridge/tests/unit/src/sandbox/tests.rs"]
 mod tests;

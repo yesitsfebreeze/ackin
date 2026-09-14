@@ -14,13 +14,15 @@ The base loads and wires; it is not on the path of events.
     socket.rs     socket locations, the host socket and its methods
     watch.rs      restarting on source changes, reconciling on profile changes
     run.rs        `run` and `verify`: start, send, stop
-  src/node.rs     a node: init.lua with the `cartridge` global, native modules, helpers
-  src/ledger.rs   every cartridge installed under the cartridge root
-  src/lua.rs      one Lua state per cartridge and per configuration file, with its limits
-  src/trust.rs    what this machine will evaluate or spawn, by SHA-256
-  src/sandbox.rs  a grant compiled into an operating-system policy
+  src/node/       a node: init.lua with the `cartridge` global, native modules, helpers
+  src/ledger/     every cartridge installed under the cartridge root
+  src/lua/        one Lua state per cartridge and per configuration file, with its limits
+  src/trust/      what this machine will evaluate or spawn, by SHA-256
+  src/sandbox/    a grant compiled into an operating-system policy;
+    linux.rs      the Linux boundary: Landlock plus a seccomp socket filter
   src/settings/   settings files and the base's own settings
-  src/trace.rs    trace ids and the diagnostics sink
+  src/trace/      trace ids and the diagnostics sink
+  src/error/      the typed error every host-side failure becomes
   src/cli/        the command line
   src/transport/  the internal wire between the base and its nodes
 

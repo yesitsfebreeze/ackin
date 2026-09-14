@@ -120,6 +120,8 @@ See [docs/creating-cartridges.txt](docs/creating-cartridges.txt).
 - [docs/writing-good-cartridges.txt](docs/writing-good-cartridges.txt): defining, listening, needing
 - [docs/settings.txt](docs/settings.txt): declaring and settling configuration
 - [docs/development.txt](docs/development.txt): building, testing, troubleshooting
+- the source: every module under `src/` is a folder with a README saying
+  why it exists; docs/architecture.txt maps them
 
 ## License
 

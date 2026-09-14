@@ -513,5 +513,5 @@ pub fn subscribe() {
 }
 
 #[cfg(test)]
-#[path = "../.cartridge/tests/unit/src/trace/tests.rs"]
+#[path = "../../.cartridge/tests/unit/src/trace/tests.rs"]
 mod tests;

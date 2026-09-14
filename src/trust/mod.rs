@@ -314,5 +314,5 @@ pub fn list() -> Result<Vec<Record>> {
 }
 
 #[cfg(test)]
-#[path = "../.cartridge/tests/unit/src/trust/tests.rs"]
+#[path = "../../.cartridge/tests/unit/src/trust/tests.rs"]
 mod tests;
