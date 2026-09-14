@@ -19,11 +19,11 @@ fn exit(problems: usize) -> ExitCode {
 }
 
 pub(crate) fn list(project: &Project) -> Result<ExitCode> {
-	let host = Host::new(&project.dir, &project.profile)?;
+	let host = Host::new(&project.dir, &project.descriptor)?;
 	let cartridges = host.manifest().map_err(|e| {
-		Error::Profile(format!(
+		Error::Descriptor(format!(
 			"{}: {e}",
-			project.profile.join("init.lua").display()
+			project.descriptor.join("init.lua").display()
 		))
 	})?;
 	// A document that would not read is a failure of the listing, not a

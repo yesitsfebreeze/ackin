@@ -1,10 +1,10 @@
-# The project profile
+# The project descriptor
 
 `init.lua` lists the cartridges this project runs; `config.lua` beside it
 configures them, keyed by entry id. Entries are `{id, path, config?,
 disabled?}`, with `path` relative to the cartridge root.
 
-This repository is the base itself, not a composition, so its profile names no
+This repository is the base itself, not a composition, so its descriptor names no
 cartridge and its `config.lua` pins nothing. What the directory holds is the
 base's own: `settings.json`, `help.md`, and the tests under `tests/`.
 

@@ -1,4 +1,4 @@
-//! The profile: every installed cartridge as a disabled entry, `init.lua` over
+//! The descriptor: every installed cartridge as a disabled entry, `init.lua` over
 //! them, and the configuration files laid over each entry.
 
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use super::{document, CartridgeInfo, Entry, SettingsInfo};
 
 pub(crate) fn validate(entry: &Entry) -> Result<()> {
 	if entry.id.is_empty() || entry.path.is_empty() {
-		return Err(Error::Profile(
+		return Err(Error::Descriptor(
 			"every entry needs a nonempty `id` and cartridge `path`".into(),
 		));
 	}
@@ -42,9 +42,9 @@ impl Host {
 			return Ok(solo);
 		}
 		let mut entries = self.derived();
-		let profile = self.profile.join("init.lua");
-		let overrides: Vec<Entry> = if profile.is_file() {
-			crate::lua::evaluate(&profile)?
+		let descriptor = self.descriptor.join("init.lua");
+		let overrides: Vec<Entry> = if descriptor.is_file() {
+			crate::lua::evaluate(&descriptor)?
 		} else {
 			Vec::new()
 		};
@@ -55,14 +55,14 @@ impl Host {
 		for entry in &entries {
 			validate(entry)?;
 			if !ids.insert(&entry.id) {
-				return Err(Error::Profile(format!("duplicate entry id `{}`", entry.id)));
+				return Err(Error::Descriptor(format!("duplicate entry id `{}`", entry.id)));
 			}
 		}
 		let mut overrides = serde_json::Map::new();
 		for file in crate::settings::global_path()
 			.ok()
 			.into_iter()
-			.chain([crate::settings::project_path(&self.profile)])
+			.chain([crate::settings::project_path(&self.descriptor)])
 		{
 			if !file.is_file() {
 				continue;
@@ -85,7 +85,7 @@ impl Host {
 		Ok(entries)
 	}
 
-	/// Every configurable surface of the profile, read from documents only.
+	/// Every configurable surface of the descriptor, read from documents only.
 	pub fn settings(self: &Arc<Self>) -> Result<Vec<SettingsInfo>> {
 		Ok(self
 			.entries()?

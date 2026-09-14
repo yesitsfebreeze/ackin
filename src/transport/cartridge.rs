@@ -465,7 +465,7 @@ impl Ctx {
 		Ok(None)
 	}
 
-	/// Ask every listener at once; one outcome per listener, in profile order.
+	/// Ask every listener at once; one outcome per listener, in descriptor order.
 	pub async fn gather(&self, name: &str, data: Value) -> Result<Vec<Outcome>> {
 		let prepared = self.prepare(name, &data)?;
 		Ok(futures::future::join_all(

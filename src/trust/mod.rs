@@ -39,7 +39,7 @@ pub fn home() -> Result<PathBuf> {
 	};
 	match home.is_absolute() {
 		true => Ok(home),
-		false => Err(Error::Profile(format!(
+		false => Err(Error::Descriptor(format!(
 			"the cartridge home `{}` is not an absolute path; set CARTRIDGE_HOME or HOME",
 			home.display()
 		))),
@@ -82,7 +82,7 @@ pub fn digest(path: &Path) -> Result<String> {
 	))
 }
 
-/// The project a refusal should name: the nearest ancestor holding a profile,
+/// The project a refusal should name: the nearest ancestor holding a descriptor,
 /// by the rule of [`crate::loader::root`], else the file's own folder.
 fn nearest_project(file: &Path) -> PathBuf {
 	file.ancestors()
@@ -219,7 +219,7 @@ pub fn record_files(dir: &Path, files: &[PathBuf]) -> Result<Record> {
 		.map(|file| {
 			let canonical = file.canonicalize().map_err(|e| Error::file(file, e))?;
 			if !canonical.starts_with(&project) {
-				return Err(Error::Profile(format!(
+				return Err(Error::Descriptor(format!(
 					"{} is not under {}",
 					canonical.display(),
 					project.display()

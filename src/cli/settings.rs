@@ -1,4 +1,4 @@
-//! `settings`: every tunable value this profile has, as a table, as JSON, or
+//! `settings`: every tunable value this descriptor has, as a table, as JSON, or
 //! as a `config.lua` template ready to save.
 
 use std::path::Path;
@@ -19,26 +19,26 @@ pub(crate) fn settings(
 	as_json: bool,
 	template: bool,
 ) -> Result<ExitCode> {
-	let host = Host::new(&project.dir, &project.profile)?;
+	let host = Host::new(&project.dir, &project.descriptor)?;
 	let entries = host.settings().map_err(|e| {
-		Error::Profile(format!(
+		Error::Descriptor(format!(
 			"{}: {e}",
-			project.profile.join("init.lua").display()
+			project.descriptor.join("init.lua").display()
 		))
 	})?;
-	let profile = project.profile.as_path();
+	let descriptor = project.descriptor.as_path();
 	if template {
-		print_template(profile, &entries);
+		print_template(descriptor, &entries);
 		return Ok(ExitCode::SUCCESS);
 	}
 	if as_json {
-		println!("{}", as_json_document(profile, &entries));
+		println!("{}", as_json_document(descriptor, &entries));
 		return Ok(ExitCode::SUCCESS);
 	}
 	// A cartridge configured with keys it never declared is the one
 	// thing this listing is for; saying so in the exit status is what
 	// keeps the sweep finishable.
-	Ok(match table(profile, &entries, what) {
+	Ok(match table(descriptor, &entries, what) {
 		0 => ExitCode::SUCCESS,
 		_ => ExitCode::from(FAILED),
 	})
@@ -49,8 +49,8 @@ pub(crate) fn settings(
 /// become the defaults here: the reason is said once, and then the defaults
 /// stand — a limit that will not parse must not take the listing of limits down
 /// with it.
-fn host_settled(profile: &Path) -> Value {
-	let configured = settings::layers(profile)
+fn host_settled(descriptor: &Path) -> Value {
+	let configured = settings::layers(descriptor)
 		.unwrap_or_else(|e| {
 			tracing::warn!(target: "cartridge", "settings: {e}");
 			json!({})
@@ -81,7 +81,7 @@ struct Row {
 /// Answers how many problems it found: a cartridge configured with keys it
 /// never declared is one per cartridge, so finishing the migration is a
 /// non-zero exit going to zero rather than a memory of which ones were done.
-fn table(profile: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -> usize {
+fn table(descriptor: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -> usize {
 	let wanted = |section: &str, key: &str| match what {
 		None => true,
 		Some(w) => {
@@ -90,7 +90,7 @@ fn table(profile: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -
 		}
 	};
 	let mut rows: Vec<Row> = Vec::new();
-	let sources = Sources::read(profile);
+	let sources = Sources::read(descriptor);
 	let mut push = |section: &str, key: &str, spec: Option<&Spec>, value: &Value| {
 		if !wanted(section, key) {
 			return;
@@ -109,7 +109,7 @@ fn table(profile: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -
 			doc: spec.and_then(|s| s.doc.clone()).unwrap_or_default(),
 		});
 	};
-	let host = host_settled(profile);
+	let host = host_settled(descriptor);
 	for (key, spec) in settings::host_specs() {
 		let value = settings::get(&host, key).cloned().unwrap_or(Value::Null);
 		push("host", key, Some(spec), &value);
@@ -134,7 +134,7 @@ fn table(profile: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -
 	print_rows(&rows);
 	// Only what was asked about is counted: narrowing the listing to one
 	// cartridge asks about that cartridge, and answering for the rest of the
-	// profile would make a clean one look dirty.
+	// descriptor would make a clean one look dirty.
 	entries
 		.iter()
 		.filter(|e| e.undeclared.iter().any(|key| wanted(&e.id, key)))
@@ -170,8 +170,8 @@ fn print_rows(rows: &[Row]) {
 
 /// The listing as data: declarations, settled values and the file each came
 /// from, for anything reading this surface rather than looking at it.
-fn as_json_document(profile: &Path, entries: &[loader::SettingsInfo]) -> String {
-	let sources = Sources::read(profile);
+fn as_json_document(descriptor: &Path, entries: &[loader::SettingsInfo]) -> String {
+	let sources = Sources::read(descriptor);
 	let describe = |section: &str, specs: &Specs, settled: &Value, undeclared: &[String]| {
 		let keys: serde_json::Map<String, Value> = specs
 			.iter()
@@ -195,7 +195,7 @@ fn as_json_document(profile: &Path, entries: &[loader::SettingsInfo]) -> String 
 			.collect();
 		json!({"keys": keys, "undeclared": undeclared})
 	};
-	let host_settled = host_settled(profile);
+	let host_settled = host_settled(descriptor);
 	let mut out = serde_json::Map::new();
 	out.insert(
 		"host".into(),
@@ -214,13 +214,13 @@ fn as_json_document(profile: &Path, entries: &[loader::SettingsInfo]) -> String 
 /// and its current value. Saving this as `~/.cartridge/config.lua` changes
 /// nothing and leaves every knob in reach, which is the point — a person
 /// tuning a system should not have to discover the key's name first.
-fn print_template(profile: &Path, entries: &[loader::SettingsInfo]) {
-	println!("-- Every setting this profile has, at its current value.");
+fn print_template(descriptor: &Path, entries: &[loader::SettingsInfo]) {
+	println!("-- Every setting this descriptor has, at its current value.");
 	println!("-- Save as ~/.cartridge/config.lua for this machine, or as");
 	println!("-- .cartridge/config.lua for this project alone. Delete what you");
 	println!("-- do not want to pin: an absent key keeps its declared default.");
 	println!("return {{");
-	let host = host_settled(profile);
+	let host = host_settled(descriptor);
 	section("host", settings::host_specs(), &host);
 	for entry in entries {
 		if entry.specs.is_empty() {

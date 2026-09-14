@@ -28,11 +28,11 @@ const HOST_ABOUT: &str =
 	"the runtime itself: what a cartridge is, how one is written, how this composition is read";
 
 pub(crate) fn help(project: &Project, what: &str, as_json: bool) -> Result<ExitCode> {
-	let host = Host::new(&project.dir, &project.profile)?;
+	let host = Host::new(&project.dir, &project.descriptor)?;
 	let cartridges = host.manifest().map_err(|e| {
-		Error::Profile(format!(
+		Error::Descriptor(format!(
 			"{}: {e}",
-			project.profile.join("init.lua").display()
+			project.descriptor.join("init.lua").display()
 		))
 	})?;
 	let manual = Manual::read(project, &cartridges);
@@ -152,7 +152,7 @@ impl Manual {
 			id: "host".into(),
 			about: HOST_ABOUT.into(),
 			enabled: true,
-			broken: !project.profile.join(PAGE).is_file(),
+			broken: !project.descriptor.join(PAGE).is_file(),
 			docs: documents(&root, builtin.strip_prefix(&root).ok()),
 			dir: root,
 		}];

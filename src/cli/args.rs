@@ -47,7 +47,7 @@ pub(crate) enum Command {
 	/// Ask every composed cartridge that declares a `doctor` event whether it
 	/// is healthy here, and say which are not
 	Doctor,
-	/// Start the profile and serve the host socket until stopped
+	/// Start the descriptor and serve the host socket until stopped
 	Daemon,
 	/// Start the harness proxy and run an agent against it: `cartridge launch claude -- -p hi`
 	Launch {
@@ -57,10 +57,10 @@ pub(crate) enum Command {
 		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
 		args: Vec<String>,
 	},
-	/// Serve the profile's tools to an MCP client over this terminal's stdio:
+	/// Serve the descriptor's tools to an MCP client over this terminal's stdio:
 	/// `claude mcp add cartridge -- cartridge mcp`
 	Mcp,
-	/// Start the profile, send one event, print the first answer, and stop
+	/// Start the descriptor, send one event, print the first answer, and stop
 	Run {
 		event: String,
 		#[arg(default_value = "null")]
@@ -87,13 +87,13 @@ pub(crate) enum Command {
 	},
 	/// Every cartridge of the running host and its state
 	Status,
-	/// Reload the profile, or restart one cartridge
+	/// Reload the descriptor, or restart one cartridge
 	Reload { cartridge: Option<String> },
 	/// Stop the running host
 	Stop,
 	/// The host socket of this project
 	Socket,
-	/// Cartridges of the profile and what each one needs, resolved to its provider
+	/// Cartridges of the descriptor and what each one needs, resolved to its provider
 	List,
 	/// Every cartridge installed under the cartridge root, and what each need binds to
 	Ledger,
@@ -109,7 +109,7 @@ pub(crate) enum Command {
 		#[arg(long)]
 		json: bool,
 	},
-	/// Every tunable value this profile has, with what it is set to and which
+	/// Every tunable value this descriptor has, with what it is set to and which
 	/// file settled it: `cartridge settings host`, `cartridge settings agent.max_steps`
 	Settings {
 		/// A cartridge id, or one dotted key under it. Absent lists everything
@@ -136,7 +136,7 @@ pub(crate) enum Command {
 		#[arg(long)]
 		ask: bool,
 	},
-	/// Start the profile and run every contract its cartridges declare; name a
+	/// Start the descriptor and run every contract its cartridges declare; name a
 	/// cartridge to verify just that one against its own contract
 	Verify {
 		/// A ledger path from the cartridge root, or the folder it sits in

@@ -43,7 +43,7 @@ impl Plan {
 fn exact(keys: &[String]) -> Result<()> {
 	for key in keys {
 		if key.trim().is_empty() || key.contains('*') {
-			return Err(Error::Profile(format!(
+			return Err(Error::Descriptor(format!(
 				"`{key}` must be a nonempty exact event name"
 			)));
 		}
@@ -59,7 +59,7 @@ fn expand(needs: Vec<String>, listened: &[String]) -> Result<Vec<String>> {
 		match key.strip_suffix('*') {
 			None => out.push(key),
 			Some("") => {
-				return Err(Error::Profile(
+				return Err(Error::Descriptor(
 					"a bare `*` in needs; a glob needs a prefix".into(),
 				))
 			}
@@ -147,7 +147,7 @@ impl Host {
 	/// `${config.<key>}`, a settled config value; a relative config value is
 	/// relative to the project root, where cartridges run.
 	fn expand_grant(&self, grant: &Grant, config: &serde_json::Value) -> Result<Grant> {
-		let project = self.profile.parent().unwrap_or(&self.profile).to_path_buf();
+		let project = self.descriptor.parent().unwrap_or(&self.descriptor).to_path_buf();
 		let expand = |path: &String| -> Result<String> {
 			if let Some(key) = path
 				.strip_prefix("${config.")
@@ -156,7 +156,7 @@ impl Host {
 				let value = crate::settings::get(config, key)
 					.and_then(serde_json::Value::as_str)
 					.ok_or_else(|| {
-						Error::Profile(format!("grant `{path}` names no string setting"))
+						Error::Descriptor(format!("grant `{path}` names no string setting"))
 					})?;
 				return Ok(project.join(value).to_string_lossy().into_owned());
 			}

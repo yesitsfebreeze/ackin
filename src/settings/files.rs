@@ -1,5 +1,5 @@
 //! The configuration files: the machine's under the user's home, the
-//! project's beside its profile, and which of the two settled a key.
+//! project's beside its descriptor, and which of the two settled a key.
 
 use std::path::{Path, PathBuf};
 
@@ -16,9 +16,9 @@ pub fn global_path() -> Result<PathBuf> {
 	Ok(crate::trust::home()?.join("config.lua"))
 }
 
-/// The project configuration file, beside the profile that composes it.
-pub fn project_path(profile: &Path) -> PathBuf {
-	profile.join("config.lua")
+/// The project configuration file, beside the descriptor that composes it.
+pub fn project_path(descriptor: &Path) -> PathBuf {
+	descriptor.join("config.lua")
 }
 
 /// Evaluate one configuration file into data. A missing file is an empty
@@ -46,12 +46,12 @@ pub fn read(path: &Path) -> Result<Json> {
 
 /// The global file laid under the project file: the configuration as the files
 /// on this machine state it, before any declaration fills it in.
-pub fn layers(profile: &Path) -> Result<Json> {
+pub fn layers(descriptor: &Path) -> Result<Json> {
 	let mut out = match global_path() {
 		Ok(path) => read(&path)?,
 		Err(e) => return Err(e),
 	};
-	merge(&mut out, read(&project_path(profile))?);
+	merge(&mut out, read(&project_path(descriptor))?);
 	Ok(out)
 }
 
@@ -65,13 +65,13 @@ pub struct Sources {
 
 impl Sources {
 	/// A file that will not read answers for no key, as it did when read per key.
-	pub fn read(profile: &Path) -> Self {
+	pub fn read(descriptor: &Path) -> Self {
 		Sources {
 			global: global_path()
 				.ok()
 				.and_then(|path| read(&path).ok())
 				.unwrap_or_else(|| json!({})),
-			project: read(&project_path(profile)).unwrap_or_else(|_| json!({})),
+			project: read(&project_path(descriptor)).unwrap_or_else(|_| json!({})),
 		}
 	}
 
@@ -84,9 +84,9 @@ impl Sources {
 			(true, _) => "project",
 			(false, true) => "global",
 			// Neither file names it, yet it is not what the declaration says:
-			// the profile entry set it in `init.lua`, which composes rather
+			// the descriptor entry set it in `init.lua`, which composes rather
 			// than configures and so has no line in either file to point at.
-			(false, false) if settled != declared => "profile",
+			(false, false) if settled != declared => "descriptor",
 			(false, false) => "default",
 		}
 	}

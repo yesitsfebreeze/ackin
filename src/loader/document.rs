@@ -35,7 +35,7 @@ pub struct Cartridge {
 	/// Repository URL or other retrieval reference when source is not installed.
 	pub source: Option<String>,
 	/// The cartridge's own configuration, carried by the document. The ledger
-	/// shape has no profile `config.lua` to lay fields on at composition time,
+	/// shape has no descriptor `config.lua` to lay fields on at composition time,
 	/// so the document is where an author's configuration travels; the caller's
 	/// own config, when it names one, is laid over it.
 	#[serde(default)]
@@ -338,7 +338,7 @@ pub(crate) struct Declared {
 	pub(crate) grant: Grant,
 }
 
-/// The grant a profile entry's document declares, without resolving its files.
+/// The grant a descriptor entry's document declares, without resolving its files.
 pub(crate) fn document(path: &Path) -> Result<Grant> {
 	let path = normalize(&classify(path));
 	if path.extension().is_some_and(|ext| ext == "lua") {

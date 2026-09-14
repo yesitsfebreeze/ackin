@@ -90,7 +90,7 @@ fn text(error: mlua::Error) -> String {
 
 fn env(name: &str) -> Result<String> {
 	std::env::var(name)
-		.map_err(|_| Error::Profile(format!("{name} must be set; a node is started by the base")))
+		.map_err(|_| Error::Descriptor(format!("{name} must be set; a node is started by the base")))
 }
 
 /// Run this process as a node until the base disposes it or goes away.

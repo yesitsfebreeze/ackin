@@ -78,11 +78,11 @@ const WRITTEN_BY_SETUP: &str = "-- Written by `cartridge setup`;";
 const ROUNDS: usize = 16;
 
 pub(crate) async fn setup(root: &Path, dir: &Path, ask: Ask) -> Result<ExitCode> {
-	let profile = root.join(".cartridge");
-	if profile.join(INIT).is_file() {
+	let descriptor = root.join(".cartridge");
+	if descriptor.join(INIT).is_file() {
 		eprintln!(
 			"{} already composes this project; edit it, or remove it to set up again",
-			profile.join(INIT).display()
+			descriptor.join(INIT).display()
 		);
 		return Ok(ExitCode::from(FAILED));
 	}
@@ -146,7 +146,7 @@ pub(crate) async fn setup(root: &Path, dir: &Path, ask: Ask) -> Result<ExitCode>
 			names(&clone),
 			names(&link),
 			dir.display(),
-			profile.join(INIT).display()
+			descriptor.join(INIT).display()
 		);
 		if !prompt.confirm("Continue?", true)? {
 			return Ok(ExitCode::SUCCESS);
@@ -158,7 +158,7 @@ pub(crate) async fn setup(root: &Path, dir: &Path, ask: Ask) -> Result<ExitCode>
 	for line in &written {
 		println!("{line}");
 	}
-	cartridge::settings::settle(&profile);
+	cartridge::settings::settle(&descriptor);
 	let outcome = run_setups(root, dir, &installed, interactive).await?;
 	for line in &outcome {
 		println!("{line}");
@@ -395,7 +395,7 @@ pub(crate) fn install(dir: &Path, chosen: &[Candidate]) -> Result<Vec<(String, P
 	Ok(installed)
 }
 
-/// Write the profile that names what was installed. Returns one line per
+/// Write the descriptor that names what was installed. Returns one line per
 /// file written, for the person watching.
 pub(crate) fn write(
 	root: &Path,
@@ -403,10 +403,10 @@ pub(crate) fn write(
 	installed: &[(String, PathBuf)],
 ) -> Result<Vec<String>> {
 	let mut done = Vec::new();
-	let profile = root.join(".cartridge");
-	std::fs::create_dir_all(&profile).map_err(|e| Error::file(&profile, e))?;
+	let descriptor = root.join(".cartridge");
+	std::fs::create_dir_all(&descriptor).map_err(|e| Error::file(&descriptor, e))?;
 	let mut init = format!(
-		"-- This project's profile: the cartridges that take part, one entry each.\n\
+		"-- This project's descriptor: the cartridges that take part, one entry each.\n\
 		 -- `cartridge setup` wrote it; edit it freely. `path` is the folder below\n\
 		 -- the cartridge root ({}); `id` is the name config.lua and\n\
 		 -- `cartridge settings` use for the entry. An entry may also carry\n\
@@ -418,33 +418,33 @@ pub(crate) fn write(
 		init.push_str(&format!("\t{{ id = {name:?}, path = {name:?} }},\n"));
 	}
 	init.push_str("}\n");
-	put(&profile.join(INIT), &init, &mut done)?;
+	put(&descriptor.join(INIT), &init, &mut done)?;
 	// A config.lua the tree already held is kept, but not trusted: the next
 	// command's refusal names it, the person reviews it, `cartridge trust`
 	// decides.
-	let kept_config = profile.join(CONFIG).exists();
+	let kept_config = descriptor.join(CONFIG).exists();
 	if !kept_config {
 		put(
-			&profile.join(CONFIG),
+			&descriptor.join(CONFIG),
 			&render_config(&Map::new()),
 			&mut done,
 		)?;
 	}
-	if !profile.join(IGNORE).exists() {
+	if !descriptor.join(IGNORE).exists() {
 		put(
-			&profile.join(IGNORE),
-			"# Whitelist: the profile is tracked, what a run writes beside it is not.\n\
+			&descriptor.join(IGNORE),
+			"# Whitelist: the descriptor is tracked, what a run writes beside it is not.\n\
 			 /*\n!/.gitignore\n!/init.lua\n!/config.lua\n",
 			&mut done,
 		)?;
 	}
-	// Choosing is the approval: the profile setup wrote, and each cartridge
+	// Choosing is the approval: the descriptor setup wrote, and each cartridge
 	// it linked or cloned — nothing else the tree happens to hold.
-	let mut wrote = vec![profile.join(INIT)];
+	let mut wrote = vec![descriptor.join(INIT)];
 	if !kept_config {
-		wrote.push(profile.join(CONFIG));
+		wrote.push(descriptor.join(CONFIG));
 	}
-	cartridge::trust::record_files(&profile, &wrote)?;
+	cartridge::trust::record_files(&descriptor, &wrote)?;
 	for (_, place) in installed {
 		cartridge::trust::record(place)?;
 	}
@@ -489,8 +489,8 @@ async fn run_setups(
 			"No cartridge declares a setup event; nothing to ask.".into()
 		]);
 	}
-	let profile = root.join(".cartridge");
-	let host = Host::new(dir, &profile)?;
+	let descriptor = root.join(".cartridge");
+	let host = Host::new(dir, &descriptor)?;
 	let (config, mut report) = started(&host, || async {
 		let mut config = Map::new();
 		let mut report = Vec::new();
@@ -560,7 +560,7 @@ async fn run_setups(
 	})
 	.await?;
 	if !config.is_empty() {
-		let path = profile.join(CONFIG);
+		let path = descriptor.join(CONFIG);
 		let existing = std::fs::read_to_string(&path).unwrap_or_default();
 		if existing.is_empty() || existing.starts_with(WRITTEN_BY_SETUP) {
 			let mut merged = cartridge::settings::read(&path)?;
@@ -599,7 +599,7 @@ fn strayed(root: &Path, spare: &Path) -> Result<()> {
 	Ok(())
 }
 
-/// Start the profile, let `ask` send to it, and stop it whatever `ask` answered.
+/// Start the descriptor, let `ask` send to it, and stop it whatever `ask` answered.
 async fn started<T, F, Fut>(host: &Arc<Host>, ask: F) -> Result<T>
 where
 	F: FnOnce() -> Fut,
@@ -646,7 +646,7 @@ pub(crate) async fn doctor(project: &Project) -> Result<ExitCode> {
 	let host = super::host::host(project, None)?;
 	let composed = host
 		.entries()
-		.map_err(|e| Error::Profile(format!("{}: {e}", project.profile.join(INIT).display())))?;
+		.map_err(|e| Error::Descriptor(format!("{}: {e}", project.descriptor.join(INIT).display())))?;
 	let mut asks = Vec::new();
 	let mut lines = Vec::new();
 	for entry in composed.iter().filter(|e| !e.disabled) {

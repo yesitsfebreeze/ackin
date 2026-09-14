@@ -144,7 +144,7 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 		Command::Socket => {
 			println!(
 				"{}",
-				cartridge::host::socket::path(&project.profile)?.display()
+				cartridge::host::socket::path(&project.descriptor)?.display()
 			);
 			Ok(ExitCode::SUCCESS)
 		}

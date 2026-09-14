@@ -92,7 +92,7 @@ fn each_file_is_evaluated_in_a_state_of_its_own() {
 		"a.lua's globals must not leak into b.lua"
 	);
 	// Straight from Lua: through JSON an empty table would be a map, and
-	// `return {}` is a valid empty profile.
+	// `return {}` is a valid empty descriptor.
 	std::fs::write(dir.path().join("empty.lua"), "return {}").unwrap();
 	crate::trust::record(dir.path()).unwrap();
 	let empty: Vec<String> = evaluate(&dir.path().join("empty.lua")).unwrap();

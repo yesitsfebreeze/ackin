@@ -1,4 +1,4 @@
-//! `cartridge.json` and the profile.
+//! `cartridge.json` and the descriptor.
 //!
 //! ```json
 //! {
@@ -33,7 +33,7 @@ use document::classify;
 pub(crate) use document::{document, resolve, Declared};
 pub use document::{Cartridge, Command, Event, Grant, MANIFEST};
 
-/// A profile entry: a cartridge folder, or a bare Lua file.
+/// A descriptor entry: a cartridge folder, or a bare Lua file.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
@@ -51,7 +51,7 @@ impl Entry {
 	}
 }
 
-/// One profile entry as its files describe it.
+/// One descriptor entry as its files describe it.
 pub struct CartridgeInfo {
 	pub entry: Entry,
 	pub needs: Vec<String>,
@@ -99,8 +99,8 @@ pub(crate) fn normalize(path: &Path) -> PathBuf {
 	path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// The profile directory: `.cartridge`, holding `init.lua` and `config.lua`.
-pub fn profile() -> PathBuf {
+/// The descriptor directory: `.cartridge`, holding `init.lua` and `config.lua`.
+pub fn descriptor() -> PathBuf {
 	PathBuf::from(".cartridge")
 }
 

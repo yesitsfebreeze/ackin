@@ -4,7 +4,7 @@
 //! Methods, after `auth {token}`. A cartridge's token (from its directory) is
 //! granted `status`, `snapshot` and `cartridges`; the host token everything.
 //!   status                        -> [{id, state, error, waiting, events, needs, listen, socket}]
-//!   snapshot                      -> {host_pid, profile, cartridge_root, entries}
+//!   snapshot                      -> {host_pid, descriptor, cartridge_root, entries}
 //!   cartridges                    -> [{id, dir, generation, listen}]
 //!   bail {name, data}             -> the first listener's answer, or null
 //!   gather {name, data}           -> [{outcome, from, data? | error?}]
@@ -36,7 +36,7 @@ fn owner_only_dir(dir: &Path) -> Result<()> {
 		.map_err(|e| Error::file(dir, e))?;
 	let meta = std::fs::symlink_metadata(dir).map_err(|e| Error::file(dir, e))?;
 	if !meta.is_dir() || meta.uid() != uid {
-		return Err(Error::Profile(format!(
+		return Err(Error::Descriptor(format!(
 			"{} is not a directory owned by this user",
 			dir.display()
 		)));
@@ -60,24 +60,24 @@ pub fn base() -> Result<PathBuf> {
 	Ok(base)
 }
 
-fn tag(profile: &Path) -> String {
-	crate::transport::typed::path_tag(profile)[..12].to_owned()
+fn tag(descriptor: &Path) -> String {
+	crate::transport::typed::path_tag(descriptor)[..12].to_owned()
 }
 
-/// Where the command line finds the base serving `profile`: a link to its socket.
-pub fn path(profile: &Path) -> Result<PathBuf> {
-	Ok(base()?.join(format!("{}.sock", tag(profile))))
+/// Where the command line finds the base serving `descriptor`: a link to its socket.
+pub fn path(descriptor: &Path) -> Result<PathBuf> {
+	Ok(base()?.join(format!("{}.sock", tag(descriptor))))
 }
 
-fn token_path(profile: &Path) -> Result<PathBuf> {
-	Ok(base()?.join(format!("{}.token", tag(profile))))
+fn token_path(descriptor: &Path) -> Result<PathBuf> {
+	Ok(base()?.join(format!("{}.token", tag(descriptor))))
 }
 
 /// A directory for the cartridge sockets of one host run. Directories of runs
 /// whose process is gone are removed.
-pub(crate) fn run_dir(profile: &Path) -> Result<PathBuf> {
+pub(crate) fn run_dir(descriptor: &Path) -> Result<PathBuf> {
 	let base = base()?;
-	let prefix = format!("{}-", tag(profile));
+	let prefix = format!("{}-", tag(descriptor));
 	if let Ok(read) = std::fs::read_dir(&base) {
 		for entry in read.flatten() {
 			let name = entry.file_name().to_string_lossy().into_owned();
@@ -143,8 +143,8 @@ pub(crate) async fn accept(
 /// Publish this base as the project's, for the command line, until asked to
 /// stop. Returns `Ok(false)` when another base already serves this project.
 pub async fn serve(host: Arc<Host>) -> Result<bool> {
-	let link = path(&host.profile)?;
-	let token = token_path(&host.profile)?;
+	let link = path(&host.descriptor)?;
+	let token = token_path(&host.descriptor)?;
 	if let Ok(existing) = std::fs::read_link(&link) {
 		if existing.exists() && existing != host.socket_path() {
 			return Ok(false);
@@ -365,15 +365,15 @@ pub(crate) async fn forward(mut events: broadcast::Receiver<Value>, peer: Peer) 
 	peer.close();
 }
 
-/// A connection to the host serving `profile`.
-pub async fn client(profile: &Path) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
-	let token = std::fs::read_to_string(token_path(profile)?).map_err(|e| Error::Unavailable {
+/// A connection to the host serving `descriptor`.
+pub async fn client(descriptor: &Path) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
+	let token = std::fs::read_to_string(token_path(descriptor)?).map_err(|e| Error::Unavailable {
 		key: "host".into(),
-		why: format!("no base serves {}: {e}", profile.display()),
+		why: format!("no base serves {}: {e}", descriptor.display()),
 	})?;
-	let socket = std::fs::read_link(path(profile)?).map_err(|e| Error::Unavailable {
+	let socket = std::fs::read_link(path(descriptor)?).map_err(|e| Error::Unavailable {
 		key: "host".into(),
-		why: format!("no base serves {}: {e}", profile.display()),
+		why: format!("no base serves {}: {e}", descriptor.display()),
 	})?;
 	super::connect(&socket, token.trim()).await
 }

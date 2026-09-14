@@ -10,7 +10,7 @@ use super::Project;
 
 /// One request, its answer printed.
 pub(crate) async fn ask(project: &Project, method: &str, params: Value) -> Result<ExitCode> {
-	let (peer, _incoming) = cartridge::host::socket::client(&project.profile).await?;
+	let (peer, _incoming) = cartridge::host::socket::client(&project.descriptor).await?;
 	let answer = peer
 		.call(method, params)
 		.await
@@ -27,7 +27,7 @@ pub(crate) async fn follow(
 	channel: &str,
 	since: Option<u64>,
 ) -> Result<ExitCode> {
-	let (peer, mut incoming) = cartridge::host::socket::client(&project.profile).await?;
+	let (peer, mut incoming) = cartridge::host::socket::client(&project.descriptor).await?;
 	peer.call("subscribe", json!({ "channel": channel, "since": since }))
 		.await
 		.map_err(|e| Error::Remote(e.message))?;

@@ -27,10 +27,10 @@ pub enum Error {
 	/// A configuration value a declaration refuses.
 	#[error("{0}")]
 	Settings(String),
-	/// The profile as composed: an entry that will not validate, or one the
+	/// The descriptor as composed: an entry that will not validate, or one the
 	/// ledger cannot place.
 	#[error("{0}")]
-	Profile(String),
+	Descriptor(String),
 	/// A cartridge process that could not be started or did not come up.
 	#[error("{program}: {reason}")]
 	Process { program: String, reason: String },

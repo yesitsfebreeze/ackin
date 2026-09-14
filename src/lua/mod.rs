@@ -108,7 +108,7 @@ fn declared() -> crate::settings::Host {
 /// One trusted Lua file as data, in a state of its own that is dropped with
 /// the answer, so nothing a file leaves behind reaches the next file or the
 /// next reload. Deserialized straight from Lua: through JSON an empty table
-/// is a map, and `return {}` is a valid empty profile.
+/// is a map, and `return {}` is a valid empty descriptor.
 pub fn evaluate<T: serde::de::DeserializeOwned>(path: &Path) -> crate::error::Result<T> {
 	let source = crate::trust::read(path)?;
 	let limits = declared();

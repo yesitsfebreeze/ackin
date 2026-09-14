@@ -93,7 +93,7 @@ fn setup_offers_what_it_finds_and_the_catalog_and_filters_by_subsequence() {
 }
 
 #[test]
-fn setup_links_the_chosen_writes_a_profile_the_host_reads_and_lets_a_cartridge_ask() {
+fn setup_links_the_chosen_writes_a_descriptor_the_host_reads_and_lets_a_cartridge_ask() {
 	let _turn = trust_home();
 	let tmp = tempfile::tempdir().unwrap();
 	std::env::set_var("CARTRIDGE_HOME", tmp.path().join("home"));
@@ -145,7 +145,7 @@ fn setup_links_the_chosen_writes_a_profile_the_host_reads_and_lets_a_cartridge_a
 	assert!(init.contains(r#"{ id = "beta", path = "beta" }"#), "{init}");
 	assert!(project.join(".cartridge/.gitignore").is_file());
 
-	// The profile it wrote is one the host composes.
+	// The descriptor it wrote is one the host composes.
 	let host = Host::new(&builtin, project.join(".cartridge")).unwrap();
 	let enabled = host.entries().unwrap();
 	assert_eq!(
@@ -175,7 +175,7 @@ fn setup_links_the_chosen_writes_a_profile_the_host_reads_and_lets_a_cartridge_a
 	// The doctor asks the same cartridge and reports its verdict.
 	let project = Project {
 		dir: builtin.clone(),
-		profile: project.join(".cartridge"),
+		descriptor: project.join(".cartridge"),
 	};
 	let exit = rt.block_on(doctor(&project)).unwrap();
 	assert_eq!(exit, ExitCode::from(FAILED));
@@ -233,7 +233,7 @@ fn a_file_changed_by_the_exchange_is_not_recorded() {
 	);
 }
 
-/// Choosing is the approval: setup records the profile it wrote and each
+/// Choosing is the approval: setup records the descriptor it wrote and each
 /// cartridge it chose — a folder the tree already held stays untrusted, and
 /// so does a config.lua setup did not write.
 #[test]

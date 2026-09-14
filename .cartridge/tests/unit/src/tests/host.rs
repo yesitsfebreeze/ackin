@@ -14,7 +14,7 @@ fn cartridge(dir: &Path, id: &str, manifest: Value, init: &str) {
 	write(dir, &format!("{id}/init.lua"), init);
 }
 
-fn profile(dir: &Path, ids: &[&str]) {
+fn descriptor(dir: &Path, ids: &[&str]) {
 	let entries: Vec<String> = ids
 		.iter()
 		.map(|id| format!("{{id={id:?}, path={id:?}}}"))
@@ -77,7 +77,7 @@ async fn a_cartridge_answers_the_events_it_listens_to() {
 		}),
 		r#"cartridge.listen("welcome", function(args) return cartridge.bail("greet", args) end)"#,
 	);
-	profile(dir.path(), &["welcome", "greeter"]);
+	descriptor(dir.path(), &["welcome", "greeter"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(status(&host, "greeter").state, State::Active);
 	assert_eq!(status(&host, "welcome").state, State::Active);
@@ -92,7 +92,7 @@ async fn a_cartridge_answers_the_events_it_listens_to() {
 async fn a_payload_the_schema_rejects_never_reaches_the_listener() {
 	let dir = tempfile::tempdir().unwrap();
 	greeter(dir.path());
-	profile(dir.path(), &["greeter"]);
+	descriptor(dir.path(), &["greeter"]);
 	let host = boot(dir.path()).await;
 	let error = host.bail("greet", json!({"name": 7})).await.unwrap_err();
 	assert!(error.contains("rejected by its schema"), "{error}");
@@ -105,7 +105,7 @@ async fn a_payload_the_schema_rejects_never_reaches_the_listener() {
 async fn a_schema_only_change_reaches_a_sender_that_already_validated() {
 	let dir = tempfile::tempdir().unwrap();
 	greeter(dir.path());
-	profile(dir.path(), &["greeter"]);
+	descriptor(dir.path(), &["greeter"]);
 	let host = boot(dir.path()).await;
 	// Warm the validator: the good payload passes, the bad one is refused.
 	assert_eq!(
@@ -155,7 +155,7 @@ async fn an_undeclared_event_fails_the_cartridge_before_it_starts() {
 		json!({"name": "needy", "entry": "init.lua", "needs": ["also.undeclared"]}),
 		"",
 	);
-	profile(dir.path(), &["stray", "needy"]);
+	descriptor(dir.path(), &["stray", "needy"]);
 	let host = boot(dir.path()).await;
 	let stray = status(&host, "stray");
 	assert_eq!(stray.state, State::Failed);
@@ -178,7 +178,7 @@ async fn an_event_declared_twice_fails_the_later_entry() {
 		json!({"name": "twin", "entry": "init.lua", "events": {"greet": {}}}),
 		"",
 	);
-	profile(dir.path(), &["greeter", "twin"]);
+	descriptor(dir.path(), &["greeter", "twin"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(status(&host, "greeter").state, State::Active);
 	let twin = status(&host, "twin");
@@ -203,7 +203,7 @@ async fn a_node_refuses_to_listen_to_what_it_did_not_declare() {
 			return tostring(error)
 		end)"#,
 	);
-	profile(dir.path(), &["greeter", "sneaky"]);
+	descriptor(dir.path(), &["greeter", "sneaky"]);
 	let host = boot(dir.path()).await;
 	let answer = host.bail("sneak", json!(null)).await.unwrap().unwrap();
 	assert!(
@@ -239,7 +239,7 @@ async fn gather_and_emit_reach_every_listener() {
 			return { count = #all, first = all[1].from, second = all[2].from, outcome = all[1].outcome }
 		end)"#,
 	);
-	profile(dir.path(), &["a", "b", "asker"]);
+	descriptor(dir.path(), &["a", "b", "asker"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(
 		host.bail("ask", json!(1)).await.unwrap(),
@@ -270,7 +270,7 @@ async fn a_cartridge_sends_only_what_it_defines_or_needs() {
 			return tostring(error)
 		end)"#,
 	);
-	profile(dir.path(), &["greeter", "stranger"]);
+	descriptor(dir.path(), &["greeter", "stranger"]);
 	let host = boot(dir.path()).await;
 	let answer = host
 		.bail("try", json!({"name": "x"}))
@@ -302,7 +302,7 @@ async fn a_call_that_comes_back_into_its_sender_is_answered() {
 			"events": {"pong": {}}, "listen": ["ping"]}),
 		r#"cartridge.listen("ping", function() return cartridge.bail("pong", {}) end)"#,
 	);
-	profile(dir.path(), &["left", "right"]);
+	descriptor(dir.path(), &["left", "right"]);
 	let host = boot(dir.path()).await;
 	let answer = tokio::time::timeout(Duration::from_secs(5), host.bail("go", json!(null)))
 		.await
@@ -325,7 +325,7 @@ async fn a_hung_listener_times_out_and_its_node_keeps_serving() {
 		cartridge.listen("hang", function() return sleeper:request({}) end)
 		cartridge.listen("quick", function() return "here" end)"#,
 	);
-	profile(dir.path(), &["stuck"]);
+	descriptor(dir.path(), &["stuck"]);
 	let host = boot(dir.path()).await;
 	let hung = tokio::spawn({
 		let host = host.clone();
@@ -346,7 +346,7 @@ async fn a_hung_listener_times_out_and_its_node_keeps_serving() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_waiting_cartridge_starts_when_the_profile_adds_its_listener() {
+async fn a_waiting_cartridge_starts_when_the_descriptor_adds_its_listener() {
 	let dir = tempfile::tempdir().unwrap();
 	greeter(dir.path());
 	cartridge(
@@ -361,11 +361,11 @@ async fn a_waiting_cartridge_starts_when_the_profile_adds_its_listener() {
 		json!({"name": "shadow", "entry": "init.lua", "events": {"greet": {}}}),
 		"",
 	);
-	profile(dir.path(), &["shadow", "welcome"]);
+	descriptor(dir.path(), &["shadow", "welcome"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(status(&host, "welcome").state, State::Waiting);
 
-	profile(dir.path(), &["greeter", "welcome"]);
+	descriptor(dir.path(), &["greeter", "welcome"]);
 	host.reconcile().await.unwrap();
 	assert_eq!(status(&host, "shadow").state, State::Disabled);
 	assert_eq!(status(&host, "welcome").state, State::Active);
@@ -374,7 +374,7 @@ async fn a_waiting_cartridge_starts_when_the_profile_adds_its_listener() {
 		Some(json!("hello late"))
 	);
 
-	profile(dir.path(), &["welcome"]);
+	descriptor(dir.path(), &["welcome"]);
 	host.reconcile().await.unwrap();
 	assert_eq!(status(&host, "greeter").state, State::Disabled);
 	let error = host
@@ -413,7 +413,7 @@ async fn a_native_module_reaches_the_base_through_the_global() {
 		dir.path().join("native").join(module.file_name().unwrap()),
 	)
 	.unwrap();
-	profile(dir.path(), &["greeter", "native"]);
+	descriptor(dir.path(), &["greeter", "native"]);
 	let host = boot(dir.path()).await;
 	let native = status(&host, "native");
 	assert_eq!(native.state, State::Active, "{:?}", native.error);
@@ -442,7 +442,7 @@ async fn a_spawned_program_answers_requests_by_id() {
 		r#"local cat = cartridge.spawn({"/bin/cat"})
 		cartridge.listen("echo", function(data) return cat:request({ data = data }) end)"#,
 	);
-	profile(dir.path(), &["echoer"]);
+	descriptor(dir.path(), &["echoer"]);
 	let host = boot(dir.path()).await;
 	let answer = host.bail("echo", json!("hi")).await.unwrap().unwrap();
 	assert_eq!(answer["data"], "hi");
@@ -469,7 +469,7 @@ async fn streams_replay_and_then_deliver_live() {
 		end)
 		cartridge.listen("seen", function() return seen end)"#,
 	);
-	profile(dir.path(), &["source", "watcher"]);
+	descriptor(dir.path(), &["source", "watcher"]);
 	let host = boot(dir.path()).await;
 	host.bail("tick", json!(1)).await.unwrap();
 	host.bail("tick", json!(2)).await.unwrap();
@@ -499,7 +499,7 @@ async fn a_restart_keeps_its_dependents_working() {
 		json!({"name": "welcome", "entry": "init.lua", "events": {"welcome": {}}, "needs": ["greet"], "listen": ["welcome"]}),
 		r#"cartridge.listen("welcome", function(args) return cartridge.bail("greet", args) end)"#,
 	);
-	profile(dir.path(), &["greeter", "welcome"]);
+	descriptor(dir.path(), &["greeter", "welcome"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(
 		host.bail("welcome", json!({"name": "a"})).await.unwrap(),
@@ -534,7 +534,7 @@ async fn a_missing_listener_waits_and_says_for_what() {
 		json!({"name": "welcome", "entry": "init.lua", "events": {"greet": {}, "welcome": {}}, "needs": ["greet"], "listen": ["welcome"]}),
 		"",
 	);
-	profile(dir.path(), &["welcome"]);
+	descriptor(dir.path(), &["welcome"]);
 	let host = boot(dir.path()).await;
 	let welcome = status(&host, "welcome");
 	assert_eq!(welcome.state, State::Waiting);
@@ -558,7 +558,7 @@ async fn a_cartridge_asks_the_host_what_only_the_host_knows() {
 				needs = cartridge.needs(), events = cartridge.events() }
 		end)"#,
 	);
-	profile(dir.path(), &["greeter", "curious"]);
+	descriptor(dir.path(), &["greeter", "curious"]);
 	let host = boot(dir.path()).await;
 	let answer = host.bail("ask", json!(null)).await.unwrap().unwrap();
 	assert_eq!(answer["count"], 2);
@@ -577,13 +577,13 @@ async fn a_cartridge_asks_the_host_what_only_the_host_knows() {
 async fn the_host_socket_answers_the_command_line() {
 	let dir = tempfile::tempdir().unwrap();
 	greeter(dir.path());
-	profile(dir.path(), &["greeter"]);
+	descriptor(dir.path(), &["greeter"]);
 	let host = boot(dir.path()).await;
 	let served = tokio::spawn(crate::host::socket::serve(host.clone()));
-	let profile = host.profile().to_path_buf();
+	let descriptor = host.descriptor().to_path_buf();
 	let mut client = None;
 	for _ in 0..100 {
-		if let Ok(connected) = crate::host::socket::client(&profile).await {
+		if let Ok(connected) = crate::host::socket::client(&descriptor).await {
 			client = Some(connected);
 			break;
 		}
@@ -618,7 +618,7 @@ async fn a_glob_in_needs_names_what_the_others_listen_to() {
 		json!({"name": "user", "entry": "init.lua", "events": {"which": {}}, "listen": ["which"], "needs": ["tool.*", "greet"]}),
 		r#"cartridge.listen("which", function() return cartridge.needs() end)"#,
 	);
-	profile(dir.path(), &["greeter", "tools", "user"]);
+	descriptor(dir.path(), &["greeter", "tools", "user"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(status(&host, "user").state, State::Active);
 	assert_eq!(
@@ -640,7 +640,7 @@ async fn a_node_serves_other_events_while_a_handler_waits() {
 		cartridge.listen("slow", function() local ok, e = pcall(mute.request, mute, {}) return tostring(e) end)
 		cartridge.listen("fast", function() return "fast" end)"#,
 	);
-	profile(dir.path(), &["busy"]);
+	descriptor(dir.path(), &["busy"]);
 	let host = boot(dir.path()).await;
 	let slow = tokio::spawn({
 		let host = host.clone();
@@ -670,7 +670,7 @@ async fn verify_sends_every_declared_contract() {
 		json!({"name": "checked", "entry": "init.lua", "events": {"checked.ok": {}}, "listen": ["checked.ok"], "contracts": ["checked.ok"]}),
 		r#"cartridge.listen("checked.ok", function() return true end)"#,
 	);
-	profile(dir.path(), &["checked"]);
+	descriptor(dir.path(), &["checked"]);
 	node_binary();
 	let host = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();
 	assert_eq!(host.verify().await.unwrap(), (1, Vec::new()));
@@ -689,7 +689,7 @@ async fn grant_paths_name_the_project_and_settings() {
 		}),
 		"",
 	);
-	profile(dir.path(), &["store"]);
+	descriptor(dir.path(), &["store"]);
 	let host = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();
 	let entry = host
 		.entries()
@@ -740,7 +740,7 @@ async fn a_pipe_wakes_the_node_from_outside() {
 		cartridge.listen("echo", function(data) return data end)
 		cartridge.listen("seen", function() return seen end)"#,
 	);
-	profile(dir.path(), &["piped"]);
+	descriptor(dir.path(), &["piped"]);
 	let host = boot(dir.path()).await;
 	let path = host.bail("path", json!(null)).await.unwrap().unwrap();
 	std::fs::write(
@@ -792,7 +792,7 @@ done
 		r#"local app = cartridge.spawn({"/bin/sh", cartridge.root .. "/helper.sh"})
 		cartridge.listen("ask", function() return app:request({}) end)"#,
 	);
-	profile(dir.path(), &["greeter", "asker"]);
+	descriptor(dir.path(), &["greeter", "asker"]);
 	let host = boot(dir.path()).await;
 	let answer = host.bail("ask", json!(null)).await.unwrap().unwrap();
 	assert_eq!(answer["result"], "hello helper");
@@ -818,7 +818,7 @@ async fn a_spawned_helper_sees_no_cartridge_variable_and_a_path() {
 			env:on_line(function(line) table.insert(lines, line) end)
 			cartridge.listen("env", function() return lines end)"#,
 	);
-	profile(dir.path(), &["spiller"]);
+	descriptor(dir.path(), &["spiller"]);
 	let host = boot(dir.path()).await;
 	let mut lines = json!([]);
 	for _ in 0..50 {
@@ -854,7 +854,7 @@ async fn a_spawned_helper_sees_no_cartridge_variable_and_a_path() {
 async fn a_node_presenting_its_own_credential_is_refused_on_the_host_socket() {
 	let dir = tempfile::tempdir().unwrap();
 	greeter(dir.path());
-	profile(dir.path(), &["greeter"]);
+	descriptor(dir.path(), &["greeter"]);
 	let host = boot(dir.path()).await;
 	let token = host.node_token("greeter");
 	assert!(!token.is_empty(), "every started slot holds a node token");
@@ -876,9 +876,9 @@ async fn a_node_presenting_its_own_credential_is_refused_on_the_host_socket() {
 		"a node token never authenticates on the host socket: {refused}"
 	);
 	// The refused connection changed nothing: the command line still connects.
-	let profile = host.profile().to_path_buf();
+	let descriptor = host.descriptor().to_path_buf();
 	for _ in 0..100 {
-		if let Ok(connected) = crate::host::socket::client(&profile).await {
+		if let Ok(connected) = crate::host::socket::client(&descriptor).await {
 			let (peer, _incoming) = connected;
 			let status = peer.call("status", json!(null)).await.unwrap();
 			assert_eq!(status[0]["state"], "active");
@@ -892,9 +892,9 @@ async fn a_node_presenting_its_own_credential_is_refused_on_the_host_socket() {
 }
 
 /// The refusal the whole design rests on, tested where it is enforced: a
-/// profile no one trusted fails `entries`, naming the file and the command.
+/// descriptor no one trusted fails `entries`, naming the file and the command.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_untrusted_profile_is_refused_where_it_is_enforced() {
+async fn an_untrusted_descriptor_is_refused_where_it_is_enforced() {
 	super::home();
 	let dir = tempfile::tempdir().unwrap();
 	write(dir.path(), ".cartridge/init.lua", "return {}");
@@ -917,7 +917,7 @@ async fn a_spinning_handler_is_refused_and_its_node_keeps_serving() {
 		r#"cartridge.listen("spin", function() while true do end end)
 			cartridge.listen("ping", function() return "pong" end)"#,
 	);
-	profile(dir.path(), &["spin"]);
+	descriptor(dir.path(), &["spin"]);
 	let host = boot(dir.path()).await;
 	let error = host
 		.bail("spin", json!(null))
@@ -946,7 +946,7 @@ async fn a_node_that_catches_its_own_refusal_exits() {
 		r#"cartridge.listen("spin", function() while true do pcall(function() while true do end end) end end)
 			cartridge.listen("ping", function() return "pong" end)"#,
 	);
-	profile(dir.path(), &["loop"]);
+	descriptor(dir.path(), &["loop"]);
 	let host = boot(dir.path()).await;
 	assert!(host.bail("spin", json!(null)).await.is_err());
 	let mut spin = status(&host, "loop");
@@ -999,7 +999,7 @@ async fn a_spawn_the_grant_did_not_name_is_denied() {
 		r#"local cat = cartridge.spawn({"/bin/cat"})
 		cartridge.listen("echo", function(data) return cat:request({ data = data }) end)"#,
 	);
-	profile(dir.path(), &["echoer"]);
+	descriptor(dir.path(), &["echoer"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(
 		status(&host, "echoer").state,
@@ -1027,7 +1027,7 @@ async fn one_cartridge_cannot_see_anothers_globals() {
 		json!({"name": "peeker", "entry": "init.lua", "events": {"peek": {}}, "listen": ["peek"]}),
 		r#"cartridge.listen("peek", function() return tostring(SECRET) end)"#,
 	);
-	profile(dir.path(), &["leaker", "peeker"]);
+	descriptor(dir.path(), &["leaker", "peeker"]);
 	let host = boot(dir.path()).await;
 	assert_eq!(
 		host.bail("leak", json!({})).await.unwrap(),
@@ -1058,7 +1058,7 @@ local sh = cartridge.spawn({"/bin/sh", "-c", "/bin/sleep 300 & echo $!; wait"})
 sh:on_line(function(line) pid = tonumber(line) end)
 cartridge.listen("pid", function() return pid end)"#,
 	);
-	profile(dir.path(), &["parent"]);
+	descriptor(dir.path(), &["parent"]);
 	let host = boot(dir.path()).await;
 	let mut pid = 0;
 	for _ in 0..100 {
@@ -1101,7 +1101,7 @@ async fn a_stop_request_ends_a_foreground_run() {
 		r#"local sleeper = cartridge.spawn({"/bin/sleep", "60"}, {timeout_ms = 60000})
 cartridge.listen("hang", function() return sleeper:request({}) end)"#,
 	);
-	profile(dir.path(), &["stuck"]);
+	descriptor(dir.path(), &["stuck"]);
 	let host = boot(dir.path()).await;
 	let run = tokio::spawn({
 		let host = host.clone();
@@ -1116,7 +1116,7 @@ cartridge.listen("hang", function() return sleeper:request({}) end)"#,
 	assert_ne!(status(&host, "stuck").state, State::Active);
 }
 
-/// `mcp` answers a terminate by stopping its profile and exiting, without
+/// `mcp` answers a terminate by stopping its descriptor and exiting, without
 /// waiting for the client to close stdin.
 #[cfg(target_os = "macos")]
 #[tokio::test(flavor = "multi_thread")]
@@ -1129,7 +1129,7 @@ async fn a_terminated_mcp_exits_with_its_input_still_open() {
 		json!({"name": "tools", "entry": "init.lua", "events": {"mcp": {}}, "listen": ["mcp"]}),
 		r#"cartridge.listen("mcp", function() return {ok = true} end)"#,
 	);
-	profile(dir.path(), &["tools"]);
+	descriptor(dir.path(), &["tools"]);
 	node_binary();
 	let mut mcp = tokio::process::Command::new(built(&["--bin", "cartridge"]))
 		.args(["--dir", ".", "mcp"])

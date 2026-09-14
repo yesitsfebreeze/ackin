@@ -1,4 +1,4 @@
-//! The host: reads the profile, starts every cartridge on its own socket, hands
+//! The host: reads the descriptor, starts every cartridge on its own socket, hands
 //! each its directory, and stops them. Calls and events between cartridges do
 //! not pass through it.
 
@@ -90,7 +90,7 @@ impl Slot {
 
 pub struct Host {
 	pub(crate) dir: PathBuf,
-	pub(crate) profile: PathBuf,
+	pub(crate) descriptor: PathBuf,
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
 	sockets: PathBuf,
 	host_token: String,
@@ -120,16 +120,16 @@ impl Drop for Host {
 }
 
 impl Host {
-	/// `dir` holds the cartridges, `profile` the `init.lua` and `config.lua`.
-	pub fn new(dir: impl Into<PathBuf>, profile: impl Into<PathBuf>) -> Result<Arc<Self>> {
+	/// `dir` holds the cartridges, `descriptor` the `init.lua` and `config.lua`.
+	pub fn new(dir: impl Into<PathBuf>, descriptor: impl Into<PathBuf>) -> Result<Arc<Self>> {
 		let dir: PathBuf = dir.into();
-		let profile: PathBuf = profile.into();
-		let profile = profile.canonicalize().unwrap_or(profile);
+		let descriptor: PathBuf = descriptor.into();
+		let descriptor = descriptor.canonicalize().unwrap_or(descriptor);
 		let host_token = crate::transport::token();
 		Ok(Arc::new(Self {
-			sockets: socket::run_dir(&profile)?,
+			sockets: socket::run_dir(&descriptor)?,
 			dir: dir.canonicalize().unwrap_or(dir),
-			profile,
+			descriptor,
 			solo: Mutex::new(None),
 			ctx: Ctx::new(
 				host_token.clone(),
@@ -151,8 +151,8 @@ impl Host {
 		&self.dir
 	}
 
-	pub fn profile(&self) -> &Path {
-		&self.profile
+	pub fn descriptor(&self) -> &Path {
+		&self.descriptor
 	}
 
 	pub(crate) fn host_token(&self) -> &str {
@@ -239,7 +239,7 @@ impl Host {
 			.collect()
 	}
 
-	/// Load the profile and bring the running cartridges in line with it.
+	/// Load the descriptor and bring the running cartridges in line with it.
 	pub async fn reconcile(self: &Arc<Self>) -> Result<()> {
 		let _op = self.op.lock().await;
 		if self.inner.get().is_none() {
@@ -731,7 +731,7 @@ impl Host {
 			.collect();
 		json!({
 			"host_pid": std::process::id(),
-			"profile": self.profile,
+			"descriptor": self.descriptor,
 			"cartridge_root": self.dir,
 			"entries": entries,
 		})

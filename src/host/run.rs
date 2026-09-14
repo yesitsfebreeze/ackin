@@ -1,4 +1,4 @@
-//! One run of the profile in this process: call one service or every declared
+//! One run of the descriptor in this process: call one service or every declared
 //! contract, then stop everything.
 
 use std::sync::Arc;
@@ -24,7 +24,7 @@ impl Host {
 		.is_ok()
 	}
 
-	/// Start the profile, send `key` and take the first answer, hand it to `then`, stop everything.
+	/// Start the descriptor, send `key` and take the first answer, hand it to `then`, stop everything.
 	pub async fn run_then<F, Fut>(
 		self: &Arc<Self>,
 		key: &str,
@@ -71,7 +71,7 @@ impl Host {
 		self.run_then(key, args, |reply| async { Ok(reply) }).await
 	}
 
-	/// Start the profile and call every contract its cartridges declare.
+	/// Start the descriptor and call every contract its cartridges declare.
 	pub async fn verify(self: &Arc<Self>) -> Result<(usize, Vec<String>)> {
 		let contracts = self.contracts()?;
 		self.run_contracts(contracts).await
@@ -96,7 +96,7 @@ impl Host {
 					.entries()
 					.find(|e| normalize(&e.dir) == asked)
 					.ok_or_else(|| {
-						Error::Profile(format!(
+						Error::Descriptor(format!(
 							"`{target}` is not a cartridge under {}",
 							self.dir.display()
 						))
@@ -112,13 +112,13 @@ impl Host {
 			for key in &installed.needs {
 				match ledger.resolve(&installed.path, key) {
 					Bound::None => {
-						return Err(Error::Profile(format!(
+						return Err(Error::Descriptor(format!(
 							"{path}: need `{key}` binds to nothing in the tree"
 						)))
 					}
 					Bound::Clashed(offered) => {
 						let offered: Vec<&str> = offered.iter().map(|p| p.path.as_str()).collect();
-						return Err(Error::Profile(format!(
+						return Err(Error::Descriptor(format!(
 							"{path}: need `{key}` is ambiguous ({})",
 							offered.join(", ")
 						)));
@@ -136,7 +136,7 @@ impl Host {
 			}
 		}
 		let (cartridge, _) = Cartridge::read(&self.dir.join(&at).join(MANIFEST))
-			.map_err(|e| Error::Profile(format!("{at}: {e}")))?;
+			.map_err(|e| Error::Descriptor(format!("{at}: {e}")))?;
 		let contracts = cartridge
 			.contracts
 			.into_iter()
@@ -172,7 +172,7 @@ impl Host {
 			self.reconcile().await?;
 			if !self.settled(crate::settings::host().verify_timeout()).await {
 				failures.push(format!(
-					"profile did not settle: {}",
+					"descriptor did not settle: {}",
 					stalled(&self.status()).join("; ")
 				));
 			}

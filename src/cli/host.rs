@@ -17,7 +17,7 @@ pub(crate) fn host(
 	project: &Project,
 	foreground: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<Arc<Host>> {
-	let host = Host::new(&project.dir, &project.profile)?;
+	let host = Host::new(&project.dir, &project.descriptor)?;
 	stop_on_signals(host.stop_signal(), foreground)?;
 	Ok(host)
 }
@@ -155,7 +155,7 @@ async fn spawn(launch: Value) -> Result<Value> {
 
 pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
 	// The client owns this process's lifetime: the pump ends at end of
-	// input and the profile is disposed on the way out.
+	// input and the descriptor is disposed on the way out.
 	let host = host(project, None)?;
 	let serve = {
 		let host = host.clone();
@@ -242,14 +242,14 @@ pub(crate) async fn daemon(project: &Project) -> Result<ExitCode> {
 	tracing::info!(
 		target: "cartridge",
 		dir = %project.dir.display(),
-		profile = %project.profile.display(),
-		socket = %socket::path(&project.profile)?.display(),
+		descriptor = %project.descriptor.display(),
+		socket = %socket::path(&project.descriptor)?.display(),
 		"serving"
 	);
 	let result = tokio::select! {
 		served = socket::serve(host.clone()) => match served {
 			Ok(true) => Ok(()),
-			Ok(false) => Err(Error::Profile(format!("a host already serves {}", project.profile.display()))),
+			Ok(false) => Err(Error::Descriptor(format!("a host already serves {}", project.descriptor.display()))),
 			Err(error) => Err(error),
 		},
 		_ = host.stopped() => Ok(()),

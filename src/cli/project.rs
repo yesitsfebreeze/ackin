@@ -1,4 +1,4 @@
-//! Where a command runs: the cartridge root and the profile, decided once
+//! Where a command runs: the cartridge root and the descriptor, decided once
 //! before anything is loaded, and the host settings settled against them.
 
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use cartridge::{Error, Result};
 /// The project a command is bound to.
 pub(crate) struct Project {
 	pub(crate) dir: PathBuf,
-	pub(crate) profile: PathBuf,
+	pub(crate) descriptor: PathBuf,
 }
 
 /// Bind this invocation to its project.
@@ -26,21 +26,21 @@ pub(crate) fn locate(dir: Option<PathBuf>) -> Result<Project> {
 	let root = loader::root();
 	let dir = dir.unwrap_or_else(|| root.clone());
 	std::env::set_current_dir(&root).map_err(|e| Error::file(&root, e))?;
-	let profile = loader::profile();
+	let descriptor = loader::descriptor();
 	// An interactive command offers to trust its project instead of only refusing.
 	use std::io::IsTerminal;
-	if std::io::stdin().is_terminal() && root.join(&profile).join("init.lua").is_file() {
+	if std::io::stdin().is_terminal() && root.join(&descriptor).join("init.lua").is_file() {
 		super::trust::ask(&root)?;
 	}
 	// Here, because `settle` turns an error from these files into a warning.
 	for name in ["init.lua", "config.lua"] {
-		let file = root.join(&profile).join(name);
+		let file = root.join(&descriptor).join(name);
 		if file.is_file() {
 			cartridge::trust::verify(&file)?;
 		}
 	}
-	cartridge::settings::settle(&profile);
-	Ok(Project { dir, profile })
+	cartridge::settings::settle(&descriptor);
+	Ok(Project { dir, descriptor })
 }
 
 /// A path pinned to the directory this process started in, lexically: the

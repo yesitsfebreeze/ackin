@@ -1,5 +1,5 @@
 //! Changed sources restart their cartridge; a changed `init.lua` or
-//! `config.lua` reconciles the profile.
+//! `config.lua` reconciles the descriptor.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,10 +27,10 @@ impl Host {
 				}
 			})?;
 		watcher.watch(&self.dir, RecursiveMode::Recursive)?;
-		if self.profile != self.dir {
-			watcher.watch(&self.profile, RecursiveMode::NonRecursive)?;
+		if self.descriptor != self.dir {
+			watcher.watch(&self.descriptor, RecursiveMode::NonRecursive)?;
 		}
-		let mut watched = std::collections::HashSet::from([self.profile.clone()]);
+		let mut watched = std::collections::HashSet::from([self.descriptor.clone()]);
 		self.watch_sources(&mut watcher, &mut watched)?;
 		let host = self.clone();
 		Ok(tokio::spawn(async move {
@@ -42,14 +42,14 @@ impl Host {
 				}
 				changed.sort();
 				changed.dedup();
-				let profile = changed.iter().any(|path| {
-					path.parent() == Some(host.profile.as_path())
+				let descriptor = changed.iter().any(|path| {
+					path.parent() == Some(host.descriptor.as_path())
 						&& matches!(
 							path.file_name().and_then(|n| n.to_str()),
 							Some("init.lua" | "config.lua")
 						)
 				});
-				if profile {
+				if descriptor {
 					if let Err(error) = host.reconcile().await {
 						tracing::error!(target: "cartridge", cartridge = "init.lua", "{error}");
 					}

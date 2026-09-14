@@ -35,7 +35,7 @@ Early (`0.1.0`). Interfaces change without notice.
   compiled into an operating-system policy the node starts inside —
   `sandbox-exec` on macOS, Landlock plus a seccomp socket filter on Linux; a
   platform that cannot confine refuses to start the cartridge.
-- **Profile**: `.cartridge/init.lua` lists the cartridges a project runs and
+- **Descriptor**: `.cartridge/init.lua` lists the cartridges a project runs and
   `.cartridge/config.lua` configures them. Installed cartridges not listed
   there are known but not started.
 - **Trust**: a project runs only after `cartridge trust` records a SHA-256
@@ -78,14 +78,14 @@ cargo test --workspace
 cartridge setup                   # make this directory a project: choose cartridges, write .cartridge/init.lua
 cartridge doctor                  # ask every composed cartridge whether it is healthy here
 cartridge trust [<dir>]           # record this project's Lua and manifests so this machine runs them
-cartridge run <event> '<json>'    # start the profile, send, print the first answer, stop
-cartridge daemon                  # start the profile and keep it running
+cartridge run <event> '<json>'    # start the descriptor, send, print the first answer, stop
+cartridge daemon                  # start the descriptor and keep it running
 cartridge call <event> '<json>'   # send on the running base, print the first answer
 cartridge send <event> '<json>'   # send on the running base, print every listener's outcome
 cartridge follow <channel>        # print a channel: lifecycle, or <cartridge>.<channel>
 cartridge status                  # every cartridge and its state
-cartridge reload [<cartridge>]    # reload the profile, or restart one cartridge
-cartridge list                    # the profile and whom each cartridge's sends reach, cycles marked
+cartridge reload [<cartridge>]    # reload the descriptor, or restart one cartridge
+cartridge list                    # the descriptor and whom each cartridge's sends reach, cycles marked
 cartridge settings [<id>]         # every setting and the file that settled it
 cartridge verify [<cartridge>]    # send the contracts cartridges declare
 cartridge help [<address>]        # the documentation of the base and every cartridge
@@ -97,11 +97,11 @@ cartridge help [<address>]        # the documentation of the base and every cart
 the chosen ones under the root, writes `.cartridge/init.lua`, and sends each a
 `setup` event it declares so it can ask what this project must decide.
 `--with a,b` or `--yes` take cartridges without asking. Setup records trust for
-the profile it writes and each cartridge it links or clones, because it starts
+the descriptor it writes and each cartridge it links or clones, because it starts
 them next. A folder or `config.lua` the tree already held stays untrusted until
 you review it and run `cartridge trust`.
 
-`cartridge mcp` and `cartridge launch` start the profile and hand this terminal
+`cartridge mcp` and `cartridge launch` start the descriptor and hand this terminal
 to the cartridges that listen to `mcp` and `proxy`.
 
 Ctrl-C or a terminate stops a foreground command and every cartridge it

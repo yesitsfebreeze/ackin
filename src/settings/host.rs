@@ -1,5 +1,5 @@
 //! The host's own settings: declared in `.cartridge/settings.json`,
-//! settled once against the profile's files, read everywhere as one answer.
+//! settled once against the descriptor's files, read everywhere as one answer.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -94,16 +94,16 @@ static HOST: OnceLock<Host> = OnceLock::new();
 /// start because someone typed a limit wrongly trades a bounded system for no
 /// system at all.
 ///
-/// `profile` is where the project's configuration file sits. The CLI settles
-/// against the profile it resolved, before anything else runs; everything
+/// `descriptor` is where the project's configuration file sits. The CLI settles
+/// against the descriptor it resolved, before anything else runs; everything
 /// downstream reads that one settled answer through [`host`].
-pub fn settle(profile: &Path) -> &'static Host {
+pub fn settle(descriptor: &Path) -> &'static Host {
 	// The refusals are logged after the cell is set, never inside it: the
 	// event reaches the diagnostic sink, which reads
 	// `host.diagnostics_max_bytes` through here.
 	let mut refused: Vec<String> = Vec::new();
 	let settled = HOST.get_or_init(|| {
-		let configured = layers(profile)
+		let configured = layers(descriptor)
 			.map(|files| get(&files, "host").cloned().unwrap_or_else(|| json!({})))
 			.unwrap_or_else(|e| {
 				refused.push(e.to_string());
@@ -121,7 +121,7 @@ pub fn settle(profile: &Path) -> &'static Host {
 	settled
 }
 
-/// The host's settings, settling them against the profile beside the working
+/// The host's settings, settling them against the descriptor beside the working
 /// directory on first use — which is what a process with no CLI to settle
 /// for it, gets.
 pub fn host() -> &'static Host {
