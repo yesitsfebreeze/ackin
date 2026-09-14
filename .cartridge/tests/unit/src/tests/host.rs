@@ -964,3 +964,24 @@ async fn a_node_that_catches_its_own_refusal_exits() {
 	);
 	host.stop().await;
 }
+
+/// A lifecycle subscriber the broadcast outruns is disconnected rather than
+/// left on an open connection that hears nothing more.
+#[tokio::test]
+async fn a_lifecycle_subscriber_that_falls_behind_is_disconnected() {
+	let (a, b) = crate::transport::typed::InprocAdapter::pair();
+	let (peer, _incoming) = crate::transport::rpc::Peer::spawn(a, None);
+	let (_other, _theirs) = crate::transport::rpc::Peer::spawn(b, None);
+	let (tx, events) = tokio::sync::broadcast::channel::<Value>(2);
+	for i in 0..5 {
+		tx.send(json!(i)).unwrap();
+	}
+	let forwarded = tokio::time::timeout(
+		Duration::from_secs(5),
+		crate::host::socket::forward(events, peer.clone()),
+	)
+	.await;
+	assert!(forwarded.is_ok(), "forwarding outlived the lag");
+	assert!(peer.is_closed(), "a lagging subscriber kept its connection");
+	drop(tx);
+}

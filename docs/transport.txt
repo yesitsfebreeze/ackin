@@ -124,7 +124,8 @@ A channel belongs to the cartridge that publishes it. The publisher keeps a
 bounded replay buffer and serves `subscribe` with `since`; a subscription
 survives the publisher restarting. A subscriber that falls a full queue behind
 is disconnected and resubscribes from the last envelope it took. The base serves `lifecycle` on the host
-socket: state transitions and failures of every cartridge.
+socket: state transitions and failures of every cartridge. A `lifecycle` subscriber that falls behind is
+disconnected too; it has no `seq` to resume from, so it reads `status` again.
 
 NODES
 

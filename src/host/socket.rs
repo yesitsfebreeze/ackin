@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::transport::rpc::{self, Incoming, Peer, Request};
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::error::{Error, Result};
 
@@ -309,21 +309,7 @@ async fn answer(
 /// Forward a channel to the connection as `channel` notifications.
 async fn follow(host: &Arc<Host>, peer: &Peer, channel: &str, since: Option<u64>) -> Result<()> {
 	if channel == "lifecycle" {
-		let mut events = host.lifecycle();
-		let peer = peer.clone();
-		tokio::spawn(async move {
-			while let Ok(event) = events.recv().await {
-				if peer
-					.notify(
-						"channel",
-						json!({ "channel": "lifecycle", "kind": "data", "data": event }),
-					)
-					.is_err()
-				{
-					break;
-				}
-			}
-		});
+		tokio::spawn(forward(host.lifecycle(), peer.clone()));
 		return Ok(());
 	}
 	let (cartridge, local) = channel.split_once('.').ok_or_else(|| {
@@ -349,6 +335,25 @@ async fn follow(host: &Arc<Host>, peer: &Peer, channel: &str, since: Option<u64>
 		drop(upstream);
 	});
 	Ok(())
+}
+
+/// Forward the lifecycle broadcast as `channel` notifications. A subscriber the
+/// broadcast outruns is disconnected, as one a full queue outruns is: these
+/// frames carry no `seq` to resume from, and an open connection that hears
+/// nothing more is worse than a closed one.
+pub(crate) async fn forward(mut events: broadcast::Receiver<Value>, peer: Peer) {
+	while let Ok(event) = events.recv().await {
+		if peer
+			.notify(
+				"channel",
+				json!({ "channel": "lifecycle", "kind": "data", "data": event }),
+			)
+			.is_err()
+		{
+			return;
+		}
+	}
+	peer.close();
 }
 
 /// A connection to the host serving `profile`.
