@@ -36,6 +36,13 @@ fn code_of(error: &Error) -> u8 {
 }
 
 pub fn main() -> ExitCode {
+	let code = dispatch();
+	// The diagnostics writer is a thread of its own and dies with this one.
+	cartridge::trace::flush();
+	code
+}
+
+fn dispatch() -> ExitCode {
 	// The trampoline restricts and execs; it must stay single-threaded and do
 	// nothing else, so it runs before the tracing runtime is even made.
 	let cli = Cli::parse();

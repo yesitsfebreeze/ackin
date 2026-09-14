@@ -98,4 +98,11 @@ fn refused_settings_do_not_wedge_the_process_when_diagnostics_are_on() {
 		.spawn()
 		.unwrap();
 	assert!(clean(child), "`cartridge socket` never returned");
+	// The writer is a thread of its own; the exit flush is what carries the
+	// refusal the subprocess earned into the file it enabled.
+	let written = std::fs::read_to_string(dir.path().join("diagnostics.jsonl")).unwrap_or_default();
+	assert!(
+		written.contains("using declared defaults"),
+		"the warning never reached the file: {written:?}"
+	);
 }

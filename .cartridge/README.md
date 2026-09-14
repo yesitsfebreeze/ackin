@@ -36,4 +36,7 @@ key nothing declares. `docs/settings.txt` is the full guide.
 Set `CARTRIDGE_DIAGNOSTICS=stderr` or a file path to record diagnostics: the
 host's own events and every line cartridges write to stderr, capped by
 `host.diagnostics_max_bytes` with one rotated generation.
+Diagnostics are written by a thread of their own, so a slow disk never stalls
+the runtime. A record that finds the queue (`host.diagnostics_queue`) full is
+dropped, and the next record written says how many were lost.
 `CARTRIDGE_LOG` filters the host's own stderr (`warn` when unset).

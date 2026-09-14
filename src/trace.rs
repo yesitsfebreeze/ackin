@@ -22,7 +22,7 @@ use std::future::Future;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 tokio::task_local! {
 	static TURN: Arc<str>;
@@ -250,9 +250,74 @@ pub(crate) fn diagnostics_enabled() -> bool {
 	})
 }
 
-fn sink() -> &'static Mutex<Sink> {
-	static SINK: OnceLock<Mutex<Sink>> = OnceLock::new();
-	SINK.get_or_init(|| Mutex::new(Sink::from_env()))
+/// What the writer thread is handed.
+enum Note {
+	Line(String),
+	/// Answered once everything queued before it is written.
+	Flush(std::sync::mpsc::SyncSender<()>),
+}
+
+/// Records the queue had no room for, until the writer names them.
+static DROPPED: AtomicU64 = AtomicU64::new(0);
+
+static OUT: OnceLock<std::sync::mpsc::SyncSender<Note>> = OnceLock::new();
+
+/// Write what the queue hands over, each note preceded by one record for
+/// whatever the queue had no room for.
+fn drain(sink: &mut Sink, notes: &std::sync::mpsc::Receiver<Note>, dropped: &AtomicU64) {
+	while let Ok(note) = notes.recv() {
+		let missed = dropped.swap(0, Ordering::Relaxed);
+		if missed > 0 {
+			sink.write(&format!(
+				"{}\n",
+				serde_json::json!({ "t": now_ms(), "trace": Json::Null, "src": "cartridge",
+					"msg": "diagnostics dropped", "dropped": missed })
+			));
+		}
+		match note {
+			Note::Line(line) => sink.write(&line),
+			Note::Flush(ack) => {
+				let _ = ack.send(());
+			}
+		}
+	}
+}
+
+/// The queue in front of the sink. The sink is built on the first caller's
+/// thread, so it reads the environment and working directory it reads today;
+/// the blocking write happens on the writer thread.
+fn out() -> &'static std::sync::mpsc::SyncSender<Note> {
+	OUT.get_or_init(|| {
+		let mut sink = Sink::from_env();
+		let (lines, notes) =
+			std::sync::mpsc::sync_channel::<Note>(crate::settings::host().diagnostics_queue);
+		if std::thread::Builder::new()
+			.name("cartridge-diagnostics".into())
+			.spawn(move || drain(&mut sink, &notes, &DROPPED))
+			.is_err()
+		{
+			// Visibly off, not quietly lossy.
+			eprintln!("cartridge: no thread for the diagnostic stream; diagnostics are off");
+		}
+		lines
+	})
+}
+
+fn now_ms() -> u64 {
+	std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map(|d| d.as_millis() as u64)
+		.unwrap_or_default()
+}
+
+/// Wait for the writer to put what is queued on disk. The writer dies with the
+/// process, and the next command may read this one's lines.
+pub fn flush() {
+	let Some(lines) = OUT.get() else { return };
+	let (ack, done) = std::sync::mpsc::sync_channel::<()>(1);
+	if lines.send(Note::Flush(ack)).is_ok() {
+		let _ = done.recv_timeout(std::time::Duration::from_secs(5));
+	}
 }
 
 /// One diagnostic line: `{"t","trace","src","msg",…}`, sensitive fields omitted.
@@ -278,15 +343,7 @@ pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 		unreachable!("redact keeps the shape")
 	};
 	let mut line = serde_json::Map::new();
-	line.insert(
-		"t".into(),
-		Json::from(
-			std::time::SystemTime::now()
-				.duration_since(std::time::UNIX_EPOCH)
-				.map(|d| d.as_millis() as u64)
-				.unwrap_or_default(),
-		),
-	);
+	line.insert("t".into(), Json::from(now_ms()));
 	line.insert("trace".into(), id.map(Json::String).unwrap_or(Json::Null));
 	line.insert("src".into(), Json::String(src.to_owned()));
 	line.insert("msg".into(), Json::String(msg.to_string()));
@@ -296,10 +353,12 @@ pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 	for (k, v) in extra {
 		line.entry(k).or_insert(v);
 	}
-	sink()
-		.lock()
-		.unwrap_or_else(|e| e.into_inner())
-		.write(&format!("{}\n", Json::Object(line)));
+	if out()
+		.try_send(Note::Line(format!("{}\n", Json::Object(line))))
+		.is_err()
+	{
+		DROPPED.fetch_add(1, Ordering::Relaxed);
+	}
 }
 
 /// A line a cartridge wrote on its stderr. One it already shaped as a JSON

@@ -82,3 +82,33 @@ fn a_sink_that_cannot_repair_a_failed_write_stops_accepting_records() {
 		"{\"ordinary\":true}\n"
 	);
 }
+
+#[test]
+fn a_full_diagnostics_queue_drops_records_and_says_how_many() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("diagnostic.jsonl");
+	let mut sink = Sink::file(path.clone(), 64 * 1024).unwrap();
+	let (lines, notes) = std::sync::mpsc::sync_channel::<Note>(2);
+	let dropped = AtomicU64::new(0);
+	for i in 0..5 {
+		if lines
+			.try_send(Note::Line(format!("{{\"n\":{i}}}\n")))
+			.is_err()
+		{
+			dropped.fetch_add(1, Ordering::Relaxed);
+		}
+	}
+	drop(lines);
+	drain(&mut sink, &notes, &dropped);
+	let rows: Vec<Json> = std::fs::read_to_string(&path)
+		.unwrap()
+		.lines()
+		.map(|line| serde_json::from_str(line).unwrap())
+		.collect();
+	assert_eq!(rows.len(), 3, "{rows:?}");
+	assert_eq!(rows[0]["msg"], "diagnostics dropped");
+	assert_eq!(rows[0]["dropped"], 3);
+	assert_eq!(rows[1]["n"], 0);
+	assert_eq!(rows[2]["n"], 1);
+	assert_eq!(dropped.load(Ordering::Relaxed), 0);
+}

@@ -50,6 +50,7 @@ pub struct Host {
 	pub proxy_key_bytes: usize,
 	pub sandbox_error_chars: usize,
 	pub diagnostics_max_bytes: u64,
+	pub diagnostics_queue: usize,
 	pub lua_memory_bytes: usize,
 	pub lua_instruction_budget: u64,
 }

@@ -85,6 +85,13 @@
       "min": 4096,
       "max": 1073741824,
       "doc": "Cap on the diagnostics file, with one rotated generation. `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` overrides it for one invocation."
+    },
+    "diagnostics_queue": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Diagnostic records that may wait for the writer thread. A record that finds the queue full is dropped, and the next record written says how many were lost."
     }
   }
 }
