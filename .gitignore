@@ -1,12 +1,3 @@
 /target
 .DS_Store
-
 /.claude/
-/dist/
-/validation/
-__pycache__/
-*.pyc
-/scratch/
-node_modules/
-/bin/
-.gstack/

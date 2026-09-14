@@ -1,4 +1,4 @@
-//! The host's own settings: declared in `settings.json` beside the crate,
+//! The host's own settings: declared in `.cartridge/settings.json`,
 //! settled once against the profile's files, read everywhere as one answer.
 
 use std::path::Path;
@@ -11,11 +11,11 @@ use super::{apply, defaults, get, layers, Specs};
 use crate::error::Error;
 
 /// The host's own document. It has no `cartridge.json` — nothing composes the
-/// host — so its declarations live in `settings.json` beside `llms.txt`, in the
-/// same shape a cartridge's `settings` block uses. Embedded rather than read
-/// from disk: these are the values the binary was built with, and a host that
-/// could not find its own declarations would have no defaults to fall back to.
-const DOCUMENT: &str = include_str!("../../settings.json");
+/// host — so its declarations live in `.cartridge/settings.json`, in the same
+/// shape a cartridge's `settings` block uses. Embedded rather than read from
+/// disk: these are the values the binary was built with, and a host that could
+/// not find its own declarations would have no defaults to fall back to.
+const DOCUMENT: &str = include_str!("../../.cartridge/settings.json");
 
 /// What the host declares, parsed once off [`DOCUMENT`]. The numbers, bounds
 /// and documentation live there and nowhere else; [`Host`] below names the same

@@ -4,22 +4,26 @@
 configures them, keyed by entry id. Entries are `{id, path, config?, inject?,
 disabled?}`, with `path` relative to the cartridge root.
 
+This repository is the base itself, not a composition, so its profile names no
+cartridge and its `config.lua` pins nothing. What the directory holds is the
+base's own: `settings.json`, `help.md`, and the tests under `tests/`.
+
 ## Settings
 
 Every tunable value is declared: each cartridge in its `cartridge.json` under
-`settings`, the host in `settings.json` under `host`. Layers settle a key, each
-laid over the last field by field:
+`settings`, the base in `settings.json` here under `host`. Layers settle a key,
+each laid over the last field by field:
 
 | layer | file |
 | --- | --- |
-| declaration | the cartridge's `cartridge.json` |
+| declaration | the cartridge's `cartridge.json`, or `settings.json` for the base |
 | this machine | `~/.cartridge/config.lua` (or `$CARTRIDGE_HOME/config.lua`) |
 | this project | `.cartridge/config.lua` |
 | the entry | `config = {...}` in `init.lua` |
 
 ```
 cartridge settings              every key, its value, and the file that settled it
-cartridge settings agent        one cartridge
+cartridge settings host         one module
 cartridge settings --json       the same as data
 cartridge settings --template   every key at its current value, as a config.lua
 ```

@@ -1,5 +1,5 @@
-# The host and the transport crate. Workspace-wide recipes for every cartridge
-# live in .cartridge/justfile, imported by the workspace root.
+# The host and the transport crate. This repository is the host, not a
+# composition: recipes that drive a set of cartridges belong to that set.
 
 build *args:
     cargo build --workspace {{args}}

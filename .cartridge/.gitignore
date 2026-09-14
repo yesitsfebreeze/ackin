@@ -1,22 +1,15 @@
-# Whitelist: a fresh checkout gets only what is listed here. Everything
-# else a cartridge writes into .cartridge (sessions, credentials, caches,
-# logs, live data) stays on this machine. A cartridge that keeps local
-# state inside a tracked folder adds its rule below the list.
+# Whitelist: a fresh checkout gets only what is listed here. Everything else
+# written into .cartridge by a run (sockets, stores, logs) stays on this
+# machine.
 /*
 !/.gitignore
 !/README.md
 !/config.lua
-!/docs/
 !/help.md
 !/init.lua
-!/justfile
-!/memos/
+!/settings.json
 !/tests/
-!/tools/
 !/workspace/
-
-# memo: the record writer lock.
-/memos/.lock
 
 # cargo: the development workspace build.
 /workspace/target/
