@@ -329,17 +329,6 @@ pub enum Endpoint {
 	NamedPipe(String),
 }
 
-impl Endpoint {
-	pub fn display(&self) -> String {
-		match self {
-			#[cfg(unix)]
-			Endpoint::Unix(p) => p.display().to_string(),
-			#[cfg(windows)]
-			Endpoint::NamedPipe(n) => n.clone(),
-		}
-	}
-}
-
 // FNV-1a over the canonical path: stable across processes, unlike DefaultHasher.
 fn canonical_or_parent(dir: &std::path::Path) -> std::path::PathBuf {
 	if let Ok(c) = dir.canonicalize() {
