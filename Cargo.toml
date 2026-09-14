@@ -29,7 +29,7 @@ thiserror = "2"
 getrandom = "0.3"
 libc = "0.2"
 libloading = "0.9"
-mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde"] }
+mlua = { version = "0.12", features = ["lua54", "vendored", "send", "serde", "async"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "registry", "std"] }
 notify = "9.0.0-rc.5"

@@ -750,6 +750,7 @@ dependencies = [
  "bstr",
  "either",
  "erased-serde",
+ "futures-util",
  "libc",
  "mlua-sys",
  "num-traits",

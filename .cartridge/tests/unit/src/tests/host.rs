@@ -443,6 +443,39 @@ async fn a_glob_in_needs_names_what_the_others_listen_to() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_node_serves_other_events_while_a_handler_waits() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"busy",
+		json!({"name": "busy", "entry": "init.lua", "events": {"slow": {}, "fast": {}}, "listen": ["slow", "fast"],
+			"grant": {"exec": ["/bin/sleep"]}}),
+		r#"local mute = cartridge.spawn({"/bin/sleep", "30"}, { timeout_ms = 3000 })
+		cartridge.listen("slow", function() local ok, e = pcall(mute.request, mute, {}) return tostring(e) end)
+		cartridge.listen("fast", function() return "fast" end)"#,
+	);
+	profile(dir.path(), &["busy"]);
+	let host = boot(dir.path()).await;
+	let slow = tokio::spawn({
+		let host = host.clone();
+		async move { host.bail("slow", json!(null)).await }
+	});
+	tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+	let started = std::time::Instant::now();
+	assert_eq!(
+		host.bail("fast", json!(null)).await.unwrap(),
+		Some(json!("fast"))
+	);
+	assert!(started.elapsed() < std::time::Duration::from_secs(1));
+	let answer = slow.await.unwrap().unwrap().unwrap();
+	assert!(
+		answer.as_str().unwrap().contains("did not answer"),
+		"{answer}"
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn verify_sends_every_declared_contract() {
 	let dir = tempfile::tempdir().unwrap();
 	cartridge(

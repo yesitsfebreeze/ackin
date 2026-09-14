@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::FutureExt;
-use mlua::{Function, Lua, LuaSerdeExt, Table, UserData, UserDataMethods};
+use mlua::{
+	FromLuaMulti, Function, IntoLuaMulti, Lua, LuaSerdeExt, Table, UserData, UserDataMethods,
+};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::oneshot;
@@ -32,6 +34,28 @@ fn wait<F: std::future::Future>(future: F) -> F::Output {
 		Ok(_) => tokio::task::block_in_place(|| handle.block_on(future)),
 		Err(_) => handle.block_on(future),
 	}
+}
+
+/// A function that waits on the base: it yields when called from a handler
+/// (a coroutine), so the node serves other events meanwhile, and blocks when
+/// called where Lua cannot yield, such as from a native module's Rust code.
+fn waiting<A, R, F, Fut>(lua: &Lua, f: F) -> mlua::Result<Function>
+where
+	A: FromLuaMulti + 'static,
+	R: IntoLuaMulti + 'static,
+	F: Fn(Lua, A) -> Fut + Clone + Send + Sync + 'static,
+	Fut: std::future::Future<Output = mlua::Result<R>> + Send + 'static,
+{
+	let blocking = {
+		let f = f.clone();
+		lua.create_function(move |lua, args: A| wait(f(lua.clone(), args)))?
+	};
+	let yielding = lua.create_async_function(move |lua, args: A| f(lua, args))?;
+	lua.load(
+		"local blocking, yielding = ...\n\
+		 return function(...) if coroutine.isyieldable() then return yielding(...) end return blocking(...) end",
+	)
+	.call((blocking, yielding))
 }
 
 fn external(error: String) -> mlua::Error {
@@ -78,31 +102,34 @@ pub async fn main() -> Result<ExitCode> {
 	});
 	let apply_lua = lua.clone();
 	let apply = Box::new(move |ctx: Ctx, config: Value| {
-		async move { tokio::task::block_in_place(|| apply(&apply_lua, &ctx, &entry, config)) }
-			.boxed()
+		async move { apply(&apply_lua, &ctx, &entry, config).await }.boxed()
 	});
 	cartridge::serve(listener, ctx, apply).await;
 	Ok(ExitCode::SUCCESS)
 }
 
 /// Run `init.lua` with the config the base handed over.
-fn apply(lua: &Lua, ctx: &Ctx, entry: &Path, config: Value) -> cartridge::Result<()> {
-	let run = || -> mlua::Result<()> {
+async fn apply(lua: &Lua, ctx: &Ctx, entry: &Path, config: Value) -> cartridge::Result<()> {
+	let run = async {
 		let global: Table = lua.globals().get("cartridge")?;
 		global.set("name", ctx.name())?;
 		global.set("config", lua.to_value(&config)?)?;
 		let source = std::fs::read_to_string(entry).map_err(mlua::Error::external)?;
-		let returned: mlua::Value = lua.load(&source).set_name(entry.to_string_lossy()).eval()?;
+		let returned: mlua::Value = lua
+			.load(&source)
+			.set_name(entry.to_string_lossy())
+			.eval_async()
+			.await?;
 		if let mlua::Value::Function(dispose) = returned {
 			ctx.on_dispose(move || async move {
-				if let Err(error) = tokio::task::block_in_place(|| dispose.call::<()>(())) {
+				if let Err(error) = dispose.call_async::<()>(()).await {
 					tracing::warn!(target: "cartridge", "disposer failed: {error}");
 				}
 			});
 		}
-		Ok(())
+		mlua::Result::Ok(())
 	};
-	run().map_err(|e| e.to_string())
+	run.await.map_err(|e| e.to_string())
 }
 
 /// The `cartridge` global: the base's event system, streams, host queries, and
@@ -140,11 +167,11 @@ fn install(
 			ctx.on(&name, move |data| {
 				let (lua, f) = (lua.clone(), f.clone());
 				async move {
-					tokio::task::block_in_place(|| -> mlua::Result<Value> {
-						let out: mlua::Value = f.call(lua.to_value(&data)?)?;
-						lua.from_value(out)
-					})
-					.map_err(|e| e.to_string())
+					let run = async {
+						let out: mlua::Value = f.call_async(lua.to_value(&data)?).await?;
+						lua.from_value::<Value>(out)
+					};
+					run.await.map_err(|e| e.to_string())
 				}
 			});
 			Ok(())
@@ -154,7 +181,7 @@ fn install(
 		let ctx = ctx.clone();
 		lua.create_function(move |_, f: Function| {
 			ctx.on_dispose(move || async move {
-				if let Err(error) = tokio::task::block_in_place(|| f.call::<()>(())) {
+				if let Err(error) = f.call_async::<()>(()).await {
 					tracing::warn!(target: "cartridge", "disposer failed: {error}");
 				}
 			});
@@ -164,51 +191,64 @@ fn install(
 	global.set("emit", {
 		let ctx = ctx.clone();
 		lua.create_function(move |lua, (name, data): (String, mlua::Value)| {
-			let data = json(lua, data)?;
-			wait(async { ctx.emit(&name, data) }).map_err(external)
+			ctx.emit(&name, json(lua, data)?).map_err(external)
 		})?
 	})?;
 	global.set("notify", {
 		let ctx = ctx.clone();
 		lua.create_function(move |lua, (name, data): (String, mlua::Value)| {
-			let data = json(lua, data)?;
-			wait(async { ctx.notify(&name, data) }).map_err(external)
+			ctx.notify(&name, json(lua, data)?).map_err(external)
 		})?
 	})?;
 	global.set("bail", {
 		let ctx = ctx.clone();
-		lua.create_function(move |lua, (name, data): (String, mlua::Value)| {
-			let answer = wait(ctx.bail(&name, json(lua, data)?)).map_err(external)?;
-			match answer {
-				Some(answer) => lua.to_value(&answer),
-				None => Ok(mlua::Value::Nil),
+		waiting(lua, move |lua, (name, data): (String, mlua::Value)| {
+			let ctx = ctx.clone();
+			async move {
+				let answer = ctx.bail(&name, json(&lua, data)?).await.map_err(external)?;
+				match answer {
+					Some(answer) => lua.to_value(&answer),
+					None => Ok(mlua::Value::Nil),
+				}
 			}
 		})?
 	})?;
 	global.set("parallel", {
 		let ctx = ctx.clone();
-		lua.create_function(move |lua, (name, data): (String, mlua::Value)| {
-			wait(ctx.parallel(&name, json(lua, data)?)).map_err(external)
+		waiting(lua, move |lua, (name, data): (String, mlua::Value)| {
+			let ctx = ctx.clone();
+			async move {
+				ctx.parallel(&name, json(&lua, data)?)
+					.await
+					.map_err(external)
+			}
 		})?
 	})?;
 	global.set("gather", {
 		let ctx = ctx.clone();
-		lua.create_function(
+		waiting(
+			lua,
 			move |lua, (name, data, timeout): (String, mlua::Value, Option<u64>)| {
-				let data = json(lua, data)?;
-				let answers = match timeout {
-					Some(ms) => wait(ctx.gather_within(&name, data, Duration::from_millis(ms))),
-					None => wait(ctx.gather(&name, data)),
+				let ctx = ctx.clone();
+				async move {
+					let data = json(&lua, data)?;
+					let answers = match timeout {
+						Some(ms) => {
+							ctx.gather_within(&name, data, Duration::from_millis(ms))
+								.await
+						}
+						None => ctx.gather(&name, data).await,
+					}
+					.map_err(external)?;
+					let rows = lua.create_table()?;
+					for (from, data) in answers {
+						let row = lua.create_table()?;
+						row.set("from", from)?;
+						row.set("data", lua.to_value(&data)?)?;
+						rows.push(row)?;
+					}
+					Ok(rows)
 				}
-				.map_err(external)?;
-				let rows = lua.create_table()?;
-				for (from, data) in answers {
-					let row = lua.create_table()?;
-					row.set("from", from)?;
-					row.set("data", lua.to_value(&data)?)?;
-					rows.push(row)?;
-				}
-				Ok(rows)
 			},
 		)?
 	})?;
@@ -220,30 +260,38 @@ fn install(
 		})?
 	})?;
 	global.set("subscribe", {
-		let (ctx, lua_handle) = (ctx.clone(), lua.clone());
-		lua.create_function(
-			move |_, (cartridge, channel, f): (String, String, Function)| {
-				let lua = lua_handle.clone();
-				wait(ctx.subscribe(&cartridge, &channel, None, move |envelope| {
-					let (lua, f) = (lua.clone(), f.clone());
-					async move {
-						let result = tokio::task::block_in_place(|| -> mlua::Result<()> {
-							f.call::<()>(lua.to_value(&envelope)?)
-						});
-						if let Err(error) = result {
-							tracing::warn!(target: "cartridge", "subscriber failed: {error}");
+		let ctx = ctx.clone();
+		waiting(
+			lua,
+			move |lua, (cartridge, channel, f): (String, String, Function)| {
+				let ctx = ctx.clone();
+				async move {
+					ctx.subscribe(&cartridge, &channel, None, move |envelope| {
+						let (lua, f) = (lua.clone(), f.clone());
+						async move {
+							let run = async { f.call_async::<()>(lua.to_value(&envelope)?).await };
+							if let Err(error) = run.await {
+								tracing::warn!(target: "cartridge", "subscriber failed: {error}");
+							}
 						}
-					}
-				}))
-				.map_err(external)
+					})
+					.await
+					.map_err(external)
+				}
 			},
 		)?
 	})?;
 	global.set("host", {
 		let ctx = ctx.clone();
-		lua.create_function(move |lua, (method, params): (String, mlua::Value)| {
-			let out = wait(ctx.host(&method, json(lua, params)?)).map_err(external)?;
-			lua.to_value(&out)
+		waiting(lua, move |lua, (method, params): (String, mlua::Value)| {
+			let ctx = ctx.clone();
+			async move {
+				let out = ctx
+					.host(&method, json(&lua, params)?)
+					.await
+					.map_err(external)?;
+				lua.to_value(&out)
+			}
 		})?
 	})?;
 	global.set("load", {
@@ -310,7 +358,7 @@ fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> 
 ///   {"emit"|"notify"|"publish": name, "data"}
 ///   {"ask": id, "bail"|"gather"|"host": name, "args"|"params"}  answered as {"ask": id, "result"|"error"}
 /// Anything else is not protocol and goes to the Lua handler.
-async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value)) -> bool {
+async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'static) -> bool {
 	let name = |key: &str| value[key].as_str().map(str::to_owned);
 	if let Some(name) = name("emit") {
 		let _ = ctx.emit(&name, value["data"].clone());
@@ -327,25 +375,35 @@ async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value)) -> bool {
 	let Some(ask) = value.get("ask").cloned() else {
 		return false;
 	};
-	let result = if let Some(name) = name("bail") {
-		ctx.bail(&name, value["args"].clone())
-			.await
-			.map(|a| a.unwrap_or(Value::Null))
+	let (ctx, value) = (ctx.clone(), value.clone());
+	let asked = if let Some(name) = name("bail") {
+		async move {
+			ctx.bail(&name, value["args"].clone())
+				.await
+				.map(|a| a.unwrap_or(Value::Null))
+		}
+		.boxed()
 	} else if let Some(name) = name("gather") {
-		ctx.gather(&name, value["args"].clone()).await.map(|rows| {
-			json!(rows
-				.into_iter()
-				.map(|(from, data)| json!({ "from": from, "data": data }))
-				.collect::<Vec<_>>())
-		})
+		async move {
+			ctx.gather(&name, value["args"].clone()).await.map(|rows| {
+				json!(rows
+					.into_iter()
+					.map(|(from, data)| json!({ "from": from, "data": data }))
+					.collect::<Vec<_>>())
+			})
+		}
+		.boxed()
 	} else if let Some(method) = name("host") {
-		ctx.host(&method, value["params"].clone()).await
+		async move { ctx.host(&method, value["params"].clone()).await }.boxed()
 	} else {
 		return false;
 	};
-	answer(match result {
-		Ok(result) => json!({ "ask": ask, "result": result }),
-		Err(error) => json!({ "ask": ask, "error": error }),
+	// Answered out of line: the asker may have more to say while it waits.
+	tokio::spawn(async move {
+		answer(match asked.await {
+			Ok(result) => json!({ "ask": ask, "result": result }),
+			Err(error) => json!({ "ask": ask, "error": error }),
+		});
 	});
 	true
 }
@@ -395,10 +453,8 @@ fn pipe(
 				continue;
 			}
 			let Some(f) = &f else { continue };
-			let result = tokio::task::block_in_place(|| -> mlua::Result<()> {
-				f.call::<()>(lua.to_value(&value)?)
-			});
-			if let Err(error) = result {
+			let run = async { f.call_async::<()>(lua.to_value(&value)?).await };
+			if let Err(error) = run.await {
 				tracing::warn!(target: "cartridge", "pipe handler failed: {error}");
 			}
 		}
@@ -491,10 +547,8 @@ fn spawn(
 			}
 			let handler = reader.on_line.lock().expect("on_line lock").clone();
 			if let Some(handler) = handler {
-				let result = tokio::task::block_in_place(|| -> mlua::Result<()> {
-					handler.call::<()>(lua.to_value(&value)?)
-				});
-				if let Err(error) = result {
+				let run = async { handler.call_async::<()>(lua.to_value(&value)?).await };
+				if let Err(error) = run.await {
 					tracing::warn!(target: "cartridge", "line handler failed: {error}");
 				}
 			}
@@ -520,8 +574,8 @@ impl UserData for Handle {
 		methods.add_method("send", |lua, this, value: mlua::Value| {
 			wait(this.0.write(&json(lua, value)?)).map_err(|e| external(e.to_string()))
 		});
-		methods.add_method("request", |lua, this, value: mlua::Value| {
-			let mut value = json(lua, value)?;
+		methods.add_async_method("request", |lua, this, value: mlua::Value| async move {
+			let mut value = json(&lua, value)?;
 			let id = this.0.next.fetch_add(1, Ordering::SeqCst);
 			if !value.is_object() {
 				value = json!({ "data": value });
@@ -529,8 +583,11 @@ impl UserData for Handle {
 			value["id"] = json!(id);
 			let (tx, rx) = oneshot::channel();
 			this.0.pending.lock().expect("pending lock").insert(id, tx);
-			wait(this.0.write(&value)).map_err(|e| external(e.to_string()))?;
-			let reply = wait(tokio::time::timeout(this.0.timeout, rx));
+			this.0
+				.write(&value)
+				.await
+				.map_err(|e| external(e.to_string()))?;
+			let reply = tokio::time::timeout(this.0.timeout, rx).await;
 			this.0.pending.lock().expect("pending lock").remove(&id);
 			match reply {
 				Ok(Ok(reply)) => lua.to_value(&reply),
