@@ -1,10 +1,9 @@
 # Transport: how cartridges talk
 
-Status: the transport crate (transport/) implements the wire, the cartridge side
-and declared settings; the host implements the rest. This replaces the stdio process wire
-(src/cartridge.rs), the socket protocol (src/socket.rs) and the Rust SDK
-(src/sdk.rs). MCP stays the interface coding agents use from outside; this
-document is everything inside.
+The protocol between the host and every cartridge, and between cartridges.
+transport/ implements it in Rust (src/cartridge.rs for the cartridge side) and
+transport/wire.ts in TypeScript. MCP is how coding agents reach the tools from
+outside; this document is everything inside.
 
 ROLES
 
@@ -170,7 +169,7 @@ project's host socket (`cartridge socket` prints it) with the host token from th
 
 LUA CARTRIDGES
 
-The Lua surface does not change shape:
+A Lua cartridge's `apply(ctx, config)` gets:
 
   ctx:provide(key, fn)       served as `call`
   ctx.<need>(args)           a `call` over the need's token
@@ -180,21 +179,8 @@ The Lua surface does not change shape:
   ctx:host(method, params)   a host query
   ctx:on_dispose(fn)         runs when the cartridge stops; `apply` may also return one
 
-MANIFEST CHANGES
+MANIFEST
 
-  added    "on": ["event.name", …]      events this cartridge listens to
-  removed  "export", nested cartridges  unused by every cartridge
+  on: ["event.name", …]      events this cartridge listens to
 
-REMOVED FROM THE HOST
-
-  src/sdk.rs and its fixtures           replaced by the transport crate
-  hello discovery                        cartridge.json declares it
-  generation switch, reload handshake,   a reload is a stop and a start
-  resume
-  send                                   a published channel covers it
-  meta / intercept, isolate / realms     no cartridge uses them
-  bridge, snapshot, cartridges,          host queries a cartridge served through
-  injections, versions                   the host socket; injections live in the directory
-  fabric, graph, evidence, observation   cartridge concerns; a graph is a `gather`
-                                         over an event the owning cartridge names
-  cartridge::settings as a Rust API      a cartridge reads config from `apply`
+There is no `export`: a cartridge folder inside another folder is its own entry.

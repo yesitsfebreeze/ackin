@@ -76,8 +76,8 @@ The one source is the document, embedded:
 
   impl Config {
       fn parse(value: Value) -> Result<Self, String> {
-          let mut settled = cartridge::settings::declared(DOCUMENT);
-          cartridge::settings::merge(&mut settled, value);
+          let mut settled = transport::settings::declared(DOCUMENT);
+          transport::settings::merge(&mut settled, value);
           serde_json::from_value(settled).map_err(|e| e.to_string())
       }
   }
@@ -103,9 +103,7 @@ settled table, installed once by the cartridge before it serves.
 
 Limits::declared reads the same cartridge.json, so the module has no numbers of
 its own either. First call wins, so work already under way keeps the budget it
-started with. harness, sessions, gitfs, pty, router, docs and memo each carry
-one, declared as their limits.* keys; memo carries a second for its source
-adapters under sources.*.
+started with.
 
 The host's own keys work the same way and live in settings.json beside
 llms.txt, in the shape a cartridge's settings block uses. The Host struct names

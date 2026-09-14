@@ -453,6 +453,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -686,7 +687,6 @@ dependencies = [
 name = "gitfs"
 version = "0.1.0"
 dependencies = [
- "cartridge",
  "libc",
  "regex",
  "reqwest",
@@ -696,6 +696,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -1127,12 +1128,12 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 name = "mcp"
 version = "0.1.0"
 dependencies = [
- "cartridge",
  "futures",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -1399,7 +1400,6 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "base64",
- "cartridge",
  "getrandom 0.4.3",
  "libc",
  "serde",
@@ -1407,6 +1407,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -1821,12 +1822,12 @@ dependencies = [
 name = "sessions"
 version = "0.1.0"
 dependencies = [
- "cartridge",
  "getrandom 0.4.3",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
+ "transport",
 ]
 
 [[package]]
@@ -2101,11 +2102,11 @@ dependencies = [
 name = "tools"
 version = "0.1.0"
 dependencies = [
- "cartridge",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "transport",
 ]
 
 [[package]]

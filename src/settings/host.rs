@@ -102,7 +102,7 @@ pub fn settle(profile: &Path) -> &'static Host {
 }
 
 /// The host's settings, settling them against the profile beside the working
-/// directory on first use — which is what an SDK child, with no CLI to settle
+/// directory on first use — which is what a process with no CLI to settle
 /// for it, gets.
 pub fn host() -> &'static Host {
 	settle(Path::new(".cartridge"))

@@ -1,0 +1,51 @@
+# Writing good cartridges
+
+ONE CAPABILITY
+
+A cartridge owns one capability and everything that belongs to it: its keys,
+its settings, its state, its tests and its help page. Another cartridge reaches
+it only through what it declares.
+
+NEEDS OR EVENTS
+
+Use a need when the cartridge cannot work without the other one: it declares the
+key in `needs`, the host starts it only once the provider is active, and it calls
+the key directly. Use an event when the cartridge tells whoever cares: it emits
+without knowing the listeners, and the listeners declare the event in `on`.
+
+Pick the dispatch by what the emitter does with the answers:
+
+  emit      nothing; fire and forget
+  bail      the first answer; the listeners are alternatives, in profile order
+  parallel  none, but every listener must succeed
+  gather    all of them, attributed
+
+An optional feature with several possible providers is a key prefix the
+consumer injects in the profile (`inject = {"tool.*"}`) and a key each provider
+brings under it. The consumer lists them with its needs and calls each.
+
+ISOLATION
+
+A cartridge reaches another only through a key in its needs, a key the profile
+injects into it, or an event another declares. It carries no sibling's protocol
+for an optional feature and names no sibling it did not declare. The host
+enforces this: a token only opens the keys and events it was minted for.
+
+STREAMS
+
+Publish what others may want to watch as it happens on a channel, and keep the
+payload self-contained: a subscriber may join late and read the replay. Name
+channels after what they carry; a watcher writes `<cartridge>.<channel>`.
+
+STATE AND RESTARTS
+
+A cartridge can be restarted at any time: its socket and tokens stay the same,
+calls in flight fail, and callers reconnect. Keep durable state on disk, make
+startup cheap, and make operations safe to retry. Clean up in on_dispose.
+
+ERRORS
+
+A handler's error travels to the caller as the error's message. A listener that
+fails publishes the failure on its own `error` channel; the emitter is not the
+party that broke. Diagnostics go to stderr, one JSON object per line where
+possible; the host records them.

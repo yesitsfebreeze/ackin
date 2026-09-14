@@ -1,231 +1,131 @@
 # Creating a cartridge
 
-Read architecture.txt for composition and development.txt for workspace commands.
-Read writing-good-modules.txt for event coverage, direct integration, dependency
-reuse, and the memo-tool workflow expected of every new cartridge.
-The repeatable authoring procedure is also recorded at
-../.cartridge/memos/routine/create-cartridge.md.
+Read architecture.txt for how the host runs cartridges and transport.txt for the
+protocol. writing-good-cartridges.txt covers what makes one good.
 
-CHOOSE THE CONTRACT
+A LUA CARTRIDGE
 
-Choose a unique repository/module name, the service keys to provide, the keys
-needed from other cartridges, the configuration shape, and a meaningful observable
-check. Start with a Lua cartridge for a small host service. Use an SDK process
-when Rust libraries, independent process ownership, or a larger implementation
-are useful. Keep model orchestration and MCP hosting in their existing cartridges
-unless extending those contracts is the intended change.
-
-MINIMAL LOADABLE LUA CARTRIDGE
-
-Create hello.ctg/ as a sibling of cartridge.ctg/. Two files are enough to load it.
-The example deliberately uses an echo service with no external dependencies.
+Two files in a folder under the cartridge root, here `hello/`.
 
 cartridge.json:
 {
   "name": "hello",
-  "description": "Returns the JSON value supplied by its caller.",
   "entry": "init.lua",
-  "provide": ["hello.echo"],
-  "needs": [],
-  "commands": {
-    "run": {
-      "argv": ["../cartridge.ctg/cartridge", "run",
-               "hello.echo", "{\"message\":\"hello\"}"],
-      "cwd": "."
-    }
-  }
+  "description": "Returns the JSON value supplied by its caller.",
+  "provide": ["hello.echo"]
 }
 
 init.lua:
 return {
   apply = function(ctx, config)
-    ctx:provide("hello.echo", function(input)
-      return input
-    end)
+    ctx:provide("hello.echo", function(input) return input end)
   end,
 }
 
-Register builtin/hello as a relative link to ../../hello.ctg. There is one user
-profile per project; add the entry to cartridge.ctg/.cartridge/init.lua:
-  {id="hello", path="hello"},
-From cartridge.ctg, run:
-  ./cartridge run hello.echo '{"message":"hello"}'
-Expected result: {"message":"hello"}. Use structured argument arrays when calling
-from a program; shell quoting above is only for interactive command examples.
+Enable it in .cartridge/init.lua:
+  return { {id = "hello", path = "hello"} }
 
-THE HELP PAGE
+and call it:
+  cartridge run hello.echo '{"message":"hello"}'
 
-Every cartridge ships .cartridge/help.md: a title, two to four sentences on
-what it owns and who reaches it, a "## Use" list of its tool or service keys
-and how to call them, and a "## Read next" list of links into its own docs and
-memos, relative to the cartridge directory. `cartridge help <id>` lists this
-page first, then the declarations off cartridge.json and every other document
-the cartridge ships; `cartridge help <id>/.cartridge/help.md` prints it, and
-`cartridge help` marks a cartridge without one and exits non-zero. Do not
-restate provide, needs, settings or commands on the page; the manual renders
-them from cartridge.json.
+The Lua ctx:
 
-LOCAL STATE
+  ctx:provide(key, fn)            serve a key declared in `provide`
+  ctx.<need>(args), ctx:call(key, args)
+                                  call a key declared in `needs`
+  ctx:on(name, fn)                listen to an event declared in `on`
+  ctx:emit(name, data)            send to every listener, do not wait
+  ctx:bail(name, data)            ask listeners in order; first non-nil answer
+  ctx:parallel(name, data)        ask all; fail if any failed
+  ctx:gather(name, data)          every answer as {from, data}
+  ctx:notify(name, data)          emit and publish on the channel `name`
+  ctx:publish(channel, data)
+  ctx:subscribe(cartridge, channel, fn)   the cartridge must be a need's provider
+  ctx:host(method, params)        status, snapshot, cartridges
+  ctx:on_dispose(fn)              `apply` may also return a function to run on stop
+  ctx:name(), ctx:needs()
 
-.cartridge/.gitignore is a whitelist: `/*` ignores the folder, and one `!/name`
-line brings back each durable entry (help.md, docs/, memos/, tests/). A
-cartridge writing a new top-level store (sessions/, credentials/, logs/) needs
-no rule; it is local by default. A cartridge that keeps state inside a tracked
-folder adds its one rule below the list, with a comment naming the owner, the
-way memo adds /memos/.lock. The repository's root .gitignore says nothing
-about .cartridge.
+A PROCESS CARTRIDGE
 
-A tool's descriptor (the answer to {"op":"describe"}) may carry reads: true
-when every call only reads, or reads: [op, ...] naming the ops that do. That
-is the one place this is declared; the agent parallelises on it and the policy
-knows no tool at all.
+Any program that serves the protocol. init.lua:
+
+  return cartridge.process("hello")
+
+The program is found in the cartridge's .cartridge/bin, bin, beside the host
+binary, then PATH; a name with a `/` is relative to the cartridge folder. A
+command may be a string or a list: cartridge.process({"./run", "--flag"}).
+The process runs in the project root, so a script finds its own files from its
+own path. It runs inside its `grant`: exec must name any interpreter or
+program it starts, read and write the paths it touches, net the hosts it
+reaches.
+
+In Rust, depend on the transport crate:
+
+  [dependencies]
+  transport = { path = "../cartridge.ctg/transport" }
+  tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+  serde_json = "1"
+
+  #[tokio::main]
+  async fn main() {
+      transport::cartridge::run(|ctx, _config| async move {
+          ctx.provide("hello.echo", |input| async move { Ok(input) });
+          Ok(())
+      })
+      .await;
+  }
+
+`Ctx` has the same operations as the Lua ctx: provide, call, on, emit, bail,
+parallel, gather, notify, publish, subscribe, host, on_dispose, needs, name.
+
+In TypeScript, copy transport/wire.ts into the cartridge:
+
+  import { Wire } from "./wire";
+  const wire = new Wire();
+  wire.on("apply", async config => {});
+  wire.on("hello.echo", async input => input);
+
+with call, listen (events), emit, bail, gather, notify, publish, ask (host
+queries), onClose. In another language, implement docs/transport.txt: bind
+CARTRIDGE_SOCKET, accept `auth`, `apply`, `call`, `event`, `subscribe`,
+`dispose`, and exit when stdin closes.
 
 MANIFEST FIELDS
 
-name and entry are required. entry must be a relative .lua path inside the
-cartridge folder. description is an optional purpose statement. source can name
-the retrieval repository. binary overrides the executable basename when it
-differs from the cartridge directory. ui points to a relative JS/TS UI module.
+name and entry are required; entry is a relative .lua path inside the folder.
 
-provide, needs, and export declare service keys. grant requests read/write paths,
-network hosts, and executable names. config holds cartridge-owned defaults.
+  description     one line of purpose
+  provide         keys served
+  needs           keys called; the profile can add more with `inject`
+  on              events listened to
+  grant           {read, write, net, exec}; absent grants nothing
+  settings        dotted key -> {type, default, optional?, min?, max?, doc?}; see settings.txt
+  config          author defaults laid over the declared ones
+  selftest        a provided key that proves the cartridge's behaviour
+  integration     a provided key that proves its wiring to a real dependency
+  commands        label -> {argv, cwd, description?}; documentation, never run by the host
+  binary          executable basename when it differs from the folder
+  ui              a JavaScript or TypeScript client module inside the folder
+  source          where the source lives
 
-settings declares the configuration keys this cartridge contributes, as a map of
-dotted key to {type, default, min, max, optional, doc}:
+Keys are nonempty exact strings. Unknown fields are refused.
 
-  "settings": {
-    "max_steps": {"type":"integer","default":500,"min":1,"max":1000000,
-                  "doc":"Model round trips one turn may take."},
-    "ship.remote": {"type":"string","default":"origin","doc":"Remote a push names."},
-    "gate_model": {"type":"string","default":null,"optional":true,
-                   "doc":"Model that gates a review, or nothing."}
-  }
+CONTRACTS
 
-type is integer, number, boolean, string, list or table. default is required;
-optional makes null a permitted value, for a key where absent is itself an
-answer. A dotted key is a nested table, not a key containing a dot. Every
-declared key is filled and range-checked before apply runs, so read config
-directly and carry no fallback. Make every field required — no Default impl
-restating the numbers, no #[serde(default)] on a configuration field. Embed the
-document instead and read the declared table back:
+`cartridge verify` starts the profile and calls every `selftest` and
+`integration` key with null; an error or `false` fails. `cartridge verify <id>`
+starts only that cartridge and what its needs resolve to in the ledger.
 
-  pub const DOCUMENT: &str = include_str!("../cartridge.json");
-  let mut settled = cartridge::settings::declared(DOCUMENT);
-  cartridge::settings::merge(&mut settled, value);
+THE HELP PAGE
 
-which changes nothing in a hosted run and gives an unhosted one the values this
-cartridge ships. Do not re-check a bound the declaration states —
-a second ceiling in code is how the two drift and how raising a limit becomes an
-unexplained refusal. Check only what a declaration cannot say: that a cap is not
-zero, that a name is a name, that a path resolves. Prefer generous defaults; a
-limit stops a runaway rather than rationing a machine. See settings.txt.
+Ship .cartridge/help.md: a title, two to four sentences on what the cartridge
+owns and who reaches it, a "## Use" list of its keys and how to call them, and a
+"## Read next" list of its own documents. `cartridge help <id>` prints it, then
+the declarations from cartridge.json and every other document the cartridge
+ships. Do not restate provide, needs or settings on the page.
 
-selftest and integration name provided contract services; only declare these
-when the service exists and returns the verification format expected by Host::verify.
-Follow tools.ctg and src/tests/contracts.rs for concrete contract examples.
+LOCAL STATE
 
-commands maps labels to objects with argv (an array of strings), cwd (a string
-relative to the manifest's directory), and optional description. These are read
-as data; they are not automatically executed during discovery and do not grant
-permission. Include run, test, build, and check commands where applicable. Avoid
-inventing a second schema, repeating provide as provides, or needs as requires.
-The parser in src/loader.rs rejects unknown fields and invalid value types.
-
-RUST SDK PROCESS
-
-Create Cargo.toml and main.rs alongside the manifest. Within this checkout use
-package.workspace = "../cartridge.ctg/workspace", add the package to that
-workspace's members, and depend on cartridge = {path="../cartridge.ctg"}.
-Follow an existing sibling Cargo.toml for edition, minimum Rust version, lints,
-and pinned workspace dependency conventions. The SDK example also needs serde_json
-and tokio with macros and a multi-thread runtime, as the existing packages use.
-
-Set [[bin]] name = "hello" and path = "main.rs". Replace init.lua with:
-  return cartridge.process("hello")
-
-main.rs:
-use cartridge::sdk::Cartridge;
-
-#[tokio::main]
-async fn main() {
-    Cartridge::new()
-        .provide(&["hello.echo"])
-        .run(|host, _config| async move {
-            host.provide("hello.echo", |input| async move { Ok(input) });
-            Ok(())
-        })
-        .await;
-}
-
-Use .inject(&["service.key"]) when the process needs another service and mirror
-it in manifest needs. host.call invokes dependencies. Register listeners/services
-during run's apply callback; after it returns, the component is active. Use SDK
-resource disposal hooks and reload hooks when the service owns long-lived work.
-Do not put arbitrary diagnostics on stdout. The process receives host protocol
-frames there, not interactive commands.
-
-THE ISOLATION RULE
-
-A cartridge reaches another only through a key in its needs (or a key the
-profile injects into it) or by listening to an event. It carries no sibling's
-protocol for an optional feature and names no sibling it did not declare. An
-optional feature with several possible providers is a glob the consumer
-injects (context.*, source.*, tool.*) and a key each provider brings under it.
-See writing-good-modules.txt; `just isolation` reports every violation.
-
-DEVELOPMENT REGISTRATION
-
-1. Initialize or clone the sibling Git repository and commit its source. Register
-   it as a parent submodule using its intended origin; use local Git URL overrides
-   while the remote is unpublished. Keep source out of the parent root.
-2. Add repositories.json metadata: name, repository, package (null for Lua),
-   cartridge=true, and files (the import inventory count where applicable).
-   This catalog feeds module selection and tooling; services still come from
-   cartridge.json. Update fixed-count link-check messages if the catalog grows.
-3. Add the relative builtin link. For Rust, add ../../hello.ctg to shared workspace
-   members. Confirm the executable name matches the manifest/binary convention.
-4. Add the profile entry and any profile configuration. Put defaults, bounds and
-   documentation in the cartridge's own settings block; put in config.lua only
-   what is this project's — paths, addresses, model choices — and never a limit
-   that merely restates its default. Run cartridge settings <name> afterwards:
-   a non-zero exit means the cartridge is configured with a key it never
-   declared. Choose only the profiles
-   that need the new service. For agent/MCP tools, expose a tool.* service using
-   the existing tool metadata/call protocol and the profile's tool injection;
-   a plain hello.echo service is not automatically a tool with an input schema.
-   A tool.* service reaches the fabric graph by itself: the SDK answers the
-   fabric.announce event with every tool the cartridge provides, as describe
-   reports it, so there is no second place to register a tool for discovery.
-   Where a cartridge holds something else the graph should reach, register it
-   with host.announce(|announce| ...) and answer {"nodes":[…],"edges":[…]};
-   announce["scope"]["cwd"] is the asking session's directory. Announce derived
-   state that is cheap to restate — the announce fires per ask and caches
-   nothing — and never a secret: the graph is read by every cartridge.
-5. Point documented commands at recipes that actually support this module. The
-   current helper has explicit handling for UI, memory, and policy: a new Lua
-   module needs its own test/check dispatch, or direct launcher commands. A new
-   repository name alone does not create a test implementation.
-6. Write .cartridge/help.md and confirm `cartridge help <name>` prints it and
-   `cartridge help` exits zero. Run `just isolation` and fix every line it
-   reports inside the cartridge that owns it.
-
-VALIDATION AND DELIVERY
-
-Use just build hello and just process hello hello for a registered Rust package.
-The latter runs SDK capability discovery, not the hello.echo service. Invoke the
-service through the profile to exercise the host and its bindings. Test malformed
-input, missing dependencies, configured behavior, and any owned-resource cleanup.
-For Lua, use a real host invocation with isolated state and assert returned JSON.
-
-Run just test <module>, just check <module>, and relevant integration checks once
-the helper supports the module. Inspect ./cartridge ledger for installed services
-and bindings. Use just verify <module> only for a self-contained declared contract.
-If a contract requires profile settings, invoke that service with the intended
-profile; do not mistake an isolated configuration failure for proof it is broken.
-
-For tools exposed through MCP, check initialize, tools/list, and tools/call under
-the intended policy. For HTTP services, check authentication and a meaningful
-response. Save concise evidence, not credentials or database snapshots. Commit
-implementation inside its submodule, source registration/docs inside cartridge.ctg,
-and updated submodule pointers in the parent. Add a memo describing the decision
-or reusable procedure through memo write; memos.txt explains the record protocol.
+A cartridge keeps its state under the project's .cartridge/<its folder>. In its
+own repository, .cartridge/.gitignore is a whitelist: `/*` ignores the folder
+and `!/name` brings back durable entries (help.md, docs/, tests/).

@@ -1,227 +1,88 @@
-# System architecture
-
-Read alongside development.txt, creating-cartridges.txt, and memos.txt.
-
-REPOSITORIES AND OWNERSHIP
-
-~/dev/cartridge is a Git parent containing .gitmodules, submodule directories,
-and a forwarding justfile. The source repository is cartridge.ctg. The other
-submodules are loadable cartridges.
-Each cartridge keeps its implementation and cartridge.json in its own repository.
-cartridge.ctg/builtin/<name> links to ../../<name>.ctg, so a source change is
-visible to the runtime without copying it into a second source tree.
-repositories.json is the development catalog, not a second capability manifest.
-
-The source repository owns src/, scripts/, profiles in .cartridge/, memos,
-the shared cartridge workspace in workspace/Cargo.toml, and ignored target/,
-dist/, and validation/ directories. The runtime is a standalone Cargo workspace;
-13 Rust cartridge packages share workspace/Cargo.toml; memory has its own Cargo
-workspace. scripts/workspace.py shares target output across these workspaces.
+# Architecture
 
 THE HOST
 
-src/runtime/ (the registry, and ctx.rs for what a component holds of it) and
-src/fiber.rs manage active components and their lifecycles.
-src/lua.rs supplies the Lua composition API. src/loader/ is the profile, laid
-out as the document is used: document.rs reads and checks cartridge.json,
-entries.rs reads the ledger, init.lua and config.lua into loaded components,
-foreground.rs runs one call or the contracts and disposes, reconcile.rs
-replaces entries and nodes in place, watch.rs observes sources, bridge.rs
-serves a client module's calls. src/ledger.rs records installed declarations
-and bindings; src/resolver.rs resolves service dependencies. A profile selects
-which cartridges participate. src/cli/ is the command line in the order one
-invocation runs it — args.rs the ask, project.rs where it runs, then one
-function per subcommand (host.rs, client.rs, node.rs, listing.rs, settings.rs,
-manual.rs) dispatched from cli/mod.rs; src/main.rs only enters it. src/error.rs is the one error type every host operation answers
-with: a caller matches on the kind (Document, Process, Gone, NotProvided,
-Reload, ...) and the text a variant renders is the sentence a person reads.
-The SDK keeps Result<T, String> on purpose: a handler's error is text that
-travels the wire, and From<Error> for String carries a host error into it.
+The host loads and wires; it is not on the path of calls or events.
 
-A Lua cartridge's apply runs as an asynchronous coroutine on the host's
-runtime. Every coroutine.yield is one effect boundary, and every ctx call
-that waits (bail, gather, parallel, a call over the wire, dispose, wait) is
-an async function: the coroutine parks on the runtime and resumes with the
-answer. Nothing blocks a worker thread, so a host runs on any Tokio flavor.
+  src/loader/     cartridge.json (document.rs) and the profile (entries.rs):
+                  installed cartridges, init.lua over them, config.lua over each entry
+  src/host/       the running composition
+    plan.rs       what an entry runs as, its settled config, and its directory
+    mod.rs        slots, start order, reconcile, restart, stop, host queries
+    process.rs    starting a process cartridge inside its sandbox
+    lua.rs        serving a Lua cartridge in-process, and the Lua ctx API
+    socket.rs     socket locations, the host socket and its methods
+    watch.rs      restarting on source changes, reconciling on profile changes
+    run.rs        `run` and `verify`: start, call, stop
+  src/ledger.rs   every cartridge installed under the cartridge root
+  src/lua.rs      the sandboxed Lua interpreter and the `cartridge` global
+  src/sandbox.rs  a grant compiled into an operating-system policy
+  src/settings/   settings files and the host's own settings
+  src/trace.rs    trace ids and the diagnostics sink
+  src/cli/        the command line
+  transport/      the protocol crate: JSON-RPC peer, sockets, the cartridge side, settings
 
-The Lua interpreter is sandboxed (src/lua.rs interpreter()): the safe
-standard library without io and package (no require), an os reduced to
-clock, date, difftime, getenv and time, and no dofile or loadfile. Every
-profile file and every Lua cartridge runs in one such interpreter, bounded by
-host.lua_memory_bytes. A process cartridge is confined separately, by the
-grant its document declares.
+THE PROFILE
 
-The host reports about itself through tracing: stderr at the level
-CARTRIDGE_LOG selects (warn unless set), and, when CARTRIDGE_DIAGNOSTICS names
-a stream, every host event mirrored into that same redacted, bounded file with
-the ambient trace id. Command output goes to stdout and nowhere else.
+Every folder under the cartridge root (`--dir`, default `builtin`) holding a
+`cartridge.json` is installed and starts disabled. `.cartridge/init.lua`
+returns entries `{id, path, config?, inject?, disabled?}` that enable and
+configure them; a `path` may also name a bare `.lua` file. `inject` adds keys to
+an entry's needs; `inject = {"tool.*"}` names every key with that prefix another
+enabled entry provides. `~/.cartridge/config.lua` and `.cartridge/config.lua`
+map entry ids to config laid over each entry.
 
-A typical invocation follows this path:
-  launcher -> selected profile -> manifest and Lua entry -> applied component
-  -> registered service -> JSON request -> JSON result -> component disposal.
-A daemon keeps the composition active; run performs one foreground invocation.
-call contacts an already-running profile through its local socket.
+PLANNING
 
-DECLARATIONS AND COMPOSITION
+For each enabled entry the host evaluates its Lua entry. A table
+`{provide?, needs?, on?, apply}` is a Lua cartridge; `cartridge.process(cmd,
+{inject?})` is a process cartridge, its program resolved in the cartridge's
+`.cartridge/bin`, `bin`, beside the host, then PATH. Where `cartridge.json`
+declares `provide`, `needs` or `on`, it wins over the table. Each key is
+provided by one entry; a second provider fails the later entry.
 
-cartridge.json names the cartridge and a relative Lua entry. provide names
-services it offers; needs names required services; export passes inner service
-keys outward. When provide/needs are nonempty, the document replaces the Lua
-entry's corresponding declarations. Missing declarations can fall back to Lua.
-Keep SDK hello declarations and the document consistent rather than relying on
-fallback to hide mismatches.
+LIFECYCLE
 
-Nested keys are private to their subtree. Each parent must export an inner key
-for it to travel outward another level. Two separate subtrees may use the same
-key privately. The resolver rejects invalid or ambiguous visible bindings.
+  disabled  not listed, or `disabled = true`
+  waiting   a need has no active provider yet
+  starting  being started and applied
+  active    serving
+  stopping  being disposed
+  failed    would not plan, start or apply, or exited on its own
 
-ISOLATION
+The host starts every waiting cartridge whose needs all have active providers,
+wave by wave. A cycle, or a need nothing provides, leaves the cartridges
+waiting; `cartridge status` names what they wait for.
 
-A cartridge brings its own surface and registers into the host; the host is
-the only thing that knows the list. Across a boundary there are two paths: a
-declared need (needs, or a key the profile injects) called directly, and an
-event listened to. A key never declared is refused at the point of use, at any
-depth (undeclared access). A cartridge carries no sibling's protocol for an
-optional feature and no rule about a sibling; the tool's descriptor says which
-of its ops only read (reads), and the composition's config.lua says what the
-policy asks about. Installing or removing a cartridge therefore changes nothing
-outside it. `just isolation` reports every source line that breaks this.
+SOCKETS AND TOKENS
 
-THE MANUAL
+Each host run has a directory under `$XDG_RUNTIME_DIR/cartridge` or
+`/tmp/cartridge-<uid>` holding one socket per cartridge, stable for the run,
+and `host.sock`, where cartridges ask the host questions. The project's host
+socket for the command line sits beside it, with the host token in a 0600 file.
+Tokens are minted per edge: consumer to provider for calls, emitter to listener
+for events, cartridge to host for host queries. docs/transport.txt has the wire.
 
-cartridge help is every document the composition carries, as one tree read
-fresh on each call (src/cli/manual.rs). The top level is the modules: host
-(this source repository, the cartridge root left out) and each installed
-cartridge. A module's documents are the Markdown and text files in its own
-directory that Git does not ignore — llms.txt, READMEs, docs/, memos and
-.cartridge/help.md — plus its cartridge.json declarations rendered as one more
-document. A document's sections are its Markdown headings, and in a .txt guide
-its all-capitals titles.
+PROCESS CARTRIDGES
 
-Every node has an address: <id>, <id>/<file>, <id>/<file>#<section>. On a
-terminal `cartridge help [<address>]` opens a picker at that node: type to
-filter a level, and from two characters the level also lists every line below
-it holding the typed words; enter descends or opens the document at that line,
-esc steps back. Without a terminal the same address prints that node, words
-that are not an address print each matching line with its address, and --json
-gives the node, the hits, or with nothing else the whole manual. An enabled
-cartridge without a help page is reported and the overview exits non-zero.
+A process cartridge runs in the project root, inside a sandbox built from its
+`grant` (macOS: sandbox-exec; Linux is refused until Landlock is implemented),
+with read and write access to the host's socket directory. It gets
+CARTRIDGE_SOCKET, CARTRIDGE_HOST_TOKEN and CARTRIDGE_CONNECT_TIMEOUT_SECS, a
+stdin that closes when the host goes away, and a stderr the host records. The
+host waits until the socket answers, authenticates, and calls `apply`. When it
+fails to start, the error carries the last lines it wrote to stderr.
 
-SETTINGS
+LUA CARTRIDGES
 
-settings in cartridge.json declares the configuration keys a cartridge
-contributes: type, default, optional bounds, and one line of documentation per
-dotted key. The host fills every declared key, checks kind and bounds, and hands
-the cartridge a complete configuration, so a cartridge carries no fallbacks and
-re-checks no bound the declaration already states. The document is the only
-place the numbers live: no Default impl restates them and no configuration
-field takes #[serde(default)]. A cartridge embeds its own cartridge.json and
-reads the declared table back through settings::declared for an unhosted run.
-The host's own keys are declared in settings.json beside llms.txt and live
-under host; src/settings/host.rs names them to give them types.
+A Lua cartridge's `apply(ctx, config)` runs in the host's interpreter and is
+served on its own socket like any other cartridge, so other cartridges cannot
+tell the difference. The interpreter has no `io`, no `require`, and an `os`
+that only reads the clock and the environment.
 
-Layers, each laid over the last field by field: the declaration, then manifest
-config, then ~/.cartridge/config.lua for the machine, then the project's
-.cartridge/config.lua, then the profile entry config in init.lua. Tables merge;
-scalars and lists replace; an explicit null returns a key to its default. Both
-config.lua files are keyed by entry id; do not commit live credentials to
-either. cartridge settings prints every key with its value and the file that
-settled it, and exits non-zero on a configured key nothing declares. See
-settings.txt.
+RELOAD
 
-Free functions that cannot read a configuration carry a limits module instead:
-one struct deserialized from the settled table, installed once by the cartridge
-before it serves, its defaults read back off the same document. harness,
-sessions, gitfs, pty, router, docs and memo each carry one, declared as their
-limits.* keys; memo carries a second for its source adapters under sources.*.
-
-.cartridge/init.lua returns entries such as:
-  return {{id="sessions", path="sessions"}, {id="policy", path="policy"}}
-path resolves below the selected cartridge directory, normally builtin/.
-config.lua returns per-entry settings. Entry-level config, disabled, inject,
-and isolate are supported; inspect loader::Entry before changing their shape.
-The default, mcp, proxy, and tools profiles compose different application uses.
-
-PROCESS AND EVENT WIRE
-
-A Lua cartridge registers services directly with ctx:provide. A Rust cartridge
-uses init.lua containing return cartridge.process("<binary>") and implements
-cartridge::sdk::Cartridge. Its hello mode reports declared dependencies/services.
-The SDK speaks JSON lines over stdin/stdout; application diagnostics belong on
-stderr. The host applies configuration, routes calls and replies, forwards events,
-and coordinates disposal. stdout logging would corrupt the protocol.
-
-src/cartridge/ handles the wire (link.rs either end, start.rs a process from
-spawn to exit, frames.rs each frame served), src/sdk/ its cartridge-facing
-API (api.rs, nested.rs for a cartridge hosting its own), and
-src/process.rs child execution. src/socket.rs exposes the persistent host to
-clients; src/stream.rs manages channel subscriptions and event envelopes.
-src/trace.rs and src/context.rs carry invocation context. SDK hosts can themselves
-spawn child cartridges, preserving explicit outward service declarations.
-
-Four dispatches carry an event to the listeners registered for its name, and
-the difference between them is what they do with the answers: ctx:emit ignores
-them, ctx:bail takes the first non-null one and stops, ctx:parallel keeps only
-the errors, and ctx:gather keeps every answer, each attributed to the fiber
-that gave it. A listener that fails fails its own fiber under emit and gather,
-so one cartridge that cannot answer never costs the caller the rest.
-
-THE FABRIC ANNOUNCE
-
-src/fabric.rs serves two questions about the composition. The snapshot
-({"snapshot":true} on the wire, Host::snapshot in the SDK) is the raw
-read-only view of what the host loaded. The graph ({"graph": scope},
-Host::graph) fires the fabric.announce event and gathers what the
-composition answers: every active cartridge contributes {"nodes","edges"} in
-the shapes src/graph.rs reads, core states the entries and their
-provide/inject edges itself, and core stamps each announced node with the
-answering entry's id rather than trusting the answer's own claim. Which
-cartridges are composed is therefore what the graph is. `scope` is the asking
-side's context, passed through to contributors — a session cwd, say, since core
-has no session of its own. The SDK answers the announce for every cartridge
-without being asked to: the tools it provides, as each describes itself now.
-Host::announce adds what only that cartridge knows, such as a record's memos.
-Nothing is cached: asking rebuilds.
-
-REPLACEMENT AND RESOURCES
-
-The loader watches relevant sources and configuration. src/reload.rs coordinates
-replacement generations. SDK on_reload hooks participate where configured;
-on_dispose releases resources. Register owned tasks/listeners through lifecycle
-APIs and exercise replacement with real state. A change being detected is not
-proof that arbitrary background work or external state migrates correctly.
-Do not terminate unrelated daemons to test replacement; use isolated profiles.
-
-PERMISSIONS AND POLICY
-
-The manifest grant is a capability request with read, write, net, and exec lists.
-An absent grant requests nothing. Reading the document never evaluates Lua or
-executes its commands. Commands are documentation and confer no capabilities.
-The strict parser rejects unknown fields, including misspelled permission keys.
-
-The policy cartridge separately answers allow, ask, or deny for tool requests.
-Do not treat a policy answer as proof of operating-system isolation. Sandbox
-backend and launch integration require checking the current implementation
-and tests before claiming a particular confinement boundary. Keep profile policy changes explicit and narrowly scoped.
-
-INSTALLED CARTRIDGES
-
-agent: model/tool conversation orchestration.
-fs: filesystem tools and file operations.
-gitfs: Git-backed file and workspace operations.
-harness: prompt/context composition, including system memos and memory.
-mcp: exposes the composed tool surface over MCP stdio.
-memo: typed Markdown record, discovery, validated writes, and composition context.
-memory: durable knowledge storage and retrieval, with a standalone CLI, and
-  the tool.memory adapter over it.
-policy: Lua tool decisions and configured per-tool rules.
-proxy: authenticated HTTP entry point for model-compatible requests.
-pty: terminal processes, shell operations, and terminal environment services.
-router: configured model/provider selection and routing.
-sessions: conversation/session persistence.
-tools: building bundles and managing development worktrees.
-ui: terminal interface and its host bridge.
-
-For exact service keys and dependencies, read the relevant cartridge.json through
-just describe <name>. For API payloads, inspect its source and service metadata.
-Do not infer a service name or tool schema from the repository name alone.
+A changed source restarts its cartridge: dispose, wait, start on the same socket
+with the same tokens. Dependents keep running and reconnect. A changed
+`init.lua` or `config.lua` reconciles the profile: removed or changed entries
+stop, new ones start, and running cartridges whose directory changed receive it.

@@ -1,148 +1,39 @@
-# Development and operation
+# Development
 
-Start in ~/dev/cartridge/cartridge.ctg. The parent Justfile forwards the same
-recipes into this source directory. Dependencies are Rust/Cargo, Bun, Python 3.9+,
-Git, and Just for the command recipes. The cartridge launcher sets a stable source
-working directory even when called through an absolute path from elsewhere.
+BUILD AND TEST
 
-DISCOVERY AND BUILD
+  cargo build --release
+  cargo test --workspace            host, transport and the command line
+  cargo clippy --workspace --all-targets
+  cargo fmt --all
 
-cartridge help                     every module; a picker on a terminal (from cartridge.ctg)
-cartridge help <id>                one module's documents: page, declarations, README, docs, memos
-cartridge help <id>/<file>#<sec>   one document or one section of it
-cartridge help <words>             every line holding the words, with its address
-cartridge help --json [<address>]  the same as data; alone, the whole manual
-just isolation                     every undeclared cross-cartridge reference
-just layout                        the repository layout rules
-just modules                       list known modules and memory packages
-just describe proxy                print proxy.ctg/cartridge.json
-just describe runtime              show the runtime README
-just describe fabric            show the library README
-just links                         validate repositories and builtin links
-just build                         build runtime, Rust cartridges, memory, UI setup
-just build proxy                   build one registered module
+The host tests start real cartridges: Lua cartridges, a Rust process cartridge
+built from .cartridge/tests/unit/src/tests/fixtures/echo_fixture.rs, and, when
+Bun is installed, a TypeScript cartridge using transport/wire.ts. Process
+cartridges run inside the sandbox, so the tests exercise it too.
 
-The helper uses a shared target directory and maintains ignored bin/ links.
-Keep generated binaries and caches out of commits. Runtime and cartridge sources
-remain independently owned; shared compilation output does not combine their Git
-repositories. A selected Rust build accepts additional Cargo arguments.
+RUNNING
 
-TEST AND CHECK
+  cartridge --dir <cartridge root> run <key> '<json>'
+  cartridge --dir <cartridge root> daemon
 
-just test                          full repository suites
-just test runtime resolver         selected runtime tests
-just test tools                    tooling cartridge tests
-just test memory/store             one internal memory Cargo package
-just test ui tests/registry.test.ts selected UI test file
-just check proxy                   format check and strict Clippy
-just smoke                         isolated policy, proxy, and MCP protocol checks
-just smoke mcp                     MCP initialize and tools/list
+The profile is the nearest .cartridge/init.lua at or above the working
+directory. `cartridge socket` prints the project's host socket; `cartridge
+status`, `call`, `send`, `follow`, `reload` and `stop` talk to the host serving it.
+`cartridge mcp` serves the `mcp` cartridge over this terminal's stdio, for an
+MCP client such as `claude mcp add cartridge -- cartridge mcp`.
 
-The offline proxy smoke uses a local router fixture and makes no model request.
-Passing it proves HTTP authentication/transport, not access to configured model
-providers. Meaningful cartridge tests should cover observable behavior and failure
-paths. Unknown module selections fail. New module types need dispatch support in
-scripts/workspace.py, rather than silently falling back to another test suite.
+TROUBLESHOOTING
 
-LOCAL CONVERSATION
+  cartridge status                  every cartridge, its state, error and what it waits for
+  cartridge follow lifecycle        state changes as they happen
+  cartridge follow <id>.error       failures of one cartridge's listeners
+  cartridge list                    the profile and what each need binds to
+  cartridge settings <id>           a cartridge's settled configuration
 
-just tui                           start the terminal interface and the voice
-run                                start Live and the terminal wrapper
-just run                           same entry point from the repository
-just run --no-terminal             create a headless session and print its URL
-just solo                          the terminal interface alone, no live service
+A process cartridge that fails to start reports the last lines of its stderr in
+its error. Everything a cartridge writes to stderr goes to the diagnostics file
+named by CARTRIDGE_DIAGNOSTICS; CARTRIDGE_LOG selects the host's own log level.
 
-The bare run command is .cartridge/tools/run linked from ~/.local/bin/run.
-The terminal supports voice, text, local task controls, and a model-sized
-context ring. Launch attaches the terminal wrapper to that same host and hands
-Live control of its shell. From a noninteractive launcher, a terminal window opens
-for the wrapper. Its controls let the user reclaim the shell at any time.
-
-just tui, just run and just live are one launch path. There is no page: the
-terminal is the only surface, and it attaches to the host the launch started.
-
-The terminal is told which conversation the launch opened and where Live
-answers, so its left pane can be set to voice mode with Ctrl+V: the same
-conversation the voice coworker speaks into, with the speech and the tasks it
-delegated out of it. Typing there delegates into that conversation rather than a
-second one. Ctrl+V returns to the typed agent session, which keeps its own
-history either way. Ctrl+P carries voice off and voice on, which record whether
-the conversation wants a microphone. Nothing holds one yet: spoken audio needed
-the browser's WebRTC peer, so until a terminal audio client exists that intent
-has no actor and the typed channel is what reaches the agent.
-Local work continues when the wrapper closes. Each launch creates a
-new session while retaining prior history. Build the runtime and live services first.
-
-PROFILES AND SERVICES
-
-just daemon [profile]               keep a composition active in the foreground
-just invoke sessions '{"op":"list"}' [profile]
-                                   apply, call once, then dispose
-just call sessions '{"op":"list"}' [profile]
-                                   contact an already-running profile
-just status [profile]               inspect that profile's running host
-just tail [profile]                 observe its events
-just process sessions hello        SDK declaration only
-just verify tools                  self-contained tooling contract
-
-Brackets mean optional arguments and must not be typed literally. The default
-profile argument is default. Harness contracts require configuration; use
-just invoke harness.selftest '{}' default or harness.integration with that profile.
-Do not stop unrelated hosts to test a service; use isolated profiles and stores.
-
-PROXY
-
-just proxy starts http://127.0.0.1:4242. just proxy 4342 selects a different port.
-The launcher rejects an occupied port. It uses CARTRIDGE_PROXY_KEY if supplied,
-otherwise a mode-600 key in .cartridge/dev/proxy.key. It derives a profile from
-.cartridge/proxy and selects an available local router port. The generated profile
-name is dev/proxy-4242 (substitute the port), usable with just status or just call.
-Read the key into the client's bearer setting without pasting it into docs/logs.
-Provider configuration is separate; listener readiness alone does not prove a
-particular upstream model works. Ctrl-C stops the foreground host you launched.
-
-MCP AND CODEX
-
-just mcp runs a client-owned stdio server using .cartridge/mcp. stdout is only
-newline-delimited JSON-RPC; stderr carries diagnostics. The current composed tool
-names include gitfs, memo, memory, shell, ship, prd, and live. Discover schemas with tools/list.
-Policy comes from the profile; registration does not authorize every tool action.
-
-This machine registers it globally in Codex as cartridge using:
-  codex mcp add cartridge -- /opt/homebrew/bin/just --justfile /Users/feb/dev/cartridge/cartridge.ctg/justfile mcp
-Inspect the entry with codex mcp get cartridge. Paths above are machine-specific;
-on another machine use its absolute Just executable and source Justfile paths.
-The launcher uses Cargo metadata, so Cargo must be available in the client's PATH.
-A fresh Codex session can discover the configured server; registration does not
-inject new callable tools into a conversation whose tool set is already fixed.
-
-Validate with initialize, notifications/initialized, tools/list, and a harmless
-memo types call. To remove this configuration use codex mcp remove cartridge.
-MCP is not an HTTP server and does not connect to the proxy's HTTP port.
-The live tool attaches to the existing Live host over its Cartridge socket.
-Start that host with just live. Use live conversations to select a conversation,
-then state/context to inspect it or delegate to submit work. Voice, terminal,
-and MCP share the same tasks; disconnecting MCP does not stop the Live host.
-
-STATE, MIGRATION, AND GIT
-
-.cartridge contains shipped profiles and the versioned Markdown memo record,
-plus ignored credentials, sessions, stores, and local development state.
-The old sys checkout moved to .cartridge/legacy-sys. ~/dev/sys is a compatibility
-symlink for existing sessions. Preserve that archive and backwards state links
-until its sessions stop and later writes are reconciled. MIGRATION.md records the
-move. Develop here rather than editing the legacy checkout.
-
-Commit each affected submodule before updating the parent's submodule pointers.
-Origins name yesitsfebreeze/<repository>.ctg; local preparation does not publish
-those repositories. Follow local AGENTS.md instructions, including memory.ctg's
-isolated branch/worktree requirement. Preserve unrelated changes and durable stores.
-
-When a check fails, inspect validation logs and the selected manifest/profile.
-A malformed manifest should be fixed at its declaration; do not relax strict
-parsing to hide a misspelled key. An absent binary needs a build. A missing service
-needs correct composition or declared dependencies. Keep diagnostics off MCP/SDK
-stdout. CARTRIDGE_LOG=debug raises what the host and every SDK cartridge say on
-stderr (a tracing filter: cartridge=trace,warn narrows it to the host); a file
-named by CARTRIDGE_DIAGNOSTICS keeps the same events, redacted and bounded.
-Record the cause and the check that confirmed a fix in an appropriate memo.
+A cartridge denied by the sandbox usually fails with "Operation not permitted"
+on a path or program its `grant` does not name.

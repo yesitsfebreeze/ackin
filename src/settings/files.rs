@@ -29,7 +29,7 @@ pub fn project_path(profile: &Path) -> PathBuf {
 /// table, not an error: not having a global configuration is the normal case.
 ///
 /// Its own Lua, not the host's: settings are read before a host exists — by the
-/// CLI listing them, and by an SDK child that has no host at all — and reading
+/// CLI listing them, and by a cartridge that has no host at all — and reading
 /// a table of numbers must not depend on a composition being up.
 pub fn read(path: &Path) -> Result<Json> {
 	if !path.is_file() {
