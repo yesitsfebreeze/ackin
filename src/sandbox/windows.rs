@@ -168,6 +168,39 @@ fn container_name(root: &Path) -> String {
 	format!("cartridge-{}", crate::transport::typed::path_tag(root))
 }
 
+/// The container SID a node confined under `root` will run as, as a string.
+///
+/// The parent needs it before the node exists: a pipe the node will serve on
+/// has to name that SID, because only the parent can create one and only the
+/// container can use it.
+pub(crate) fn container_sid_for(root: &Path) -> crate::Result<String> {
+	use windows_sys::Win32::Foundation::{LocalFree, HLOCAL};
+	use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+	let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+	let sid = container_sid(&container_name(&root))?;
+	let mut text: *mut u16 = std::ptr::null_mut();
+	// SAFETY: the SID is valid for the call, and `text` receives a LocalAlloc'd
+	// string this function frees.
+	let ok = unsafe { ConvertSidToStringSidW(sid.0, &mut text) };
+	if ok == 0 || text.is_null() {
+		return Err(crate::Error::process(
+			"appcontainer",
+			std::io::Error::last_os_error(),
+		));
+	}
+	// SAFETY: NUL-terminated and this process's to read and free.
+	let out = unsafe {
+		let mut len = 0;
+		while *text.add(len) != 0 {
+			len += 1;
+		}
+		let out = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+		LocalFree(text as HLOCAL);
+		out
+	};
+	Ok(out)
+}
+
 /// A SID that is freed when it goes out of scope. Both of the derive entry
 /// points hand back a SID the caller owns.
 struct Sid(PSID);

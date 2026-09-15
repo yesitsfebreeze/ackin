@@ -16,6 +16,9 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # A suite that hangs is a suite that fails, and a runner should say so in
+    # minutes rather than hold a slot for the six hours it is allowed.
+    timeout-minutes: 20
     # Windows builds and most of its suite passes, but a confined node cannot
     # yet create its own pipe: an AppContainer redirects the named-object
     # namespace, so the name the host expects is not the one the node can make.
