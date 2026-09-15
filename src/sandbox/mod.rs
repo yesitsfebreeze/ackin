@@ -344,6 +344,13 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	profile
 }
 
+/// The container SID a node confined under `root` will run as. Windows only:
+/// its parent has to name that SID on anything it makes for the node to use.
+#[cfg(target_os = "windows")]
+pub fn container_sid_for(root: &Path) -> crate::Result<String> {
+	windows::container_sid_for(root)
+}
+
 /// Prepare a confined command before any cartridge code executes, including
 /// discovery. Callers can attach their pipes and environment to this command;
 /// the operating-system policy remains the same for every launch route.

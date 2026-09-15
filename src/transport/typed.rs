@@ -627,10 +627,19 @@ mod owner_only {
 	impl OwnerOnlySd {
 		pub fn new() -> io::Result<Self> {
 			let sid = current_user_sid()?;
-			let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})")
-				.encode_utf16()
-				.chain(std::iter::once(0))
-				.collect();
+			Self::from_sddl(&format!("D:P(A;;GA;;;{sid})"))
+		}
+
+		/// The same descriptor, plus one more SID that may use the pipe. A node
+		/// runs in an AppContainer with its own SID, and a pipe its parent made
+		/// for it is reachable only if that SID is on it.
+		pub fn shared_with(container: &str) -> io::Result<Self> {
+			let user = current_user_sid()?;
+			Self::from_sddl(&format!("D:P(A;;GA;;;{user})(A;;GA;;;{container})"))
+		}
+
+		fn from_sddl(sddl: &str) -> io::Result<Self> {
+			let sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
 			let mut psd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
 			// SAFETY: `sddl` is NUL-terminated and outlives the call; `psd` receives
 			// a LocalAlloc'd descriptor this value then owns.
@@ -649,10 +658,19 @@ mod owner_only {
 		}
 
 		pub fn attributes(&self) -> SECURITY_ATTRIBUTES {
+			self.attributes_with(false)
+		}
+
+		/// Inheritable, for a handle that is made to be handed to a child.
+		pub fn attributes_inheritable(&self) -> SECURITY_ATTRIBUTES {
+			self.attributes_with(true)
+		}
+
+		fn attributes_with(&self, inherit: bool) -> SECURITY_ATTRIBUTES {
 			SECURITY_ATTRIBUTES {
 				nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
 				lpSecurityDescriptor: self.0,
-				bInheritHandle: 0,
+				bInheritHandle: i32::from(inherit),
 			}
 		}
 	}
@@ -770,6 +788,55 @@ const ERROR_ACCESS_DENIED: i32 = 5;
 #[cfg(windows)]
 const ERROR_PIPE_BUSY: i32 = 231;
 
+/// How many pipe instances a parent makes for one node. A node needs one per
+/// peer connected to it at once — the base, and each cartridge that sends to
+/// it — so this is a composition's worth with room over, and it is fixed
+/// because the node cannot make more: only its unconfined parent can.
+#[cfg(windows)]
+pub const PIPE_INSTANCES: usize = 16;
+
+/// The environment variable naming the instances a node was handed.
+#[cfg(windows)]
+pub const PIPE_HANDLES_ENV: &str = "CARTRIDGE_PIPE_HANDLES";
+
+/// Make a node's listening pipe on its behalf, and hand back the raw handles
+/// to pass it.
+///
+/// A node runs in an AppContainer, which is denied the pipe namespace outright:
+/// it cannot create the name it is supposed to serve on, and an attempt reads
+/// as `Access is denied`. So its parent — which is not confined — creates every
+/// instance, grants the node's container SID on them, and lets the node inherit
+/// them. The node never creates a pipe and never needs to.
+///
+/// This is what `adopt` does on Unix with fd 0, for a different reason: there a
+/// successor inherits a listener to keep a socket unbroken across a restart,
+/// and here a child inherits one because it may not open its own.
+#[cfg(windows)]
+pub fn broker(endpoint: &Endpoint, container_sid: &str) -> Result<Vec<usize>, BindError> {
+	use std::os::windows::io::AsRawHandle;
+	let Endpoint::NamedPipe(name) = endpoint;
+	let security = owner_only::OwnerOnlySd::shared_with(container_sid)?;
+	let mut handles = Vec::with_capacity(PIPE_INSTANCES);
+	for index in 0..PIPE_INSTANCES {
+		let mut attrs = security.attributes_inheritable();
+		// SAFETY: `attrs` lives across the call and points at a descriptor
+		// `security` owns.
+		let server = unsafe {
+			tokio::net::windows::named_pipe::ServerOptions::new()
+				.first_pipe_instance(index == 0)
+				.create_with_security_attributes_raw(
+					name,
+					std::ptr::addr_of_mut!(attrs).cast::<std::ffi::c_void>(),
+				)
+		}?;
+		handles.push(server.as_raw_handle() as usize);
+		// The child inherits its own copy, so this one is let go rather than
+		// closed: closing it here would take the instance down with it.
+		std::mem::forget(server);
+	}
+	Ok(handles)
+}
+
 pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 	match endpoint {
 		#[cfg(unix)]
@@ -779,13 +846,19 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 		}
 		#[cfg(windows)]
 		Endpoint::NamedPipe(name) => {
+			// Handed instances mean a parent made this pipe because this process
+			// may not: it serves them and creates nothing.
+			if let Some(listener) = adopt_handed(name)? {
+				return Ok(BindOutcome::Bound(listener));
+			}
 			// Fail closed: no descriptor, no pipe.
 			let security = owner_only::OwnerOnlySd::new()?;
 			match create_pipe_instance(name, &security, true) {
 				Ok(server) => Ok(BindOutcome::Bound(LocalListener {
 					pipe_name: name.clone(),
-					security,
+					security: Some(security),
 					current: Some(server),
+					handed: Vec::new(),
 				})),
 				// Every instance is busy, so a first instance cannot be made:
 				// something is already serving the name.
@@ -824,6 +897,43 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 	}
 }
 
+/// The instances a parent made for this process, if it made any. Read once:
+/// a node has one pipe, and a second reader would take instances that are not
+/// its own.
+#[cfg(windows)]
+fn adopt_handed(name: &str) -> Result<Option<LocalListener>, BindError> {
+	use std::os::windows::io::FromRawHandle;
+	let Some(handed) = std::env::var_os(PIPE_HANDLES_ENV) else {
+		return Ok(None);
+	};
+	std::env::remove_var(PIPE_HANDLES_ENV);
+	let mut servers = Vec::new();
+	for field in handed
+		.to_string_lossy()
+		.split(',')
+		.filter(|f| !f.is_empty())
+	{
+		let handle: usize = field.parse().map_err(|_| {
+			BindError::Untrusted(format!("{PIPE_HANDLES_ENV} is not a list of handles"))
+		})?;
+		// SAFETY: the value names a pipe instance this process inherited, and
+		// each is taken once — the variable is removed above.
+		let server = unsafe {
+			tokio::net::windows::named_pipe::NamedPipeServer::from_raw_handle(handle as *mut _)
+		}?;
+		servers.push(server);
+	}
+	let Some(current) = servers.pop() else {
+		return Ok(None);
+	};
+	Ok(Some(LocalListener {
+		pipe_name: name.to_owned(),
+		security: None,
+		current: Some(current),
+		handed: servers,
+	}))
+}
+
 /// Adopt fd 0 as an already-bound listener handed over by a predecessor process.
 #[cfg(unix)]
 pub fn adopt(endpoint: &Endpoint) -> Result<LocalListener, BindError> {
@@ -848,10 +958,16 @@ pub struct LocalListener {
 	pipe_name: String,
 	// Kept for the life of the listener: `accept` creates the *next* instance,
 	// and an instance without this descriptor is a hole beside a locked door.
+	// `None` in a node, which was handed its instances because it may not make
+	// any — there is nothing for it to create them with, and nothing it could.
 	#[cfg(windows)]
-	security: owner_only::OwnerOnlySd,
+	security: Option<owner_only::OwnerOnlySd>,
 	#[cfg(windows)]
 	current: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
+	/// Instances a parent made and handed over, served in turn. Empty in a
+	/// process that makes its own.
+	#[cfg(windows)]
+	handed: Vec<tokio::net::windows::named_pipe::NamedPipeServer>,
 }
 
 #[cfg(unix)]
@@ -900,13 +1016,24 @@ impl LocalListener {
 		{
 			let server = self.current.take().expect("listener uninitialised");
 			server.connect().await?;
-			// Pre-create the next instance so subsequent accept doesn't race
-			// a fast reconnect — with the same descriptor as the first.
-			self.current = Some(create_pipe_instance(
-				&self.pipe_name,
-				&self.security,
-				false,
-			)?);
+			// Ready the next instance so a fast reconnect does not race this
+			// accept. A node serves what it was handed and makes nothing; when
+			// it runs out it says so, because the alternative is a silently
+			// deaf listener.
+			if let Some(security) = self.security.as_ref() {
+				self.current = Some(create_pipe_instance(&self.pipe_name, security, false)?);
+			} else {
+				self.current = Some(self.handed.pop().ok_or_else(|| {
+					std::io::Error::new(
+						std::io::ErrorKind::OutOfMemory,
+						format!(
+							"{}: every pipe instance this node was handed is in use; \
+							 it cannot make more",
+							self.pipe_name
+						),
+					)
+				})?);
+			}
 			Ok(LocalAdapter::NamedPipe(NamedPipeAdapter::from_server(
 				server,
 			)))

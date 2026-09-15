@@ -81,6 +81,22 @@ pub(super) async fn start(
 	let socket = host.socket(&plan.id);
 	let _ = std::fs::remove_file(&socket);
 	let sockets = socket.parent().map(std::path::Path::to_path_buf);
+	// A confined node on Windows may not create the pipe it is meant to serve:
+	// an AppContainer is denied the pipe namespace outright. So the base makes
+	// every instance now, grants the node's container SID on them, and hands
+	// them over for the node to inherit. It creates nothing and needs to.
+	#[cfg(windows)]
+	let handed = {
+		let sid = crate::sandbox::container_sid_for(&plan.root)
+			.map_err(|e| Error::process(&plan.id, e))?;
+		let endpoint = crate::transport::typed::Endpoint::local(&socket);
+		crate::transport::typed::broker(&endpoint, &sid)
+			.map_err(|e| Error::process(&plan.id, e))?
+			.into_iter()
+			.map(|handle| handle.to_string())
+			.collect::<Vec<_>>()
+			.join(",")
+	};
 	let exe = match std::env::var_os(NODE_BIN_ENV) {
 		Some(exe) => std::path::PathBuf::from(exe),
 		None => std::env::current_exe().map_err(|e| Error::file("cartridge", e))?,
@@ -120,6 +136,8 @@ pub(super) async fn start(
 	// A node leads its own process group, so what it spawns can be killed with
 	// it. Windows has no such flag at spawn: the job object below does that,
 	// and a process a job holds cannot leave it.
+	#[cfg(windows)]
+	spawner.env(crate::transport::typed::PIPE_HANDLES_ENV, &handed);
 	#[cfg(unix)]
 	spawner.process_group(0);
 	let mut child = spawner.spawn().map_err(|e| Error::process(&plan.id, e))?;
