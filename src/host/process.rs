@@ -24,6 +24,7 @@ pub const NODE_BIN_ENV: &str = "CARTRIDGE_NODE_BIN";
 /// trust store; `XDG_RUNTIME_DIR` names the sockets base; the rest keep a
 /// node's timestamps, messages and temp files from changing with the base's
 /// shell. Everything else — secrets the person's shell held — is dropped.
+#[cfg(unix)]
 const PASSTHROUGH: &[&str] = &[
 	"PATH",
 	"HOME",
@@ -35,6 +36,33 @@ const PASSTHROUGH: &[&str] = &[
 	"LOGNAME",
 	"SHELL",
 	"XDG_RUNTIME_DIR",
+];
+
+/// The same list for Windows, which needs a longer one to mean the same thing.
+/// A process there cannot exist without `SystemRoot` and `SystemDrive`: the
+/// loader reads them to find the system image, and a child created without
+/// them fails in `CreateProcessW` itself rather than in anything it runs.
+/// `LOCALAPPDATA` and `USERPROFILE` are what `HOME` was for — the global
+/// `config.lua`, the trust store and the sockets base — and `PATHEXT` is half
+/// of what `PATH` means here, since it is what makes a named program findable.
+#[cfg(windows)]
+const PASSTHROUGH: &[&str] = &[
+	"PATH",
+	"PATHEXT",
+	"SystemRoot",
+	"SystemDrive",
+	"windir",
+	"ComSpec",
+	"LOCALAPPDATA",
+	"APPDATA",
+	"USERPROFILE",
+	"TEMP",
+	"TMP",
+	"TZ",
+	"LANG",
+	"USERNAME",
+	"NUMBER_OF_PROCESSORS",
+	"PROCESSOR_ARCHITECTURE",
 ];
 
 pub(super) async fn start(
