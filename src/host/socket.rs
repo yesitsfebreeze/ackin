@@ -64,36 +64,27 @@ fn tag(descriptor: &Path) -> String {
 	crate::transport::typed::path_tag(descriptor)[..12].to_owned()
 }
 
-/// Where the command line finds the base serving `descriptor`: a link to its socket.
+/// Where the base serving `descriptor` listens. Derived, not published: the
+/// command line computes the same address from the same project.
 pub fn path(descriptor: &Path) -> Result<PathBuf> {
-	Ok(base()?.join(format!("{}.sock", tag(descriptor))))
+	Ok(run_dir(descriptor)?.join("host.sock"))
 }
 
 fn token_path(descriptor: &Path) -> Result<PathBuf> {
 	Ok(base()?.join(format!("{}.token", tag(descriptor))))
 }
 
-/// A directory for the cartridge sockets of one host run. Directories of runs
-/// whose process is gone are removed.
+/// The directory holding every socket of the base serving `descriptor`: its
+/// own and one per cartridge. Named for the project, not for the run, so the
+/// address of a base is a fact about the project rather than about which
+/// process happens to be serving it.
+///
+/// One directory per project also means one base per project, which is the
+/// rule anyway: the second one finds the address taken when it binds. A run
+/// that died leaves its sockets here, and `bind` reclaims the ones nothing
+/// answers on — which is what the process check this used to do was for.
 pub(crate) fn run_dir(descriptor: &Path) -> Result<PathBuf> {
-	let base = base()?;
-	let prefix = format!("{}-", tag(descriptor));
-	if let Ok(read) = std::fs::read_dir(&base) {
-		for entry in read.flatten() {
-			let name = entry.file_name().to_string_lossy().into_owned();
-			let Some(pid) = name
-				.strip_prefix(&prefix)
-				.and_then(|pid| pid.parse::<i32>().ok())
-			else {
-				continue;
-			};
-			// SAFETY: signal 0 only checks that the process exists.
-			if unsafe { libc::kill(pid, 0) } != 0 {
-				let _ = std::fs::remove_dir_all(entry.path());
-			}
-		}
-	}
-	let dir = base.join(format!("{prefix}{}", std::process::id()));
+	let dir = base()?.join(tag(descriptor));
 	owner_only_dir(&dir)?;
 	Ok(dir)
 }
@@ -114,11 +105,7 @@ pub(crate) fn file_name(id: &str) -> String {
 }
 
 pub(crate) async fn listen(path: &Path) -> Result<crate::transport::typed::LocalListener> {
-	match crate::transport::typed::bind(&crate::transport::typed::Endpoint::Unix(
-		path.to_path_buf(),
-	))
-	.await
-	{
+	match crate::transport::typed::bind(&crate::transport::typed::Endpoint::local(path)).await {
 		Ok(crate::transport::typed::BindOutcome::Bound(listener)) => Ok(listener),
 		Ok(crate::transport::typed::BindOutcome::AlreadyRunning) => Err(Error::Remote(format!(
 			"{} is already served",
@@ -143,17 +130,17 @@ pub(crate) async fn accept(
 /// Publish this base as the project's, for the command line, until asked to
 /// stop. Returns `Ok(false)` when another base already serves this project.
 pub async fn serve(host: Arc<Host>) -> Result<bool> {
-	let link = path(&host.descriptor)?;
 	let token = token_path(&host.descriptor)?;
-	if let Ok(existing) = std::fs::read_link(&link) {
-		if existing.exists() && existing != host.socket_path() {
-			return Ok(false);
-		}
-	}
-	let _ = std::fs::remove_file(&link);
-	std::os::unix::fs::symlink(host.socket_path(), &link).map_err(|e| Error::file(&link, e))?;
+	// Nothing is published to say where this base listens. Its address is
+	// derived from the descriptor, so a caller holding the project computes the
+	// same one; there is no link to write, to read back, or to leave stale.
+	//
+	// That also moves the refusal of a second base for one project: it is the
+	// bind in `listen` that finds the address taken and answers AlreadyRunning,
+	// before this runs. Reaching here means this base holds the address, so the
+	// `false` this returns for the caller's sake no longer occurs.
 	write_private(&token, host.host_token())?;
-	let _published = Published(vec![link, token]);
+	let _published = Published(vec![token]);
 	host.stopped().await;
 	Ok(true)
 }
@@ -372,9 +359,6 @@ pub async fn client(descriptor: &Path) -> Result<(Peer, mpsc::Receiver<Incoming>
 			key: "host".into(),
 			why: format!("no base serves {}: {e}", descriptor.display()),
 		})?;
-	let socket = std::fs::read_link(path(descriptor)?).map_err(|e| Error::Unavailable {
-		key: "host".into(),
-		why: format!("no base serves {}: {e}", descriptor.display()),
-	})?;
-	super::connect(&socket, token.trim()).await
+	// The same derivation the base used to bind: the descriptor is the address.
+	super::connect(&path(descriptor)?, token.trim()).await
 }

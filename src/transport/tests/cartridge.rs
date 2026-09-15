@@ -307,7 +307,7 @@ async fn a_peer_token_sends_events_and_nothing_else() {
 #[tokio::test]
 async fn an_unknown_token_is_refused_and_disconnected() {
 	let (dir, _a, _b, _) = pair().await;
-	let adapter = crate::transport::typed::connect(&Endpoint::Unix(dir.path().join("a.sock")))
+	let adapter = crate::transport::typed::connect(&Endpoint::local(&dir.path().join("a.sock")))
 		.await
 		.unwrap();
 	let (peer, _incoming) = Peer::spawn(adapter, None);

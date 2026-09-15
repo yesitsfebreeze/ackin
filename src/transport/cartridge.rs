@@ -745,7 +745,7 @@ enum Refused {
 async fn connect(
 	address: &Address,
 ) -> std::result::Result<(Peer, mpsc::Receiver<Incoming>), Refused> {
-	let adapter = crate::transport::typed::connect(&Endpoint::Unix(address.socket.clone()))
+	let adapter = crate::transport::typed::connect(&Endpoint::local(&address.socket))
 		.await
 		.map_err(|e| Refused::Unreachable(e.to_string()))?;
 	let (peer, incoming) = Peer::spawn(adapter, None);
@@ -965,7 +965,7 @@ async fn handle(ctx: Ctx, access: Access, request: Request, apply: Arc<Mutex<Opt
 /// Bind `path` for serving.
 pub async fn listen(path: impl Into<PathBuf>) -> Result<LocalListener> {
 	let path = path.into();
-	match crate::transport::typed::bind(&Endpoint::Unix(path.clone())).await {
+	match crate::transport::typed::bind(&Endpoint::local(&path)).await {
 		Ok(BindOutcome::Bound(listener)) => Ok(listener),
 		Ok(BindOutcome::AlreadyRunning) => Err(format!("{} is already served", path.display())),
 		Err(error) => Err(format!("{}: {error}", path.display())),

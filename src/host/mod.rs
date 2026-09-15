@@ -175,7 +175,11 @@ impl Host {
 		self.stop.cancelled().await;
 	}
 
-	/// The base's own socket: nodes and the command line reach it here.
+	/// The base's own socket: nodes and the command line reach it here. It sits
+	/// in the socket directory with the cartridges' own, which is the only
+	/// directory a node is granted, and its name is derived from the descriptor
+	/// rather than from this run — so a caller that knows the project knows the
+	/// address, and nothing has to be published to tell it.
 	pub fn socket_path(&self) -> PathBuf {
 		self.sockets.join("host.sock")
 	}
@@ -753,11 +757,10 @@ pub(crate) async fn connect(
 	socket: &Path,
 	token: &str,
 ) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
-	let adapter = crate::transport::typed::connect(&crate::transport::typed::Endpoint::Unix(
-		socket.to_path_buf(),
-	))
-	.await
-	.map_err(|e| Error::Remote(format!("{}: {e}", socket.display())))?;
+	let adapter =
+		crate::transport::typed::connect(&crate::transport::typed::Endpoint::local(socket))
+			.await
+			.map_err(|e| Error::Remote(format!("{}: {e}", socket.display())))?;
 	let (peer, incoming) = Peer::spawn(adapter, None);
 	peer.call("auth", json!({ "token": token }))
 		.await
