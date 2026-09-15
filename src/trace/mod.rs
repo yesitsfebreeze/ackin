@@ -1,22 +1,3 @@
-//! The trace identifier one unit of work carries across the runtimes cartridge
-//! spans, and the diagnostic stream it labels.
-//!
-//! A trace is ambient, not a parameter: it is set once where work enters the
-//! host (a socket `call`, a cartridge frame that already carries one) and read
-//! wherever a diagnostic is written. [`stamp`] puts it on every outgoing wire
-//! frame and [`of`] takes it off an incoming one, so the Rust host, a Lua
-//! service and a cartridge process all name the same unit of work. The field is
-//! spelled `trace` on the wire and in a diagnostic line.
-//!
-//! `tokio::spawn` does not inherit a task-local, so every spawn that continues
-//! a trace re-enters it with [`scope`].
-//!
-//! [`diagnostic`] is the channel the trace exists for: one JSON line per event on
-//! a stream the protocol never uses, redacted by field name and bounded by a
-//! byte cap with one rotated generation. `CARTRIDGE_DIAGNOSTICS` names the file (the
-//! default is disabled); the cap is `host.diagnostics_max_bytes` in settings,
-//! and `CARTRIDGE_DIAGNOSTICS_MAX_BYTES` overrides it for one invocation.
-
 use serde_json::Value as Json;
 use std::future::Future;
 use std::io::{Seek, SeekFrom, Write};
@@ -28,13 +9,12 @@ tokio::task_local! {
 	static TURN: Arc<str>;
 }
 
-/// The trace this task runs in, when it runs in one.
 pub fn current() -> Option<Arc<str>> {
 	TURN.try_with(Arc::clone).ok()
 }
 
-/// A fresh trace id, unique for the life of this process and unlikely to
-/// collide with another cartridge's.
+/// Unique for the life of this process and unlikely to collide with another
+/// cartridge's.
 pub fn mint() -> Arc<str> {
 	static NEXT: AtomicU64 = AtomicU64::new(1);
 	static ORIGIN: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
@@ -51,20 +31,18 @@ pub fn mint() -> Arc<str> {
 	))
 }
 
-/// The trace a wire frame carries, or a fresh one when it carries none.
 pub fn of(m: &Json) -> Arc<str> {
 	m["trace"].as_str().map(Arc::from).unwrap_or_else(mint)
 }
 
-/// Put the ambient trace on an outgoing frame. A frame sent outside any trace is
-/// left alone, so the wire never grows a field that names nothing.
+/// A frame sent outside any trace is left alone, so the wire never grows a
+/// field that names nothing.
 pub fn stamp(m: &mut Json) {
 	if let Some(id) = current() {
 		m["trace"] = Json::String(id.to_string());
 	}
 }
 
-/// Run `f` inside `id`.
 pub async fn scope<F: Future>(id: Arc<str>, f: F) -> F::Output {
 	TURN.scope(id, f).await
 }
@@ -81,9 +59,8 @@ pub fn carry<F: Future>(f: F) -> impl Future<Output = F::Output> {
 	}
 }
 
-/// Field names whose values a diagnostic never carries: credentials, prompt
-/// bodies and tool bodies. Matched as a substring of the lowercased name, so
-/// `api_key`, `Authorization` and `messages` are all caught.
+/// Matched as a substring of the lowercased name, so `api_key`, `Authorization`
+/// and `messages` are all caught.
 const OMIT: &[&str] = &[
 	"key",
 	"token",
@@ -108,7 +85,6 @@ fn sensitive(name: &str) -> bool {
 	OMIT.iter().any(|n| name.contains(n))
 }
 
-/// Replace every sensitive value in `v` with `"<omitted>"`, naming what went.
 fn redact(v: &mut Json, omitted: &mut Vec<String>) {
 	if let Json::Array(values) = v {
 		for value in values {
@@ -132,9 +108,8 @@ fn redact(v: &mut Json, omitted: &mut Vec<String>) {
 	}
 }
 
-/// The diagnostic stream: stderr, or a file bounded at `cap` bytes with one
-/// rotated generation beside it. Nothing is truncated at startup — a file is
-/// opened for append and counts what is already there.
+/// Nothing is truncated at startup — a file is opened for append and counts
+/// what is already there.
 struct Sink {
 	out: Out,
 	cap: u64,
@@ -252,20 +227,15 @@ pub(crate) fn diagnostics_enabled() -> bool {
 	})
 }
 
-/// What the writer thread is handed.
 enum Note {
 	Line(String),
-	/// Answered once everything queued before it is written.
 	Flush(std::sync::mpsc::SyncSender<()>),
 }
 
-/// Records the queue had no room for, until the writer names them.
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
 static OUT: OnceLock<std::sync::mpsc::SyncSender<Note>> = OnceLock::new();
 
-/// Write what the queue hands over, each note preceded by one record for
-/// whatever the queue had no room for.
 fn drain(sink: &mut Sink, notes: &std::sync::mpsc::Receiver<Note>, dropped: &AtomicU64) {
 	while let Ok(note) = notes.recv() {
 		let missed = dropped.swap(0, Ordering::Relaxed);
@@ -285,9 +255,9 @@ fn drain(sink: &mut Sink, notes: &std::sync::mpsc::Receiver<Note>, dropped: &Ato
 	}
 }
 
-/// The queue in front of the sink. The sink is built on the first caller's
-/// thread, so it reads the environment and working directory it reads today;
-/// the blocking write happens on the writer thread.
+/// The sink is built on the first caller's thread, so it reads the environment
+/// and working directory it reads today; the blocking write happens on the
+/// writer thread.
 fn out() -> &'static std::sync::mpsc::SyncSender<Note> {
 	// Settle before entering the cell, not inside it: the initializer reads
 	// `settings::host()`, and settling warns through `tracing::warn!` for each
@@ -320,8 +290,7 @@ fn now_ms() -> u64 {
 		.unwrap_or_default()
 }
 
-/// Wait for the writer to put what is queued on disk. The writer dies with the
-/// process, and the next command may read this one's lines.
+/// The writer dies with the process, and the next command may read this one's lines.
 pub fn flush() {
 	let Some(lines) = OUT.get() else { return };
 	let (ack, done) = std::sync::mpsc::sync_channel::<()>(1);
@@ -346,9 +315,8 @@ pub fn flush() {
 	let _ = done.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()));
 }
 
-/// One diagnostic line: `{"t","trace","src","msg",…}`, sensitive fields omitted.
-/// `fields` may carry its own `trace`, which wins over the ambient one — that is
-/// how a line a cartridge wrote in its own trace keeps it.
+/// `fields` may carry its own `trace`, which wins over the ambient one — that
+/// is how a line a cartridge wrote in its own trace keeps it.
 pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 	if !diagnostics_enabled() {
 		return;
@@ -387,8 +355,6 @@ pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 	}
 }
 
-/// A line a cartridge wrote on its stderr. One it already shaped as a JSON
-/// object keeps its fields; anything else is the message.
 pub fn diagnostic_line(src: &str, line: &str) {
 	if !diagnostics_enabled() {
 		return;
@@ -420,18 +386,10 @@ pub fn diagnostic_line(src: &str, line: &str) {
 // tracing
 // ---------------------------------------------------------------------------
 
-/// Where a [`Layer`] delivers: `(src, msg, fields)`, the diagnostic's shape.
 type Deliver = Arc<dyn Fn(&str, &str, Json) + Send + Sync>;
 
-/// A `tracing` layer that mirrors the host's own events into the diagnostic
-/// stream, so a line written with `tracing::warn!` lands in the same redacted,
-/// bounded file a cartridge's stderr does, under the same trace id. Only
-/// events from this crate are taken (targets under `cartridge`); a dependency's
-/// chatter stays on stderr where the level filter governs it.
-///
-/// The `src` of the line is the event's `cartridge` field when it carries one,
-/// otherwise its target; the `message` field is the line's `msg`; every other
-/// field is carried as itself and redacted by name like any diagnostic field.
+/// Only events from this crate are taken (targets under `cartridge`); a
+/// dependency's chatter stays on stderr where the level filter governs it.
 pub struct Layer {
 	deliver: Deliver,
 }
@@ -445,8 +403,6 @@ impl Default for Layer {
 }
 
 impl Layer {
-	/// A layer delivering somewhere other than the process sink: what a test
-	/// observes.
 	pub fn delivering(deliver: impl Fn(&str, &str, Json) + Send + Sync + 'static) -> Self {
 		Self {
 			deliver: Arc::new(deliver),
@@ -454,7 +410,6 @@ impl Layer {
 	}
 }
 
-/// Fields of one event, gathered as JSON.
 #[derive(Default)]
 struct Fields {
 	message: String,
@@ -526,9 +481,6 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
 	}
 }
 
-/// Install the process-wide `tracing` subscriber: human-readable lines on
-/// stderr at the level `CARTRIDGE_LOG` selects (`warn` when it is unset), and
-/// every host event mirrored into the diagnostic stream through [`Layer`].
 /// Idempotent — a second call, or a call after the embedding program installed
 /// a subscriber of its own, changes nothing.
 pub fn subscribe() {

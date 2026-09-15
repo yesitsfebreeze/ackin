@@ -29,8 +29,6 @@ fn plan(id: &str, events: &[(&str, Option<u64>)], needs: &[&str], listen: &[&str
 	})
 }
 
-/// `a` answers `a.ask`; `b` needs it and defines `b.news`; `c` listens to
-/// `a.ask` too; `d` listens to `b.news` and sends nothing.
 fn composition() -> (Arc<Host>, Vec<Arc<Plan>>, BTreeMap<String, Directory>) {
 	let dir = tempfile::tempdir().unwrap();
 	let host = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();

@@ -1,7 +1,7 @@
 use super::*;
 
-/// A stray key survives `merge`; `deny_unknown_fields` must not turn it into a
-/// panic in every process. A declared pin still arrives.
+// A stray key survives `merge`: `deny_unknown_fields` must not turn it into a
+// panic in every process.
 #[test]
 fn an_undeclared_host_key_leaves_the_declared_defaults_standing() {
 	let mut stray = defaults(host_specs());

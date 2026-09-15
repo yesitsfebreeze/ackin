@@ -1,6 +1,3 @@
-//! One run of the descriptor in this process: call one service or every declared
-//! contract, then stop everything.
-
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
@@ -12,7 +9,6 @@ use super::{Host, State, Status};
 type Contract = (String, String);
 
 impl Host {
-	/// Wait until nothing is starting, or `timeout` passes.
 	pub async fn settled(&self, timeout: std::time::Duration) -> bool {
 		let mut lifecycle = self.lifecycle();
 		tokio::time::timeout(timeout, async {
@@ -24,7 +20,6 @@ impl Host {
 		.is_ok()
 	}
 
-	/// Start the descriptor, send `key` and take the first answer, hand it to `then`, stop everything.
 	pub async fn run_then<F, Fut>(
 		self: &Arc<Self>,
 		key: &str,
@@ -71,13 +66,11 @@ impl Host {
 		self.run_then(key, args, |reply| async { Ok(reply) }).await
 	}
 
-	/// Start the descriptor and call every contract its cartridges declare.
 	pub async fn verify(self: &Arc<Self>) -> Result<(usize, Vec<String>)> {
 		let contracts = self.contracts()?;
 		self.run_contracts(contracts).await
 	}
 
-	/// Verify one cartridge with only the cartridges its needs resolve to.
 	pub async fn verify_one(self: &Arc<Self>, target: &str) -> Result<(usize, Vec<String>)> {
 		let (entries, contracts) = self.solo(target)?;
 		*self.solo.lock() = Some(entries);
@@ -205,7 +198,6 @@ fn solo_entry(installed: &Installed) -> Entry {
 	}
 }
 
-/// One line per enabled cartridge that is not active.
 pub fn stalled(status: &[Status]) -> Vec<String> {
 	status
 		.iter()

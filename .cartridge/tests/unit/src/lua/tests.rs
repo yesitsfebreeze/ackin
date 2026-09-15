@@ -60,12 +60,9 @@ fn a_memory_limit_bounds_what_a_chunk_can_allocate() {
 		.exec()
 		.unwrap_err();
 	assert!(error.to_string().contains("not enough memory"), "{error}");
-	// The interpreter is still usable after the refusal.
 	assert!(lua_bool(&lua, "1 + 1 == 2"));
 }
 
-/// One file per state, and the gate still in front: what one file leaves
-/// behind never reaches the next, and an unrecorded file never runs.
 #[test]
 fn each_file_is_evaluated_in_a_state_of_its_own() {
 	crate::tests::home();

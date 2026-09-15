@@ -1,6 +1,3 @@
-//! A node: the base binary re-run on a cartridge's `init.lua`, inside its
-//! grant, reached once it serves, applied, and stopped.
-
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,18 +11,11 @@ use crate::transport::cartridge::{Directory, CONNECT_TIMEOUT_ENV, NODE_TOKEN_ENV
 
 use super::{Host, Plan, Running};
 
-/// The binary a node runs as; this one unless a test names the built CLI.
 pub const NODE_BIN_ENV: &str = "CARTRIDGE_NODE_BIN";
 
-/// What a node may inherit from the base's environment: nothing it needs to
-/// do its job is missing, and nothing it needs not to see is present. The six
-/// The other `CARTRIDGE_*` variables are set explicitly below. `PATH` resolves
-/// the helpers `grant.exec` names; `HOME` and `CARTRIDGE_HOME` reach the global
-/// `config.lua` and the trust store, and a node that resolves a different home
-/// from the base that started it reads a different machine's preferences;
-/// `XDG_RUNTIME_DIR` names the sockets base; the rest keep a node's timestamps,
-/// messages and temp files from changing with the base's shell. Everything
-/// else — secrets the person's shell held — is dropped.
+/// Everything not named here — secrets the person's shell held — is dropped.
+/// Trim with care: dropping `HOME`/`CARTRIDGE_HOME` makes a node resolve a
+/// different machine's trust store and global `config.lua`.
 #[cfg(unix)]
 const PASSTHROUGH: &[&str] = &[
 	"PATH",
@@ -39,18 +29,12 @@ const PASSTHROUGH: &[&str] = &[
 	"LOGNAME",
 	"SHELL",
 	"XDG_RUNTIME_DIR",
-	// An optional key for the proxy's listener; without it the loopback
-	// listener takes every caller, the way a local model server does.
+	// Without this, the proxy's loopback listener takes every caller.
 	"CARTRIDGE_PROXY_KEY",
 ];
 
-/// The same list for Windows, which needs a longer one to mean the same thing.
-/// A process there cannot exist without `SystemRoot` and `SystemDrive`: the
-/// loader reads them to find the system image, and a child created without
-/// them fails in `CreateProcessW` itself rather than in anything it runs.
-/// `LOCALAPPDATA` and `USERPROFILE` are what `HOME` was for — the global
-/// `config.lua`, the trust store and the sockets base — and `PATHEXT` is half
-/// of what `PATH` means here, since it is what makes a named program findable.
+/// A child created without `SystemRoot`/`SystemDrive` fails in
+/// `CreateProcessW` itself, before anything it runs. Trim with care.
 #[cfg(windows)]
 const PASSTHROUGH: &[&str] = &[
 	"PATH",
@@ -71,10 +55,8 @@ const PASSTHROUGH: &[&str] = &[
 	"PROCESSOR_ARCHITECTURE",
 ];
 
-/// The variables a cartridge's `grant.env` names, by exact name or `PREFIX*`.
-/// This is the one way a secret from the base's environment reaches a node, and
-/// it reaches only the node that declared the shape of its name. A bare `*`
-/// grants nothing: the loader refuses it, and this refuses it again.
+/// A bare `*` grants nothing: refused already by the loader, and refused
+/// again here.
 fn granted_env(grant: &[String]) -> Vec<(String, std::ffi::OsString)> {
 	let allows = |name: &str| {
 		grant.iter().any(|pattern| match pattern.strip_suffix('*') {
@@ -98,21 +80,23 @@ pub(super) async fn start(
 	generation: u64,
 ) -> Result<Running> {
 	let settings = crate::settings::host();
-	// The node's own credential, minted per start: worth that node's socket
-	// only, never the host's. `replace` starts the same id again and overwrites.
+	// Minted per start, worth that node's socket only. `replace` starts the
+	// same id again and overwrites this, which is fine.
 	let token = crate::transport::token();
 	host.node_tokens
 		.lock()
 		.insert(plan.id.clone(), token.clone());
 	let socket = host.socket(&plan.id);
 	let _ = std::fs::remove_file(&socket);
-	// The node reaches `host.sock` and its own socket: the project's socket
-	// directory, which holds both.
 	let sockets = Some(host.sockets.clone());
-	// A confined node on Windows may not create the pipe it is meant to serve:
-	// an AppContainer is denied the pipe namespace outright. So the base makes
-	// every instance now, grants the node's container SID on them, and hands
-	// them over for the node to inherit. It creates nothing and needs to.
+	// Settled here, not in the node: the sandbox hides the person's config.lua
+	// files from the node, so a re-settle there would read declared defaults
+	// over the person's actual choices.
+	let lua_memory = settings.lua_memory_bytes.to_string();
+	let lua_budget = settings.lua_instruction_budget.to_string();
+	// A confined node on Windows may not create the pipe it is meant to serve
+	// (an AppContainer is denied the pipe namespace), so the base creates it
+	// and hands it over for the node to inherit.
 	#[cfg(windows)]
 	let handed = {
 		let sid = crate::sandbox::container_sid_for(&plan.root)
@@ -148,11 +132,13 @@ pub(super) async fn start(
 			CONNECT_TIMEOUT_ENV,
 			settings.startup_timeout_secs.to_string(),
 		)
+		.env(crate::node::LUA_MEMORY_ENV, &lua_memory)
+		.env(crate::node::LUA_BUDGET_ENV, &lua_budget)
 		.env(crate::node::ENTRY_ENV, &plan.entry)
 		.env(crate::node::ENTRY_SHA256_ENV, &plan.entry_sha256)
 		.env(crate::node::ROOT_ENV, &plan.root)
-		// The binary this host runs as, so a helper that re-enters the CLI execs
-		// the one its exec grant resolved to, not a stale sibling build.
+		// So a helper that re-enters the CLI execs the exe its exec grant
+		// resolved to, not a stale sibling build.
 		.env("CARTRIDGE_BIN", &exe)
 		.env(
 			crate::node::LISTEN_ENV,
@@ -162,9 +148,8 @@ pub(super) async fn start(
 		.stdout(Stdio::null())
 		.stderr(Stdio::piped())
 		.kill_on_drop(true);
-	// A node leads its own process group, so what it spawns can be killed with
-	// it. Windows has no such flag at spawn: the job object below does that,
-	// and a process a job holds cannot leave it.
+	// Windows has no such flag at spawn; the job object below does the same
+	// job there.
 	#[cfg(windows)]
 	spawner.env(crate::transport::typed::PIPE_HANDLES_ENV, &handed);
 	#[cfg(unix)]
@@ -205,9 +190,8 @@ pub(super) async fn start(
 				format!("exited before serving: {status}{}", said()),
 			));
 		}
-		// Not gated on the path existing: on Windows the socket path names a
-		// pipe that never appears in the filesystem, and on Unix a connect to
-		// a missing path fails at once anyway.
+		// Not gated on the path existing: on Windows it never appears in the
+		// filesystem, and on Unix a connect to a missing path just fails.
 		if let Ok(connected) = super::connect(&socket, &token).await {
 			break connected;
 		}
@@ -276,9 +260,8 @@ pub(super) async fn start(
 	})
 }
 
-/// A node's process group: the node leads it and what it spawns joins it.
-/// Dropped, it kills every member; killing the node alone leaves its programs
-/// running with the node's stderr open.
+/// Dropped, kills every member; killing the node alone leaves its own
+/// programs running with the node's stderr open.
 #[cfg(unix)]
 struct Group(libc::pid_t);
 
@@ -301,14 +284,10 @@ impl Drop for Group {
 	}
 }
 
-/// The same guarantee on Windows, which has no process group to lead: a job
-/// object set to kill on close. A process a job holds cannot leave it and every
-/// process it starts joins it, so closing the handle kills the whole tree.
-///
-/// The child is assigned after it is spawned rather than created into the job,
-/// because `tokio` offers no `CREATE_SUSPENDED`. A grandchild started in that
-/// window would escape; the node's first act is to connect to its socket, so
-/// the window is before any cartridge code runs.
+/// Assigned after the child is spawned, not created into the job: `tokio`
+/// offers no `CREATE_SUSPENDED`. A grandchild started in that window would
+/// escape, but the node's first act is to connect to its socket, before any
+/// cartridge code runs.
 #[cfg(windows)]
 struct Group(windows_sys::Win32::Foundation::HANDLE);
 

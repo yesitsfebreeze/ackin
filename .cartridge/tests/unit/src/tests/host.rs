@@ -8,7 +8,6 @@ use super::{built, write};
 use crate::host::{Host, State};
 use crate::transport::cartridge::Outcome;
 
-/// A cartridge folder: its manifest and its `init.lua`.
 fn cartridge(dir: &Path, id: &str, manifest: Value, init: &str) {
 	write(dir, &format!("{id}/cartridge.json"), &manifest.to_string());
 	write(dir, &format!("{id}/init.lua"), init);
@@ -47,7 +46,6 @@ fn node_binary() {
 	std::env::set_var(crate::host::NODE_BIN_ENV, bin);
 }
 
-/// Approve what the test wrote, as `cartridge trust` would.
 fn trust(dir: &Path) {
 	super::home();
 	crate::trust::record(dir).unwrap();
@@ -64,9 +62,8 @@ fn status(host: &Host, id: &str) -> crate::host::Status {
 	host.status().into_iter().find(|s| s.id == id).unwrap()
 }
 
-/// The status of a cartridge that is expected to be running. A cartridge that
-/// did not come up carries why, and an assertion reading only `Failed` sends
-/// the reader off to find it.
+/// A cartridge that did not come up carries why, so an assertion reading
+/// only `Failed` sends the reader off to find it.
 fn active(host: &Host, id: &str) -> crate::host::Status {
 	let status = status(host, id);
 	assert_eq!(
@@ -124,14 +121,12 @@ async fn a_schema_only_change_reaches_a_sender_that_already_validated() {
 	greeter(dir.path());
 	descriptor(dir.path(), &["greeter"]);
 	let host = boot(dir.path()).await;
-	// Warm the validator: the good payload passes, the bad one is refused.
 	assert_eq!(
 		host.bail("greet", json!({"name": "you"})).await.unwrap(),
 		Some(json!("hello you"))
 	);
 	let error = host.bail("greet", json!({"name": 7})).await.unwrap_err();
 	assert!(error.contains("rejected by its schema"), "{error}");
-	// Only the schema changes: the event names, needs and listen stay the same.
 	cartridge(
 		dir.path(),
 		"greeter",
@@ -144,7 +139,6 @@ async fn a_schema_only_change_reaches_a_sender_that_already_validated() {
 	);
 	trust(dir.path());
 	host.replace("greeter").await.unwrap();
-	// The warmed sender must validate against the new schema, not the old one.
 	let error = host
 		.bail("greet", json!({"name": "you"}))
 		.await
@@ -816,9 +810,8 @@ done
 	host.stop().await;
 }
 
-/// `grant.env` is the one way a secret from the base's environment reaches a
-/// node: the cartridge declares the shape of the name, the composition chooses
-/// the name, and nothing else in the environment comes with it.
+// `grant.env` is the one way a secret from the base's environment reaches a
+// node: the composition chooses the name, nothing else comes with it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_granted_env_prefix_reaches_the_node_and_nothing_beside_it_does() {
 	let dir = tempfile::tempdir().unwrap();
@@ -868,15 +861,9 @@ async fn a_granted_env_prefix_reaches_the_node_and_nothing_beside_it_does() {
 	host.stop().await;
 }
 
-/// A node's environment is its own: no injected secret, no ambient shell — a
-/// helper it spawns sees the allow-list, not the base's environment.
-///
-/// Two `CARTRIDGE_*` variables are deliberate and named here: `CARTRIDGE_BIN`
-/// and `CARTRIDGE_HOME` tell a helper that re-enters the CLI which binary to
-/// run as and which home to resolve, so it agrees with the base that spawned
-/// it. Both are paths and carry no credential. Everything else — the seven
-/// variables naming this node, and any `CARTRIDGE_*` the operator's shell held
-/// — must not reach a helper.
+// Only `CARTRIDGE_BIN` and `CARTRIDGE_HOME` are deliberate passthroughs
+// (paths, no credential); every other `CARTRIDGE_*` — this node's own and any
+// the operator's shell held — must not reach a spawned helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_spawned_helper_sees_only_the_two_named_cartridge_variables_and_a_path() {
 	let dir = tempfile::tempdir().unwrap();
@@ -932,8 +919,8 @@ async fn a_spawned_helper_sees_only_the_two_named_cartridge_variables_and_a_path
 	host.stop().await;
 }
 
-/// A node's own credential is worth its socket only: presenting it to the
-/// host socket is refused, and the host keeps serving.
+// A node's own credential is worth its socket only: it does not authenticate
+// on the host socket.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_node_presenting_its_own_credential_is_refused_on_the_host_socket() {
 	let dir = tempfile::tempdir().unwrap();
@@ -959,7 +946,6 @@ async fn a_node_presenting_its_own_credential_is_refused_on_the_host_socket() {
 		refused.contains("unknown token"),
 		"a node token never authenticates on the host socket: {refused}"
 	);
-	// The refused connection changed nothing: the command line still connects.
 	let descriptor = host.descriptor().to_path_buf();
 	for _ in 0..100 {
 		if let Ok(connected) = crate::host::socket::client(&descriptor).await {
@@ -975,8 +961,6 @@ async fn a_node_presenting_its_own_credential_is_refused_on_the_host_socket() {
 	host.stop().await;
 }
 
-/// The refusal the whole design rests on, tested where it is enforced: a
-/// descriptor no one trusted fails `entries`, naming the file and the command.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_untrusted_descriptor_is_refused_where_it_is_enforced() {
 	super::home();
@@ -988,9 +972,8 @@ async fn an_untrusted_descriptor_is_refused_where_it_is_enforced() {
 	assert!(refused.contains("cartridge trust"), "{refused}");
 }
 
-/// Two solo entry ids that fold to the same socket file name are refused,
-/// case differences included: `entries` runs this check on the solo list
-/// too, not only on the derived-plus-descriptor list.
+// `entries` runs the socket-name-clash check on the solo list too, not only
+// on the derived-plus-descriptor list.
 #[tokio::test(flavor = "multi_thread")]
 async fn solo_entries_sharing_a_socket_name_are_refused() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1013,8 +996,7 @@ async fn solo_entries_sharing_a_socket_name_are_refused() {
 	assert!(refused.contains("share the socket name"), "{refused}");
 }
 
-/// Lua that runs without handing control back is refused, and the node keeps
-/// serving everything else — no 60 s deadline, no wedged state.
+// No 60 s deadline, no wedged state: a spinning handler is refused directly.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_spinning_handler_is_refused_and_its_node_keeps_serving() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1042,8 +1024,8 @@ async fn a_spinning_handler_is_refused_and_its_node_keeps_serving() {
 	host.stop().await;
 }
 
-/// A node that catches its own refusal and keeps looping ends itself: nothing
-/// inside Lua can stop it, so the process leaves with status 70.
+// Nothing inside Lua can stop a node that catches its own refusal and loops;
+// it ends itself with status 70.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_node_that_catches_its_own_refusal_exits() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1074,8 +1056,6 @@ async fn a_node_that_catches_its_own_refusal_exits() {
 	host.stop().await;
 }
 
-/// A lifecycle subscriber the broadcast outruns is disconnected rather than
-/// left on an open connection that hears nothing more.
 #[tokio::test]
 async fn a_lifecycle_subscriber_that_falls_behind_is_disconnected() {
 	let (a, b) = crate::transport::typed::InprocAdapter::pair();
@@ -1095,8 +1075,6 @@ async fn a_lifecycle_subscriber_that_falls_behind_is_disconnected() {
 	drop(tx);
 }
 
-/// An exec the grant did not name is denied by the sandbox, so the node
-/// fails rather than running a helper unconfined.
 #[cfg(target_os = "macos")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_spawn_the_grant_did_not_name_is_denied() {
@@ -1118,8 +1096,6 @@ async fn a_spawn_the_grant_did_not_name_is_denied() {
 	host.stop().await;
 }
 
-/// Each cartridge runs in its own interpreter: a global one sets is
-/// invisible to another.
 #[tokio::test(flavor = "multi_thread")]
 async fn one_cartridge_cannot_see_anothers_globals() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1151,8 +1127,8 @@ async fn one_cartridge_cannot_see_anothers_globals() {
 	host.stop().await;
 }
 
-/// Stopping a cartridge kills the whole group it leads, so a program it
-/// started does not outlive it.
+// Stopping a cartridge kills its whole process group (a job object on
+// Windows), so a spawned program does not outlive it.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_cartridge_takes_its_programs_along() {
@@ -1195,8 +1171,7 @@ cartridge.listen("pid", function() return pid end)"#,
 	assert!(gone, "a program's child outlived its cartridge");
 }
 
-/// A run the host was asked to stop returns `Stopped` and stops its nodes,
-/// rather than waiting out the event deadline.
+// A stopped run returns `Stopped` rather than waiting out the event deadline.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stop_request_ends_a_foreground_run() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1223,8 +1198,6 @@ cartridge.listen("hang", function() return sleeper:request({}) end)"#,
 	assert_ne!(status(&host, "stuck").state, State::Active);
 }
 
-/// `mcp` answers a terminate by stopping its descriptor and exiting, without
-/// waiting for the client to close stdin.
 #[cfg(target_os = "macos")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_terminated_mcp_exits_with_its_input_still_open() {
@@ -1264,9 +1237,6 @@ async fn a_terminated_mcp_exits_with_its_input_still_open() {
 	assert!(exited.is_ok(), "mcp held its exit on an open stdin");
 }
 
-/// Whether a process id names a live process. The group guarantee below is
-/// made by a process group on Unix and a job object on Windows, and is worth
-/// asserting on both.
 #[cfg(target_os = "macos")]
 fn alive(pid: u32) -> bool {
 	// SAFETY: signal 0 only checks that the process exists.

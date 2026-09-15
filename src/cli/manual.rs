@@ -1,14 +1,3 @@
-//! `help`: every document this composition carries, as one tree — the host and
-//! each cartridge, then the documents each one ships, then each document's
-//! sections. On a terminal it is a picker that descends one level at a time;
-//! anywhere else the same tree is addressed by path and printed, so an agent
-//! reads exactly what a person browses.
-//!
-//! A module's documents are the Markdown and text files in its own directory
-//! that Git does not ignore — `llms.txt`, every README, `docs/`, the memos and
-//! the help page — plus its `cartridge.json` declarations rendered as one more
-//! document. Nothing is authored or cached here: reading again is the update.
-
 use std::fmt::Write as _;
 use std::io::{IsTerminal, Write as _};
 use std::path::{Path, PathBuf};
@@ -80,7 +69,6 @@ pub(crate) fn help(project: &Project, what: &str, as_json: bool) -> Result<ExitC
 
 // ── the tree ────────────────────────────────────────────────────────────────
 
-/// One heading inside a document: the line it starts on and how deep it sits.
 struct Section {
 	title: String,
 	slug: String,
@@ -88,25 +76,19 @@ struct Section {
 	level: usize,
 }
 
-/// A file a module ships, read whole, with the headings found in it.
 struct Doc {
 	path: String,
 	about: String,
 	text: String,
-	/// The text lowercased once, line for line, so a search per keystroke does
-	/// not lowercase six megabytes each time.
 	lower: String,
 	sections: Vec<Section>,
 }
 
-/// The host or one cartridge: its one line and every document it carries.
 struct Module {
 	id: String,
 	about: String,
 	enabled: bool,
 	dir: PathBuf,
-	/// No help page, or a `cartridge.json` that would not read: what the
-	/// overview reports, because a cartridge documents itself.
 	broken: bool,
 	docs: Vec<Doc>,
 }
@@ -123,12 +105,10 @@ enum Node<'a> {
 	Section(&'a Module, &'a Doc, usize),
 }
 
-/// One row a level lists: a child to descend into, or a line a search found.
 struct Row {
 	address: String,
 	label: String,
 	about: String,
-	/// Set on a search hit: the line the document opens at.
 	line: Option<usize>,
 }
 
@@ -179,14 +159,12 @@ impl Manual {
 				docs,
 			});
 		}
-		// Enabled first, each group in composition order.
 		modules[1..].sort_by_key(|m| !m.enabled);
 		Self { modules }
 	}
 
-	/// An address names a node: `<id>`, `<id>/<file>`, `<id>/<file>#<section>`.
-	/// The empty address is the root. An id may itself contain a slash, so the
-	/// longest id the address starts with wins.
+	/// An id may itself contain a slash, so the longest id the address starts
+	/// with wins.
 	fn find(&self, address: &str) -> Option<Node<'_>> {
 		if address.is_empty() {
 			return Some(Node::Root);
@@ -248,8 +226,6 @@ impl Manual {
 		}
 	}
 
-	/// Every line under `scope` holding all the words of `query`, in any case,
-	/// addressed by the section it sits in.
 	fn search(&self, scope: Node<'_>, query: &str) -> Vec<Hit> {
 		let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
 		if words.is_empty() {
@@ -323,8 +299,6 @@ impl Manual {
 
 	// ── printed ─────────────────────────────────────────────────────────────
 
-	/// Prints a node for a reader without a terminal. Answers how many enabled
-	/// modules ship no page or no readable document when that node is the root.
 	fn print(&self, node: Node<'_>) -> usize {
 		match node {
 			Node::Root => return self.print_overview(),
@@ -423,8 +397,6 @@ impl Doc {
 		}
 	}
 
-	/// The lines a section covers: from its heading to the next heading at its
-	/// depth or shallower.
 	fn span(&self, i: usize) -> std::ops::Range<usize> {
 		let s = &self.sections[i];
 		let end = self.sections[i + 1..]
@@ -452,11 +424,8 @@ impl Doc {
 	}
 }
 
-/// The Markdown and text files under `dir` that Git does not ignore, tracked or
-/// not, ordered so a module's own page and README come first. Outside a Git
-/// checkout the directory is walked instead, hidden folders other than
-/// `.cartridge` skipped. `skip` leaves out one subtree: the cartridge root,
-/// whose cartridges are modules of their own.
+/// `skip` leaves out one subtree: the cartridge root, whose cartridges are
+/// modules of their own.
 fn documents(dir: &Path, skip: Option<&Path>) -> Vec<Doc> {
 	let listed = std::process::Command::new("git")
 		.arg("-C")
@@ -523,8 +492,6 @@ fn walk(dir: &Path, rel: &Path, found: &mut Vec<PathBuf>) {
 	}
 }
 
-/// Reading order inside a module: its page, its README, its agent guide, its
-/// guides, then everything else, memos last.
 fn rank(path: &Path) -> u8 {
 	let p = path.to_string_lossy();
 	match p.as_ref() {
@@ -537,8 +504,6 @@ fn rank(path: &Path) -> u8 {
 	}
 }
 
-/// A module's `cartridge.json` as a reader wants it: what it declares, with
-/// `needs` globs expanded.
 fn declarations(c: &CartridgeInfo, document: &Result<loader::Cartridge>, dir: &Path) -> String {
 	// Not a heading: the declarations are one leaf, addressed by the file alone.
 	let mut out = format!(
@@ -595,9 +560,8 @@ fn declarations(c: &CartridgeInfo, document: &Result<loader::Cartridge>, dir: &P
 	out
 }
 
-/// The headings of a document. Markdown `#` headings outside code fences and
-/// front matter; in a `.txt` guide also an unindented all-capitals line after a
-/// blank one, which is how those guides title their parts.
+/// Markdown `#` headings outside fences and front matter; in a `.txt` guide,
+/// also an unindented all-caps line after a blank one.
 fn sections(path: &str, text: &str) -> Vec<Section> {
 	let prose = path.ends_with(".txt");
 	let mut out: Vec<Section> = Vec::new();
@@ -674,8 +638,6 @@ fn slug(title: &str) -> String {
 	}
 }
 
-/// A document's one line: its front matter `description`, else its first
-/// heading, else its first line.
 fn about(text: &str) -> String {
 	let mut lines = text.lines();
 	if text.starts_with("---\n") {
@@ -700,7 +662,6 @@ fn about(text: &str) -> String {
 
 // ── the picker ──────────────────────────────────────────────────────────────
 
-/// The terminal, raw and on the alternate screen for as long as this lives.
 struct Screen;
 
 impl Screen {
@@ -726,7 +687,6 @@ impl Drop for Screen {
 	}
 }
 
-/// One level of the descent: where it is, what is typed, what is selected.
 struct Level {
 	address: String,
 	query: String,
@@ -748,7 +708,6 @@ fn key() -> std::io::Result<Key> {
 	use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 	loop {
 		let Event::Key(k) = crossterm::event::read()? else {
-			// A resize, a focus change: redraw at the new size.
 			return Ok(Key::Other);
 		};
 		if k.kind != KeyEventKind::Press {
@@ -774,9 +733,6 @@ fn key() -> std::io::Result<Key> {
 	}
 }
 
-/// Descends from `start`: each level lists its children, typing filters them
-/// and, from two characters on, adds every line below that level holding the
-/// typed words. Enter opens a child a level deeper, or a document at the line.
 fn browse(manual: &Manual, start: &str, query: &str) -> std::io::Result<()> {
 	let _screen = Screen::open()?;
 	let mut stack = vec![Level {
@@ -784,8 +740,6 @@ fn browse(manual: &Manual, start: &str, query: &str) -> std::io::Result<()> {
 		query: query.into(),
 		selected: 0,
 	}];
-	// A leaf address opens straight into its document, then steps back to the
-	// level that lists it.
 	if !is_branch(manual.find(start)) {
 		if !view(manual, start, None)? {
 			return Ok(());
@@ -844,8 +798,6 @@ fn browse(manual: &Manual, start: &str, query: &str) -> std::io::Result<()> {
 	}
 }
 
-/// A level's rows: the children the typed words match, then the lines below it
-/// that hold them.
 fn rows(manual: &Manual, node: Node<'_>, query: &str) -> Vec<Row> {
 	let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
 	let mut rows: Vec<Row> = manual
@@ -875,9 +827,8 @@ fn is_branch(node: Option<Node<'_>>) -> bool {
 	}
 }
 
-/// The nearest level above `address` that lists something: a section's
-/// document, a document's module, a module's root. A document path holds
-/// slashes of its own, so the step is taken on the tree, not the string.
+/// A document path holds slashes of its own, so the step is taken on the
+/// tree, not the string.
 fn up(manual: &Manual, address: &str) -> String {
 	let above = match manual.find(address) {
 		Some(Node::Section(m, d, _)) => format!("{}/{}", m.id, d.path),
@@ -949,7 +900,6 @@ fn draw_list(level: &Level, rows: &[Row]) -> std::io::Result<()> {
 	out.flush()
 }
 
-/// Shows a document from a line, or a section's heading when no line is given.
 /// Answers false when the reader quit the whole picker rather than stepping back.
 fn view(manual: &Manual, address: &str, line: Option<usize>) -> std::io::Result<bool> {
 	use crossterm::style::{Attribute, Print, SetAttribute};
@@ -1030,9 +980,6 @@ mod tests {
 		}
 	}
 
-	/// The tree a person descends is the tree an address names: every row a
-	/// level lists resolves back to a node, and a heading is found in both a
-	/// Markdown memo and a capitals-titled text guide.
 	#[test]
 	fn addresses_resolve_and_search_lands_in_the_section() {
 		let guide = "# Memos\n\nintro\n\nRECORD FORMAT\n\nA memo is Markdown.\n\nDISCOVERY\n\nresolve finds references.\n";

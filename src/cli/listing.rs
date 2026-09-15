@@ -1,6 +1,3 @@
-//! `list` and `ledger`: what is composed and what is installed, one line per
-//! cartridge with each of its needs resolved to a provider under it.
-
 use std::process::ExitCode;
 
 use cartridge::host::Host;
@@ -9,8 +6,6 @@ use cartridge::{Error, Result};
 
 use super::{Project, FAILED};
 
-/// A count of problems as an exit code: zero is success, anything else says
-/// the listing found something to fix.
 fn exit(problems: usize) -> ExitCode {
 	match problems {
 		0 => ExitCode::SUCCESS,
@@ -26,8 +21,6 @@ pub(crate) fn list(project: &Project) -> Result<ExitCode> {
 			project.descriptor.join("init.lua").display()
 		))
 	})?;
-	// A document that would not read is a failure of the listing, not a
-	// footnote in it: the line is printed, and the exit says so.
 	Ok(exit(lines(&cartridges)))
 }
 
@@ -36,9 +29,6 @@ pub(crate) fn ledger(project: &Project) -> ExitCode {
 	exit(ledger_lines(&ledger))
 }
 
-/// Who a cartridge's sends reach, recursively: one line per event it defines
-/// or needs and each enabled listener, `?` for a need nobody listens to, and
-/// `(cycle)` where the send comes back to a cartridge already on the path.
 fn sends(
 	all: &[CartridgeInfo],
 	cartridge: &CartridgeInfo,
@@ -75,12 +65,8 @@ fn sends(
 	}
 }
 
-/// Prints one line per cartridge and answers how many **documents** could not be
-/// read — not how many entries failed, which is a different and larger number:
-/// a cartridge whose Lua entry is missing has still made
-/// its declarations, and they are printed. An unreadable document prints why
-/// and no declaration columns at all, so it never reads as a document that
-/// asked for nothing.
+/// Counts document read failures only, not entry failures: a cartridge with
+/// a missing Lua entry still made its declarations and is not counted here.
 fn lines(cartridges: &[CartridgeInfo]) -> usize {
 	for p in cartridges {
 		let mut line = format!("{}  {}", p.entry.id, p.entry.path);
@@ -93,8 +79,6 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 		if !p.listen.is_empty() {
 			line.push_str(&format!("  listens {}", p.listen.join(", ")));
 		}
-		// What it asked for is what it gets and the wall it hits, so it is listed
-		// next to what it provides rather than in a second place.
 		if let Some(grant) = &p.grant {
 			for (label, asked) in [
 				("reads", &grant.read),
@@ -107,9 +91,7 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 				}
 			}
 		}
-		// At most one of the two is ever set: `unread` is the document's own
-		// failure and `error` is what evaluating the entry hit, and `manifest`
-		// does not report the first twice.
+		// unread and error are never both set.
 		for note in [p.unread.as_deref(), p.error.as_deref()]
 			.into_iter()
 			.flatten()
@@ -126,14 +108,7 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 	cartridges.iter().filter(|p| p.unread.is_some()).count()
 }
 
-/// One line per installed cartridge, in path order, with each of its needs
-/// under it bound to the path that provides it — `?` where nothing in scope
-/// does, `ambiguous` naming every offer where one scope offers it twice.
-/// Answers how many **problems** the listing found, on the same terms as
-/// [`lines`]: an unreadable document is listed and counted, never silently
-/// absent and never printed as a cartridge that declared nothing, and a need
-/// two entries of one scope offer is counted too, so a clash found at install
-/// time is a non-zero exit rather than odd behaviour later.
+/// Counts unread entries plus clashed bindings, not just unread entries.
 fn ledger_lines(ledger: &cartridge::ledger::Ledger) -> usize {
 	for e in ledger.entries() {
 		let mut line = e.path.clone();

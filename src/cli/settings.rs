@@ -1,6 +1,3 @@
-//! `settings`: every tunable value this descriptor has, as a table, as JSON, or
-//! as a `config.lua` template ready to save.
-
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -35,20 +32,14 @@ pub(crate) fn settings(
 		println!("{}", as_json_document(descriptor, &entries));
 		return Ok(ExitCode::SUCCESS);
 	}
-	// A cartridge configured with keys it never declared is the one
-	// thing this listing is for; saying so in the exit status is what
-	// keeps the sweep finishable.
 	Ok(match table(descriptor, &entries, what) {
 		0 => ExitCode::SUCCESS,
 		_ => ExitCode::from(FAILED),
 	})
 }
 
-/// The host's own settings, settled against its declarations, for the three
-/// renderings below. A configuration the declarations refuse does not silently
-/// become the defaults here: the reason is said once, and then the defaults
-/// stand — a limit that will not parse must not take the listing of limits down
-/// with it.
+/// A parse failure here logs a warning and falls back to declared defaults;
+/// it never propagates.
 fn host_settled(descriptor: &Path) -> Value {
 	let configured = settings::layers(descriptor)
 		.unwrap_or_else(|e| {
@@ -64,7 +55,6 @@ fn host_settled(descriptor: &Path) -> Value {
 	})
 }
 
-/// One row of the table: dotted key, kind, value, source, documentation.
 struct Row {
 	key: String,
 	kind: String,
@@ -73,14 +63,7 @@ struct Row {
 	doc: String,
 }
 
-/// Every tunable value, in one table: the host's own first, then each
-/// cartridge's, each key with its type, what it is set to, and where that came
-/// from. This is the listing the system's own documentation points at, so a
-/// value that cannot be found here is a value that was never a setting.
-///
-/// Answers how many problems it found: a cartridge configured with keys it
-/// never declared is one per cartridge, so finishing the migration is a
-/// non-zero exit going to zero rather than a memory of which ones were done.
+/// Counts cartridges with keys they never declared.
 fn table(descriptor: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -> usize {
 	let wanted = |section: &str, key: &str| match what {
 		None => true,
@@ -121,9 +104,7 @@ fn table(descriptor: &Path, entries: &[loader::SettingsInfo], what: Option<&str>
 				.unwrap_or(Value::Null);
 			push(&entry.id, key, Some(spec), &value);
 		}
-		// A configured key with no declaration is listed too, and marked. It is
-		// working configuration — dropping it from the listing would hide the
-		// one thing this listing exists to find.
+		// Undeclared keys are working configuration, not noise: list them too.
 		for key in &entry.undeclared {
 			let value = settings::get(&entry.settled, key)
 				.cloned()
@@ -132,18 +113,14 @@ fn table(descriptor: &Path, entries: &[loader::SettingsInfo], what: Option<&str>
 		}
 	}
 	print_rows(&rows);
-	// Only what was asked about is counted: narrowing the listing to one
-	// cartridge asks about that cartridge, and answering for the rest of the
-	// descriptor would make a clean one look dirty.
+	// Must reapply `wanted`: counting all of entry.undeclared here would flag
+	// a cartridge the caller never asked about.
 	entries
 		.iter()
 		.filter(|e| e.undeclared.iter().any(|key| wanted(&e.id, key)))
 		.count()
 }
 
-/// One wide value — a whole table of per-tool rules is a common one — must
-/// not push every other column off the terminal, so the value column is
-/// elided past a readable width. `--json` is the un-elided answer.
 fn print_rows(rows: &[Row]) {
 	const VALUE_WIDTH: usize = 44;
 	let width = |pick: fn(&Row) -> &str| rows.iter().map(|r| cells(pick(r))).max().unwrap_or(0);
@@ -168,8 +145,6 @@ fn print_rows(rows: &[Row]) {
 	}
 }
 
-/// The listing as data: declarations, settled values and the file each came
-/// from, for anything reading this surface rather than looking at it.
 fn as_json_document(descriptor: &Path, entries: &[loader::SettingsInfo]) -> String {
 	let sources = Sources::read(descriptor);
 	let describe = |section: &str, specs: &Specs, settled: &Value, undeclared: &[String]| {
@@ -210,10 +185,6 @@ fn as_json_document(descriptor: &Path, entries: &[loader::SettingsInfo]) -> Stri
 	serde_json::to_string_pretty(&Value::Object(out)).unwrap_or_default()
 }
 
-/// The same surface as a `config.lua`: every key, its documentation above it,
-/// and its current value. Saving this as `~/.cartridge/config.lua` changes
-/// nothing and leaves every knob in reach, which is the point — a person
-/// tuning a system should not have to discover the key's name first.
 fn print_template(descriptor: &Path, entries: &[loader::SettingsInfo]) {
 	println!("-- Every setting this descriptor has, at its current value.");
 	println!("-- Save as ~/.cartridge/config.lua for this machine, or as");
@@ -231,9 +202,8 @@ fn print_template(descriptor: &Path, entries: &[loader::SettingsInfo]) {
 	println!("}}");
 }
 
-/// One cartridge's table, written as the nested tables its dotted keys mean.
-/// `ship.remote` is `ship = { remote = ... }` here and not a key with a dot in
-/// its name, which is a different thing and would configure nothing.
+/// A literal `ship.remote` key configures nothing: dotted names must nest
+/// as `ship = { remote = ... }`.
 fn section(id: &str, specs: &Specs, settled: &Value) {
 	println!("\t{} = {{", lua_key(id));
 	nested(settled, specs, "", 2);
@@ -253,9 +223,8 @@ fn nested(value: &Value, specs: &Specs, prefix: &str, depth: usize) {
 		if let Some(doc) = specs.get(&dotted).and_then(|s| s.doc.as_deref()) {
 			println!("{pad}-- {doc}");
 		}
-		// A table with declarations under it is written out key by key, so each
-		// leaf keeps its own line and its own comment. One the declaration does
-		// not reach is written inline: its shape is the user's, not ours.
+		// An object outside the declared shape is written inline, not
+		// recursed into: its structure is the user's, unknown to us.
 		let inside = specs.keys().any(|k| k.starts_with(&format!("{dotted}.")));
 		match value.is_object() && inside {
 			true => {
@@ -268,8 +237,6 @@ fn nested(value: &Value, specs: &Specs, prefix: &str, depth: usize) {
 	}
 }
 
-/// A name Lua can take bare, or the bracketed string form for one it cannot —
-/// `live-record` is a key, not an identifier.
 pub(crate) fn lua_key(key: &str) -> String {
 	let bare = !key.is_empty()
 		&& !key.starts_with(|c: char| c.is_ascii_digit())

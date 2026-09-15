@@ -1,5 +1,3 @@
-//! The cartridge side of the cartridge protocol (docs/transport.txt).
-
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
 use std::path::PathBuf;
@@ -26,25 +24,18 @@ const HISTORY: usize = 1024;
 
 pub type Result<T> = std::result::Result<T, String>;
 
-/// Requests one connection may have running at once; the next waits for one to end.
 const IN_FLIGHT: usize = 64;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Directory {
-	/// Every event of the composition: who defines it, its schema, its deadline,
-	/// and who listens where this node may send it.
 	#[serde(default)]
 	pub events: BTreeMap<String, EventEntry>,
-	/// The events this node may send: those it defines and those it needs.
 	#[serde(default)]
 	pub sends: Vec<String>,
-	/// The tokens this node accepts, each with its sender and the events it may send here.
 	#[serde(default)]
 	pub accept: BTreeMap<String, Accept>,
-	/// Events this node declared it needs a listener for; all are covered.
 	#[serde(default)]
 	pub needs: Vec<String>,
-	/// The host's socket, for the questions only the host can answer.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub host: Option<Address>,
 }
@@ -56,11 +47,8 @@ pub struct EventEntry {
 	pub description: Option<String>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub schema: Option<Value>,
-	/// How long a sender waits for each listener; 0 waits for ever.
 	#[serde(default)]
 	pub timeout_ms: u64,
-	/// Where to send it, with the token for each listener; empty where this
-	/// node may not send it.
 	#[serde(default)]
 	pub listeners: Vec<Address>,
 }
@@ -72,7 +60,6 @@ pub struct Address {
 	pub token: String,
 }
 
-/// One sender a node lets in, and what it may send.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Accept {
 	pub from: String,
@@ -80,32 +67,14 @@ pub struct Accept {
 	pub events: Vec<String>,
 }
 
-/// What one listener did with an event.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum Outcome {
-	Answered {
-		from: String,
-		data: Value,
-	},
-	/// Answered nothing (nil).
-	Declined {
-		from: String,
-	},
-	/// The listener ran and failed, or refused the event.
-	Failed {
-		from: String,
-		error: String,
-	},
-	/// No answer within the event's deadline.
-	TimedOut {
-		from: String,
-	},
-	/// The listener could not be reached.
-	Unavailable {
-		from: String,
-		error: String,
-	},
+	Answered { from: String, data: Value },
+	Declined { from: String },
+	Failed { from: String, error: String },
+	TimedOut { from: String },
+	Unavailable { from: String, error: String },
 }
 
 impl Outcome {
@@ -119,7 +88,6 @@ impl Outcome {
 		}
 	}
 
-	/// Why this is not an answer, or `None` when it is one (or a decline).
 	pub fn error(&self) -> Option<String> {
 		match self {
 			Outcome::Answered { .. } | Outcome::Declined { .. } => None,
@@ -133,8 +101,8 @@ impl Outcome {
 #[derive(Clone)]
 enum Access {
 	Host,
-	/// A sender, by the token it presented; what it may send is looked up per
-	/// request, so a new directory takes effect on open connections.
+	/// What it may send is looked up per request, so a new directory takes
+	/// effect on open connections.
 	Peer(String),
 }
 
@@ -148,7 +116,6 @@ tokio::task_local! {
 	static TRACE: String;
 }
 
-/// The trace of the request this code is handling.
 pub fn trace() -> Option<String> {
 	TRACE.try_with(Clone::clone).ok()
 }
@@ -173,14 +140,12 @@ where
 	Arc::new(move |value| f(value).boxed())
 }
 
-/// An event ready to send: its listeners, deadline and trace.
 struct Prepared {
 	listeners: Vec<Address>,
 	timeout: Option<Duration>,
 	trace: String,
 }
 
-/// A cartridge's view of itself and of the composition.
 #[derive(Clone)]
 pub struct Ctx {
 	state: Arc<State>,
@@ -243,7 +208,6 @@ impl Ctx {
 		self.state.directory.read().expect("directory lock").clone()
 	}
 
-	/// Events this cartridge declared it needs a listener for, all covered.
 	pub fn needs(&self) -> Vec<String> {
 		self.state
 			.directory
@@ -253,7 +217,6 @@ impl Ctx {
 			.clone()
 	}
 
-	/// Every event of the composition, by name.
 	pub fn events(&self) -> BTreeMap<String, EventEntry> {
 		self.state
 			.directory
@@ -263,11 +226,9 @@ impl Ctx {
 			.clone()
 	}
 
-	/// Replace the directory; cached validators of the old one go with it.
 	pub(crate) fn set_directory(&self, directory: Directory) {
-		// One lock over both: a validator being compiled against the old
-		// directory holds the read lock until it is cached, so the clear below
-		// cannot land between that compile and its insertion.
+		// Held until validators are cleared: a validator compiled from the old
+		// directory must never be cached after this clears it.
 		let mut held = self.state.directory.write().expect("directory lock");
 		*held = directory;
 		self.state
@@ -277,13 +238,9 @@ impl Ctx {
 			.clear();
 	}
 
-	/// Refuse an event nobody declared, or a payload its schema rejects.
 	pub fn validate(&self, name: &str, data: &Value) -> Result<()> {
-		// The directory stays read-locked until the compiled validator is in the
-		// cache: `set_directory` swaps the directory and clears the cache behind
-		// the same lock, so a validator compiled from the directory being
-		// replaced can never be inserted after that clear. Both paths take
-		// directory then validators, so the order never inverts.
+		// Read-locked until the validator is cached, so `set_directory` can't
+		// clear the cache in between; both paths lock directory then validators.
 		let directory = self.state.directory.read().expect("directory lock");
 		let schema = directory
 			.events
@@ -322,25 +279,32 @@ impl Ctx {
 		}
 	}
 
-	/// Refuse what this node may not send or the schema rejects; otherwise the
-	/// listeners, the deadline and the trace to send with.
 	fn prepare(&self, name: &str, data: &Value) -> Result<Prepared> {
 		self.validate(name, data)?;
+		// One read off the same directory: another request may swap it
+		// between locks, and indexing a name the sends check just passed
+		// would then panic.
 		let directory = self.state.directory.read().expect("directory lock");
+		let entry = match directory.events.get(name) {
+			Some(entry) => entry.clone(),
+			None => {
+				return Err(format!(
+					"`{name}` is not an event this cartridge defines or needs"
+				));
+			}
+		};
 		if !directory.sends.iter().any(|n| n == name) {
 			return Err(format!(
 				"`{name}` is not an event this cartridge defines or needs"
 			));
 		}
-		let entry = &directory.events[name];
 		Ok(Prepared {
-			listeners: entry.listeners.clone(),
+			listeners: entry.listeners,
 			timeout: (entry.timeout_ms > 0).then(|| Duration::from_millis(entry.timeout_ms)),
 			trace: trace_of(&Value::Null),
 		})
 	}
 
-	/// Whether the sender holding `token` may send `name` here.
 	fn accepts(&self, token: &str, name: &str) -> bool {
 		self.state
 			.directory
@@ -363,7 +327,6 @@ impl Ctx {
 			.insert(name.to_owned(), handler(f));
 	}
 
-	/// Runs when the cartridge stops, last registered first.
 	pub fn on_dispose<F, Fut>(&self, f: F)
 	where
 		F: FnOnce() -> Fut + Send + 'static,
@@ -376,12 +339,10 @@ impl Ctx {
 			.push(Box::new(move || f().boxed()));
 	}
 
-	/// Stop serving; [`serve`] returns once the finalizers have run.
 	pub fn stop(&self) {
 		self.state.stop.cancel();
 	}
 
-	/// Ask the host: `status`, `snapshot`, `cartridges`.
 	pub async fn host(&self, method: &str, params: Value) -> Result<Value> {
 		let address = self
 			.state
@@ -438,8 +399,6 @@ impl Ctx {
 		}
 	}
 
-	/// Send to every listener without waiting. What does not come back as an
-	/// answer or a decline is published on this cartridge's `error` channel.
 	pub fn emit(&self, name: &str, data: Value) -> Result<()> {
 		let prepared = Arc::new(self.prepare(name, &data)?);
 		for address in prepared.listeners.clone() {
@@ -459,8 +418,6 @@ impl Ctx {
 		Ok(())
 	}
 
-	/// Ask listeners in order; the first answer wins, a decline asks the next,
-	/// and anything else is the error.
 	pub async fn bail(&self, name: &str, data: Value) -> Result<Option<Value>> {
 		let prepared = self.prepare(name, &data)?;
 		for address in &prepared.listeners {
@@ -473,7 +430,6 @@ impl Ctx {
 		Ok(None)
 	}
 
-	/// Ask every listener at once; one outcome per listener, in descriptor order.
 	pub async fn gather(&self, name: &str, data: Value) -> Result<Vec<Outcome>> {
 		let prepared = self.prepare(name, &data)?;
 		Ok(futures::future::join_all(
@@ -485,7 +441,6 @@ impl Ctx {
 		.await)
 	}
 
-	/// Ask one listener, by cartridge.
 	pub async fn ask(&self, cartridge: &str, name: &str, data: Value) -> Result<Outcome> {
 		let prepared = self.prepare(name, &data)?;
 		let address = prepared
@@ -496,7 +451,6 @@ impl Ctx {
 		Ok(self.send(address, name, data, &prepared).await)
 	}
 
-	/// Emit to listeners and publish on the channel of the same name.
 	pub fn notify(&self, name: &str, data: Value) -> Result<()> {
 		self.emit(name, data.clone())?;
 		self.publish(name, data);
@@ -556,8 +510,6 @@ impl Ctx {
 		}
 	}
 
-	/// Watch `channel` of the needed cartridge `cartridge`. Envelopes reach `f`
-	/// in order; the subscription survives the publisher restarting.
 	pub async fn subscribe<F, Fut>(
 		&self,
 		cartridge: &str,
@@ -578,10 +530,8 @@ impl Ctx {
 		});
 		let last = Arc::new(AtomicU64::new(since.unwrap_or(0)));
 		let key = (address.cartridge.clone(), channel.to_owned());
-		// The watcher goes in before the call: `join` sends the replay on the
-		// connection before its reply, so an envelope arriving without a
-		// watcher is lost rather than deferred. Undone on failure, so a
-		// refused cartridge leaves nothing behind.
+		// Inserted before the call: `join` sends the replay before its reply, so
+		// an envelope arriving without a watcher would be lost, not deferred.
 		self.state.watchers.lock().expect("watchers lock").insert(
 			key.clone(),
 			Watcher {
@@ -598,11 +548,8 @@ impl Ctx {
 		.await;
 		match subscribed {
 			Ok(reply) => {
-				// Where the caller joined, so a reconnect resumes from here
-				// rather than from 0. Only without a replay: `since` queues
-				// envelopes `pump` has not drained when the call returns, and
-				// seeding from the reply would resume past them — and `last`
-				// already holds `since` anyway.
+				// Only without a replay: `since` already queues envelopes `pump`
+				// has not drained, and seeding from the reply would skip them.
 				if since.is_none() {
 					if let Some(seq) = reply["seq"].as_u64() {
 						last.fetch_max(seq, Ordering::SeqCst);
@@ -797,10 +744,6 @@ async fn connect(
 	}
 }
 
-/// Serve `ctx` on `listener` until it is disposed or stopped. `apply` runs when
-/// the host calls `apply`; its error is the apply's error. An `Err` return
-/// means the listener itself failed (e.g. the fd table is exhausted), not a
-/// disposal or stop: those still return `Ok`.
 pub async fn serve(mut listener: LocalListener, ctx: Ctx, apply: Apply) -> Result<()> {
 	let apply = Arc::new(Mutex::new(Some(apply)));
 	let mut connections = tokio::task::JoinSet::new();
@@ -837,9 +780,6 @@ pub async fn serve(mut listener: LocalListener, ctx: Ctx, apply: Apply) -> Resul
 async fn connection(ctx: Ctx, adapter: LocalAdapter, apply: Arc<Mutex<Option<Apply>>>) {
 	let (peer, mut incoming) = Peer::spawn(adapter, Some(MAX_FRAME));
 	{
-		// Prune dead entries on every accept, instead of only at shutdown, so a
-		// long-running node does not keep every connection it ever accepted
-		// pinned here after its socket is gone.
 		let mut connections = ctx.state.connections.lock().expect("connections lock");
 		connections.retain(|peer| !peer.is_closed());
 		connections.push(peer.clone());
@@ -1016,7 +956,6 @@ async fn handle(ctx: Ctx, access: Access, request: Request, apply: Arc<Mutex<Opt
 	}
 }
 
-/// Bind `path` for serving.
 pub async fn listen(path: impl Into<PathBuf>) -> Result<LocalListener> {
 	let path = path.into();
 	match crate::transport::typed::bind(&Endpoint::local(&path)).await {

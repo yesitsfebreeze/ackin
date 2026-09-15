@@ -1,9 +1,3 @@
-//! The ledger: every cartridge under one root, derived from the filesystem,
-//! keyed by its path from that root, and resolved by an outward walk. Both
-//! answered forks of the contract are pinned here: a new cartridge is
-//! *available, not started*, and two entries of one scope offering one key is
-//! a clash that stops, not a silent pick.
-
 use super::*;
 use crate::ledger::Ledger;
 use serde_json::json;
@@ -18,8 +12,6 @@ fn cartridge(dir: &Path, folder: &str, manifest: Value) {
 	write(dir, &format!("{folder}/init.lua"), "return {}");
 }
 
-/// An entry is its path from the root, so two subtrees may hold the same bare
-/// name and neither collides with the other.
 #[test]
 fn an_entry_is_its_path_from_the_root() {
 	let dir = tempfile::tempdir().unwrap();
@@ -50,9 +42,8 @@ fn an_entry_is_its_path_from_the_root() {
 	assert_eq!(ledger.get("left/nested").unwrap().name, "same");
 }
 
-/// The answered fork: two entries of one scope offering one key is ambiguous
-/// and the ask stops naming both, instead of the first in path order winning
-/// quietly. A scope further out offering the key once does not change that.
+// Two entries offering one key clash and name both, instead of the first in
+// path order winning silently.
 #[test]
 fn two_entries_of_one_scope_offering_one_key_is_a_clash() {
 	let dir = tempfile::tempdir().unwrap();
@@ -89,8 +80,6 @@ fn two_entries_of_one_scope_offering_one_key_is_a_clash() {
 		.any(|(e, key, b)| e.path == "asker" && *key == "store.get" && b.is_clashed()));
 }
 
-/// An unreadable document is an entry with its reason, not an absence: it
-/// declares nothing and binds nothing, and the listing can still say why.
 #[test]
 fn an_unreadable_document_is_an_entry_with_its_reason() {
 	let dir = tempfile::tempdir().unwrap();
@@ -107,8 +96,6 @@ fn an_unreadable_document_is_an_entry_with_its_reason() {
 	assert!(entry.unread.is_some());
 }
 
-/// A root that does not exist is an empty ledger, not an error: nothing
-/// installed is a state the host runs in.
 #[test]
 fn a_root_that_does_not_exist_is_an_empty_ledger() {
 	let dir = tempfile::tempdir().unwrap();

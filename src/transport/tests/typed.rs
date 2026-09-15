@@ -1,4 +1,3 @@
-//! Tests extracted from typed.rs
 #![allow(unused)]
 use super::*;
 
@@ -160,7 +159,6 @@ mod cwd_tag_tests {
 	}
 }
 
-// Two spellings of a root that does not exist yet must tag the same.
 #[test]
 fn a_root_that_does_not_exist_yet_tags_the_same_from_every_spelling() {
 	let tmp = tempfile::tempdir().unwrap();

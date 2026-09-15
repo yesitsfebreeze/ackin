@@ -1,6 +1,3 @@
-//! Commands that start a host in this process: `run`, `launch`, `mcp`,
-//! `daemon` and `verify`.
-
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -10,9 +7,6 @@ use serde_json::{json, Value};
 
 use super::{client, fail, Project, FAILED};
 
-/// Nodes lead their own process groups, so the terminal signals this process
-/// alone: a terminate stops the host, and so does an interrupt unless a program
-/// holds the terminal (`launch`'s agent), which the terminal signals itself.
 pub(crate) fn host(
 	project: &Project,
 	foreground: Option<Arc<std::sync::atomic::AtomicBool>>,
@@ -27,9 +21,6 @@ fn stop_on_signals(
 	foreground: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<()> {
 	use std::sync::atomic::Ordering;
-	// Two ways to be asked to stop, and the same answer to each on every
-	// platform: one a person types at a terminal a foreground program may be
-	// holding, and one the system sends that nothing gets to hold.
 	#[cfg(unix)]
 	let (mut interrupt, mut terminate) = {
 		use tokio::signal::unix::{signal, SignalKind};
@@ -47,6 +38,8 @@ fn stop_on_signals(
 		loop {
 			tokio::select! {
 				_ = terminate.recv() => break,
+				// A foreground-held program (launch's agent) gets the terminal's
+				// interrupt directly; ignore ours or the host stops under it.
 				_ = interrupt.recv() => {
 					if !foreground.as_ref().is_some_and(|held| held.load(Ordering::SeqCst)) {
 						break;
@@ -59,7 +52,6 @@ fn stop_on_signals(
 	Ok(())
 }
 
-/// Serve the host socket beside a foreground run, when no other host serves this project.
 fn serve_beside(host: &Arc<Host>) -> tokio::task::JoinHandle<()> {
 	let host = host.clone();
 	tokio::spawn(async move {
@@ -95,13 +87,15 @@ pub(crate) async fn launch(
 	args: Vec<String>,
 ) -> Result<ExitCode> {
 	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
-	// A host already serves this project: its proxy renders the launch, and
-	// the agent runs here against it.
 	if let Some((peer, _incoming)) = client::served(project).await {
-		let status = spawn(client::bail(&peer, "proxy", request).await?).await?;
-		return Ok(ExitCode::from(
-			status.as_i64().unwrap_or(1).clamp(0, 255) as u8
-		));
+		// A proxy-less composition errors here; that's not a refusal, the
+		// local host below takes over instead.
+		if let Ok(launch) = client::bail(&peer, "proxy", request.clone()).await {
+			let status = spawn(launch).await?;
+			return Ok(ExitCode::from(
+				status.as_i64().unwrap_or(1).clamp(0, 255) as u8
+			));
+		}
 	}
 	let foreground = Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let host = host(project, Some(foreground.clone()))?;
@@ -122,8 +116,6 @@ pub(crate) async fn launch(
 	))
 }
 
-/// Run a rendered launch `{program, args, env, unset, cwd}` on this terminal
-/// and resolve to its exit status.
 async fn spawn(launch: Value) -> Result<Value> {
 	let strings = |v: &Value| -> Vec<String> {
 		v.as_array()
@@ -149,8 +141,8 @@ async fn spawn(launch: Value) -> Result<Value> {
 			command.env(k, v.as_str().unwrap_or_default());
 		}
 	}
-	// A launch stopped under a running agent takes it down, rather than leave
-	// it on the terminal without its proxy.
+	// Dropping this without kill_on_drop would leave the agent running
+	// unproxied.
 	command.kill_on_drop(true);
 	let status = command
 		.status()
@@ -160,9 +152,6 @@ async fn spawn(launch: Value) -> Result<Value> {
 }
 
 pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
-	// The client owns this process's lifetime: the pump ends at end of
-	// input and the descriptor is disposed on the way out.
-	// A host already serving this project answers the client's lines itself.
 	if let Some((peer, _incoming)) = client::served(project).await {
 		stdio(Backend::Remote(peer)).await?;
 		return Ok(ExitCode::SUCCESS);
@@ -177,7 +166,6 @@ pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
 	Ok(ExitCode::SUCCESS)
 }
 
-/// Who answers the `mcp` event: this process's host, or the one already serving.
 #[derive(Clone)]
 enum Backend {
 	Local(Arc<Host>),
@@ -197,11 +185,9 @@ impl Backend {
 	}
 }
 
-/// Newline-delimited JSON-RPC between an MCP client and the `mcp` service:
-/// every line of stdin is one message, every non-null reply one line of stdout.
-/// One task per message, so a cancellation notification is read and acted on
-/// while the call it cancels is still running. Diagnostics stay on stderr;
-/// stdout carries the protocol and nothing else.
+/// One task per message: sequential processing would block a cancellation
+/// notification behind the call it cancels. Never print to stdout here — it
+/// carries the protocol.
 async fn stdio(backend: Backend) -> Result<Value> {
 	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 	let (replies, mut pending) =
@@ -220,6 +206,8 @@ async fn stdio(backend: Backend) -> Result<Value> {
 		if line.trim().is_empty() {
 			continue;
 		}
+		// Without this a long session keeps every finished task alive.
+		while serving.try_join_next().is_some() {}
 		let (backend, replies) = (backend.clone(), replies.clone());
 		serving.spawn(async move {
 			let result = backend.message(&line).await;
@@ -234,8 +222,8 @@ async fn stdio(backend: Backend) -> Result<Value> {
 	Ok(Value::Null)
 }
 
-/// Bridge failures still owe a request its correlated protocol response.
-/// Notifications and client responses never receive an error response.
+/// Returns None (no reply sent) for a notification or an unparseable line,
+/// not just for a successful call: only a request with an id owes an error.
 fn mcp_bridge_reply(line: &str, result: Result<Value>) -> Option<Value> {
 	match result {
 		Ok(reply) => (!reply.is_null()).then_some(reply),
@@ -306,8 +294,7 @@ pub(crate) async fn verify(project: &Project, cartridge: Option<&str>) -> Result
 #[path = "../../.cartridge/tests/unit/stdio.rs"]
 mod stdio_tests;
 
-// Signals are POSIX. What this covers — an interrupt stops the base unless a
-// program holds the terminal — has no counterpart to raise on Windows.
+// No Windows counterpart: ctrl_c/ctrl_close carry no foreground-held signal.
 #[cfg(all(test, unix))]
 #[path = "../../.cartridge/tests/unit/src/cli/signals.rs"]
 mod signal_tests;

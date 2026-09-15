@@ -2,8 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// An interrupt stops the host unless a program holds the terminal; a
-/// terminate stops it regardless.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_interrupt_stops_the_host_unless_a_program_holds_the_terminal() {
 	// SAFETY: signals only this process, which the test owns.

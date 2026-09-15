@@ -1,6 +1,3 @@
-//! Changed sources restart their cartridge; a changed `init.lua` or
-//! `config.lua` reconciles the descriptor.
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -12,7 +9,6 @@ use crate::loader::normalize;
 use super::Host;
 
 impl Host {
-	/// Watch until the returned task is aborted.
 	pub fn watch(self: &Arc<Self>) -> Result<tokio::task::JoinHandle<()>> {
 		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<PathBuf>();
 		let mut watcher =

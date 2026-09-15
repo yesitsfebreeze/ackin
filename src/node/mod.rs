@@ -1,7 +1,3 @@
-//! A node: one cartridge's `init.lua`, run by the base in its own process with
-//! the `cartridge` global injected. Everything the entry registers goes to the
-//! base; native modules it loads reach the same global.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -24,12 +20,12 @@ pub const ENTRY_ENV: &str = "CARTRIDGE_ENTRY";
 pub const ROOT_ENV: &str = "CARTRIDGE_ROOT";
 pub const LISTEN_ENV: &str = "CARTRIDGE_LISTEN";
 pub const ENTRY_SHA256_ENV: &str = "CARTRIDGE_ENTRY_SHA256";
+pub const LUA_MEMORY_ENV: &str = "CARTRIDGE_LUA_MEMORY";
+pub const LUA_BUDGET_ENV: &str = "CARTRIDGE_LUA_INSTRUCTION_BUDGET";
 
 static RUNTIME: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
 
-/// Block on a future for a Lua call that cannot yield: a native module's call
-/// into the global, or one from a thread of the module's own. It holds the Lua
-/// state until it returns.
+/// Holds the Lua state until the future returns.
 fn wait<F: std::future::Future>(future: F) -> F::Output {
 	let handle = RUNTIME.get().expect("the node runtime").clone();
 	match tokio::runtime::Handle::try_current() {
@@ -52,17 +48,15 @@ fn json(lua: &Lua, value: mlua::Value) -> mlua::Result<Value> {
 	serde_json::from_str(&text).map_err(mlua::Error::external)
 }
 
-/// Pick the yielding or the blocking function by whether the caller can yield.
 const EITHER: &str = r#"local yielding, blocking, yieldable = ...
 return function(...)
 	if yieldable() then return yielding(...) end
 	return blocking(...)
 end"#;
 
-/// A Lua function for an async call. Called from Lua code (a handler, a
-/// subscriber, init.lua) it yields, so the node serves other events while it
-/// waits. Called where Lua cannot yield (inside a native module's function, or
-/// from its own thread) it blocks instead.
+/// Yields where Lua can (a handler, a subscriber, init.lua), so the node
+/// serves other events meanwhile; blocks where it cannot (inside a native
+/// module's function, or from its own thread).
 fn either<A, R, F, Fut>(lua: &Lua, f: F) -> mlua::Result<Function>
 where
 	A: FromLuaMulti + 'static,
@@ -94,11 +88,10 @@ fn env(name: &str) -> Result<String> {
 	})
 }
 
-/// Run this process as a node until the base disposes it or goes away.
 pub async fn main() -> Result<ExitCode> {
 	let socket = PathBuf::from(env(SOCKET_ENV)?);
-	// The node's own credential: what its socket grants as `Host`. It names
-	// authority over this node only, so the six variables are scrubbed below.
+	// The node's own credential: what its socket grants as `Host`, naming
+	// authority over this node only.
 	let host_token = env(NODE_TOKEN_ENV)?;
 	let entry = PathBuf::from(env(ENTRY_ENV)?);
 	let expected = env(ENTRY_SHA256_ENV)?;
@@ -130,12 +123,18 @@ pub async fn main() -> Result<ExitCode> {
 		.await
 		.map_err(|e| Error::process(entry.display().to_string(), e))?;
 	let ctx = Ctx::new(host_token, timeout);
-	let settings = crate::settings::host();
-	let lua = crate::lua::interpreter(
-		settings.lua_memory_bytes,
-		settings.lua_instruction_budget,
-		crate::lua::Overrun::Exit,
-	)?;
+	// The base settled these against the person's config.lua layers; the
+	// sandbox hides both files, so take the carried values unset at our own
+	// risk — a node that cannot find them runs on the declarations.
+	let memory = std::env::var(LUA_MEMORY_ENV)
+		.ok()
+		.and_then(|v| v.parse().ok())
+		.unwrap_or(crate::settings::host().lua_memory_bytes);
+	let budget = std::env::var(LUA_BUDGET_ENV)
+		.ok()
+		.and_then(|v| v.parse().ok())
+		.unwrap_or(crate::settings::host().lua_instruction_budget);
+	let lua = crate::lua::interpreter(memory, budget, crate::lua::Overrun::Exit)?;
 	let socket_dir = socket.parent().map(Path::to_path_buf).unwrap_or_default();
 	install(&lua, ctx.clone(), root, listen, socket_dir)?;
 	let lifeline = ctx.clone();
@@ -164,8 +163,7 @@ pub(crate) fn entry_bytes(entry: &Path, expected: &str) -> mlua::Result<String> 
 	String::from_utf8(bytes).map_err(mlua::Error::external)
 }
 
-/// Run `init.lua` with the config the base handed over, as a coroutine, so its
-/// top level may send events too.
+/// Run as a coroutine, so init.lua's top level may send events too.
 async fn apply(
 	lua: Lua,
 	ctx: Ctx,
@@ -207,8 +205,6 @@ async fn apply(
 	run.await.map_err(text)
 }
 
-/// The `cartridge` global: the base's event system, streams, host queries, and
-/// the two ways a cartridge brings code of its own.
 fn install(
 	lua: &Lua,
 	ctx: Ctx,
@@ -382,9 +378,6 @@ fn install(
 	lua.globals().set("cartridge", global)
 }
 
-/// Load `lib<name>.dylib`/`<name>.so` (or `<name>.dll`/`lib<name>.dll` on
-/// Windows) from the cartridge folder (or its `target/{release,debug}` while
-/// developing) and run its `luaopen_<name>`.
 fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> {
 	let symbol = name.replace(['-', '.'], "_");
 	let files: Vec<String> = if cfg!(windows) {
@@ -419,11 +412,8 @@ fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> 
 	open.call::<mlua::Value>(name)
 }
 
-/// A protocol line from a helper or a pipe, served by the node in Rust without
-/// touching Lua, so it works while a Lua handler is busy:
-///   {"emit"|"notify"|"publish": name, "data"}
-///   {"ask": id, "bail"|"gather"|"host": name, "args"|"params"}  answered as {"ask": id, "result"|"error"}
-/// Anything else is not protocol and goes to the Lua handler.
+/// Served in Rust without touching Lua, so it still works while a Lua handler
+/// is busy. Anything not protocol goes to the Lua handler.
 async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'static) -> bool {
 	let name = |key: &str| value[key].as_str().map(str::to_owned);
 	if let Some(name) = name("emit") {
@@ -475,8 +465,8 @@ async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'st
 	true
 }
 
-/// Every line one writer sends, until it closes. Shared by both platforms so
-/// the protocol a native module speaks is the same wherever it runs.
+/// Shared by both platforms, so the protocol a native module speaks does not
+/// drift between them.
 async fn pipe_lines(
 	reader: impl tokio::io::AsyncRead + Unpin,
 	lua: Lua,
@@ -509,14 +499,8 @@ async fn pipe_lines(
 	}
 }
 
-/// A pipe whose lines a native module's own threads may write from: they reach
-/// the node in Rust, so the Lua state is never entered from those threads.
-/// Protocol lines are served by the node itself; anything else goes to `f`.
-///
-/// A FIFO on Unix and a named pipe on Windows. Both are opened by a writer with
-/// nothing but the name this returns, and both outlive any one writer: the node
-/// holds the FIFO open itself so a reader never sees EOF between writers, and
-/// on Windows takes the next connection when one ends.
+/// A native module's own threads may write lines here: they reach the node in
+/// Rust, so the Lua state is never entered from those threads.
 #[cfg(unix)]
 fn pipe(
 	lua: &Lua,
@@ -618,8 +602,6 @@ fn pipe(
 	Ok(name)
 }
 
-/// A helper program: lines of JSON in and out. `request` matches a reply by `id`;
-/// every other line reaches the `on_line` handler.
 struct Spawned {
 	/// `None` once a write timed out: a half-written line nobody can finish,
 	/// so the handle is gone the way the killed `child` is.

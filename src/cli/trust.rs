@@ -1,5 +1,3 @@
-//! `cartridge trust`: record, revoke or list what this machine will run.
-
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
@@ -22,7 +20,6 @@ pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool, ask: bool) -> R
 		return Ok(ExitCode::SUCCESS);
 	}
 	let dir = match path {
-		// A named path is the person naming what to trust.
 		Some(path) => path.to_path_buf(),
 		None => {
 			let dir = cartridge::loader::root();
@@ -68,12 +65,8 @@ pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool, ask: bool) -> R
 	Ok(ExitCode::SUCCESS)
 }
 
-/// Whether every file under `dir` is trusted, asking on the terminal when one
-/// is not. The question goes to stderr so a command's stdout stays its answer;
-/// without a terminal nothing is asked and the answer is no. Under `--yolo` the
-/// same question is the mode's one gate: a terminal is asked once to trust any
-/// untrusted files and let everything run without further prompts, and Enter
-/// accepts; without a terminal only already-trusted projects proceed.
+/// Prompts on stderr, never stdout, so a command's stdout stays its answer.
+/// Without a terminal, nothing is asked and the answer is no.
 pub(crate) fn ask(dir: &Path) -> Result<bool> {
 	let pending = trust::pending(dir)?;
 	let terminal = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
@@ -102,8 +95,7 @@ pub(crate) fn ask(dir: &Path) -> Result<bool> {
 			}
 			let _ = writeln!(err);
 		}
-		// One confirmation for the whole launch: the files it will run, and
-		// the mode that lets them do anything.
+		// This one answer both records trust and unlocks yolo's bypass.
 		let _ = write!(
 			err,
 			"YOLO mode: trust {} and let every cartridge and tool run without further prompts? [Y/n] ",

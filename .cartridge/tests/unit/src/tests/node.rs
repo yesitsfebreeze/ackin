@@ -1,7 +1,5 @@
-//! The node's side of trust: no store, only the digest the base handed over.
-
-/// The entry bytes are checked against the digest the base verified when it
-/// planned the cartridge; bytes that changed since are refused, not loaded.
+// The node re-checks the entry against the digest the base verified, not a
+// second read of its own.
 #[test]
 fn the_entry_recheck_refuses_bytes_that_changed() {
 	let dir = tempfile::tempdir().unwrap();

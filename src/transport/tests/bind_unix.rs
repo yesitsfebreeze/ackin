@@ -71,11 +71,10 @@ async fn a_rebound_stale_socket_is_also_owner_only() {
 	);
 }
 
-// A symlink we own pointing at a foreign target must refuse the bind.
 #[tokio::test]
 async fn a_symlink_to_a_foreign_target_refuses_the_bind() {
 	let Some(foreign) = super::owner_tests_unix::foreign_path() else {
-		return; // running as root: nothing here is foreign
+		return;
 	};
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("test.sock");
@@ -98,7 +97,6 @@ async fn a_symlink_to_a_foreign_target_refuses_the_bind() {
 	);
 }
 
-// A live socket served by another uid (injected) must refuse the bind.
 #[tokio::test]
 async fn a_live_endpoint_served_by_another_uid_refuses_the_bind() {
 	let dir = tempfile::tempdir().unwrap();

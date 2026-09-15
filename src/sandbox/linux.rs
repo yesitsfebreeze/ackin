@@ -1,20 +1,3 @@
-//! Linux implementation: Landlock plus a seccomp socket filter, installed by
-//! the `__confine` trampoline `sandbox::command` spawns in front of the node.
-//!
-//! The policy rides on argv, like the macOS profile: nothing is written, and
-//! unlike an environment variable it does not survive into the node's
-//! `environ`. The trampoline restricts itself and then `execve`s the command
-//! after `--`.
-//!
-//! **What this platform cannot express.** Below Landlock ABI V9 (Linux 7.1)
-//! a unix socket named by a path is not gated, so a node can connect to any
-//! socket on the machine — another project's base socket (still behind its
-//! token), the docker socket, an ssh agent. The node names the ABI it was
-//! confined at on its stderr at every start below V9. A grant naming a path
-//! that does not exist yet is refused: Landlock is inode-based.
-//! `grant.exec: ["*"]` is refused unless `grant.read` names `/`, because
-//! Landlock needs read access on a program to execute it.
-
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
@@ -29,8 +12,8 @@ use seccompiler::{
 
 use crate::loader::Grant;
 
-/// A grant compiled to what the kernel takes. On argv, like the macOS profile:
-/// nothing on disk, and unlike env it does not survive into the node's `environ`.
+/// On argv: nothing on disk, and unlike env it does not survive into the
+/// node's `environ`.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Policy {
 	read: Vec<PathBuf>,
@@ -39,8 +22,8 @@ pub(super) struct Policy {
 	net: bool,
 }
 
-/// The loader, system libraries and their data. Executable only where the
-/// loader lives — `/usr/bin` is absent, so an ungranted program still cannot run.
+/// Executable only where the loader lives — `/usr/bin` is absent, so an
+/// ungranted program still cannot run.
 const RUNTIME_READ: [&str; 6] = [
 	"/lib",
 	"/lib64",
@@ -69,9 +52,6 @@ pub(super) fn command(
 		));
 	}
 	let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-	// Exec: the node's own binary, the interpreter its shebang names and the
-	// launcher variants the platform execs behind it, what the grant named,
-	// each one's installation, and the loader's directories.
 	let mut exec: Vec<PathBuf> = vec![binary.clone()];
 	exec.extend(super::interpreters(&binary));
 	for program in &grant.exec {
@@ -103,8 +83,7 @@ pub(super) fn command(
 	}
 	exec.sort();
 	exec.dedup();
-	// Read: the machine's runtime, the cartridge folder, the paths the grant
-	// names — a write is also a read — the socket directory and the installations.
+	// A write is also a read.
 	let mut read: Vec<PathBuf> = RUNTIME_READ
 		.iter()
 		.filter(|path| Path::new(*path).exists())
@@ -117,8 +96,7 @@ pub(super) fn command(
 		read.extend(super::granted_paths(path, &root));
 	}
 	read.extend(installations);
-	// Write: only what the grant names, plus the socket directory and the
-	// devices a process cannot exist without.
+	// A process cannot exist without the devices added below.
 	let mut write: Vec<PathBuf> = grant
 		.write
 		.iter()
@@ -179,9 +157,9 @@ pub(super) fn command(
 	Ok(command)
 }
 
-/// The Landlock rules a policy compiles to, opened by hand: `path_beneath_rules`
-/// drops a path it cannot open, and a granted path that is not there must be a
-/// refusal, not a silently ungranted rule.
+/// Opened by hand: `path_beneath_rules` drops a path it cannot open, and a
+/// granted path that is not there must be a refusal, not a silently ungranted
+/// rule.
 fn rules(policy: &Policy) -> crate::Result<Vec<PathBeneath<PathFd>>> {
 	let mut rules = Vec::new();
 	for (paths, access) in [
@@ -259,8 +237,7 @@ fn filter(net: bool) -> crate::Result<BpfProgram> {
 		.map_err(|error| seccomp(&format!("{error:?}")))
 }
 
-/// Restrict this process to `policy`, then become `cmd`. Returns only on
-/// failure: a partial policy is never a silent fallback.
+/// A partial policy is never a silent fallback.
 pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::convert::Infallible> {
 	let policy: Policy = serde_json::from_str(policy)?;
 	let landlock = |error: landlock::RulesetError| crate::Error::process("landlock", error);

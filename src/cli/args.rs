@@ -1,5 +1,3 @@
-//! The ask: every subcommand and its arguments, as clap reads them.
-
 use std::path::PathBuf;
 
 use cartridge::{Error, Result};
@@ -156,7 +154,6 @@ pub(crate) enum Command {
 }
 
 impl Cli {
-	/// What clap cannot say: a flag that only some commands take.
 	pub(crate) fn check(&self) -> Result<()> {
 		if self.yolo
 			&& !matches!(

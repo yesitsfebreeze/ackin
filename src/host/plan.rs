@@ -1,5 +1,3 @@
-//! What an entry declares, settled, and the directory each node is handed.
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,12 +27,12 @@ pub struct Plan {
 }
 
 impl Plan {
-	/// Everything that changes what the other cartridges are told.
+	/// Includes each event's schema, not just its name: a schema-only change
+	/// must still register as a wiring change.
 	pub(crate) fn wiring(&self) -> (&BTreeMap<String, Event>, &[String], &[String]) {
 		(&self.events, &self.needs, &self.listen)
 	}
 
-	/// Whether this cartridge may send `name`: it defines or needs it.
 	pub(crate) fn sends(&self, name: &str) -> bool {
 		self.events.contains_key(name) || self.needs.iter().any(|n| n == name)
 	}
@@ -51,8 +49,6 @@ fn exact(keys: &[String]) -> Result<()> {
 	Ok(())
 }
 
-/// `tool.*` in `needs` names every event with that prefix another enabled
-/// entry listens to.
 fn expand(needs: Vec<String>, listened: &[String]) -> Result<Vec<String>> {
 	let mut out = Vec::new();
 	for key in needs {
@@ -69,10 +65,6 @@ fn expand(needs: Vec<String>, listened: &[String]) -> Result<Vec<String>> {
 	Ok(out)
 }
 
-/// `${config.<key>}` in needs names the event that setting holds: a cartridge
-/// whose composition chooses which key answers it — a clock, a terminal — may
-/// send what it was pointed at, and nothing else. An empty setting is "not
-/// configured" and contributes no need, so an unused hook grants nothing.
 fn configured(needs: Vec<String>, config: &serde_json::Value) -> Result<Vec<String>> {
 	let mut out = Vec::new();
 	for key in needs {
@@ -99,7 +91,6 @@ fn dedup(keys: &mut Vec<String>) {
 }
 
 impl Host {
-	/// Read an entry's declaration and settle its configuration, without running it.
 	pub(crate) fn plan(self: &Arc<Self>, entry: &Entry) -> Result<Plan> {
 		crate::loader::entries::validate(entry)?;
 		let declared = crate::loader::resolve(&self.dir.join(&entry.path))?;
@@ -147,7 +138,6 @@ impl Host {
 		})
 	}
 
-	/// Declared defaults, then the document's `config`, then the entry's.
 	fn settle_config(
 		&self,
 		declared: &Declared,
@@ -168,9 +158,6 @@ impl Host {
 		Ok(config)
 	}
 
-	/// Grant paths may start with `$PROJECT`, `$HOME` or `$TMPDIR`, or be
-	/// `${config.<key>}`, a settled config value; a relative config value is
-	/// relative to the project root, where cartridges run.
 	fn expand_grant(&self, grant: &Grant, config: &serde_json::Value) -> Result<Grant> {
 		let project = self
 			.descriptor
@@ -189,10 +176,8 @@ impl Host {
 					})?;
 				return Ok(project.join(value).to_string_lossy().into_owned());
 			}
-			// Resolved, and refused, only for a grant that names it: an unset
-			// home must not root `$HOME/...` at the cartridge root or at `/`,
-			// the way an `unwrap_or_default` would. Through `sandbox::home`,
-			// so which variable names it is decided in one place.
+			// An unset home must not root `$HOME/...` at the cartridge root or
+			// at `/`, the way an `unwrap_or_default` would.
 			if let Some(rest) = path.strip_prefix("$HOME") {
 				if rest.is_empty() || rest.starts_with('/') {
 					let home = crate::sandbox::home().filter(|home| home.is_absolute());
@@ -226,9 +211,8 @@ impl Host {
 			Ok(path.clone())
 		};
 		let all = |paths: &[String]| paths.iter().map(expand).collect::<Result<Vec<_>>>();
-		// Variable names, not paths: a `${config.<key>}` names one, a trailing
-		// `*` is a prefix, and a bare `*` would hand over every secret the
-		// operator's shell held, so it is refused here rather than at use.
+		// A bare `*` would hand over every secret the operator's shell held,
+		// so it is refused here rather than at use.
 		let env = configured(grant.env.clone(), config)?;
 		if env.iter().any(|name| name == "*") {
 			return Err(Error::Descriptor(
@@ -244,8 +228,6 @@ impl Host {
 		})
 	}
 
-	/// The token `from` presents to `to`, or to the base when `to` is `None`.
-	/// One per edge, so a listener holds nothing it could present elsewhere.
 	pub(crate) fn token(&self, from: &str, to: Option<&str>) -> String {
 		self.tokens
 			.lock()
@@ -255,8 +237,6 @@ impl Host {
 	}
 }
 
-/// Every event the plans declare, by name, with its owner; and the plans that
-/// declare one twice, with why they fail.
 pub(crate) fn catalogue(
 	plans: &[Arc<Plan>],
 ) -> (BTreeMap<String, (String, Event)>, HashMap<String, String>) {
@@ -280,8 +260,6 @@ pub(crate) fn catalogue(
 	(catalogue, clashes)
 }
 
-/// Why `plan` may not start against `catalogue`: a listened-to or needed event
-/// nobody declares.
 pub(crate) fn unmatched(
 	plan: &Plan,
 	catalogue: &BTreeMap<String, (String, Event)>,
@@ -294,7 +272,6 @@ pub(crate) fn unmatched(
 	None
 }
 
-/// Which plans listen to each event, in composition order.
 pub(crate) fn listeners(plans: &[Arc<Plan>]) -> HashMap<String, Vec<String>> {
 	let mut listeners: HashMap<String, Vec<String>> = HashMap::new();
 	for plan in plans {
@@ -320,8 +297,6 @@ fn entry(owner: &str, event: &Event, listeners: Vec<Address>) -> EventEntry {
 	}
 }
 
-/// The directory of `plan` within `plans`: listeners and tokens only for what
-/// it may send, and a token for each cartridge that may send it something.
 pub(crate) fn directory(
 	host: &Host,
 	plan: &Plan,
@@ -375,7 +350,6 @@ pub(crate) fn directory(
 	directory
 }
 
-/// What the base sends with: every event, to its active listeners, as the host.
 pub(crate) fn host_directory(
 	host: &Host,
 	active: &[Arc<Plan>],
@@ -387,8 +361,8 @@ pub(crate) fn host_directory(
 		let listeners = active
 			.iter()
 			.filter(|p| p.listen.iter().any(|n| n == name))
-			// The base answers bail/gather as a sender presenting the
-			// listener's own node token.
+			// Unlike `directory`, presents the listener's own node token: the
+			// base answers bail/gather as that listener's sender.
 			.map(|listener| Address {
 				cartridge: listener.id.clone(),
 				socket: host.socket(&listener.id),

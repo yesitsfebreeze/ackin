@@ -1,5 +1,3 @@
-//! The command line: parse, bind to the project, run one subcommand.
-
 mod args;
 mod client;
 mod host;
@@ -37,14 +35,15 @@ fn code_of(error: &Error) -> u8 {
 
 pub fn main() -> ExitCode {
 	let code = dispatch();
-	// The diagnostics writer is a thread of its own and dies with this one.
+	// Without this, buffered diagnostics are lost when the writer thread
+	// dies with this process.
 	cartridge::trace::flush();
 	code
 }
 
 fn dispatch() -> ExitCode {
-	// The trampoline restricts and execs; it must stay single-threaded and do
-	// nothing else, so it runs before the tracing runtime is even made.
+	// Must run before the tracing runtime: the trampoline execs and stays
+	// single-threaded.
 	let cli = Cli::parse();
 	if let Command::Confine { policy, command } = &cli.command {
 		let Err(error) = cartridge::sandbox::confine(policy, command);
@@ -62,8 +61,8 @@ fn dispatch() -> ExitCode {
 	}
 	let yolo = cli.yolo;
 	let outcome = cli.check().and_then(|()| match cli.command {
-		// Setup is what makes a project, so it runs where it was typed
-		// rather than in a project above it.
+		// Runs in cwd, not project::locate's ascended project: Setup makes
+		// the project, it doesn't presuppose one.
 		Command::Setup {
 			from,
 			with,
@@ -81,7 +80,7 @@ fn dispatch() -> ExitCode {
 			};
 			runtime.block_on(setup::setup(&root, &dir, ask))
 		}
-		// Before `locate`, which reads the files this approves.
+		// Must run before locate, which reads the files this approves.
 		Command::Trust {
 			path,
 			revoke,
@@ -95,9 +94,7 @@ fn dispatch() -> ExitCode {
 			let project = project::locate(cli.dir)?;
 			let runtime = tokio::runtime::Runtime::new()?;
 			let outcome = runtime.block_on(run(command, &project));
-			// Nodes are stopped by now; `mcp`'s read of stdin would hold a
-			// dropped runtime's blocking thread, so the runtime is left to die
-			// with the process instead.
+			// A plain drop would block on mcp's stdin-reading blocking thread.
 			runtime.shutdown_background();
 			outcome
 		}

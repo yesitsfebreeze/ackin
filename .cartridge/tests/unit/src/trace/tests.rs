@@ -31,7 +31,6 @@ fn the_sink_stays_bounded_by_rotating_one_generation() {
 		dir.join("cartridge.jsonl.1").exists(),
 		"no rotated generation"
 	);
-	// Reopening keeps what is there; nothing truncates at startup.
 	let reopened = Sink::file(path.clone(), 64).unwrap();
 	assert_eq!(reopened.written, live);
 	std::fs::remove_dir_all(&dir).unwrap();

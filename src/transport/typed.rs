@@ -1,9 +1,3 @@
-//! Typed request/response channels over any adapter: the Adapter seam, the
-//! newline-JSON codec, their errors, the channel pairing them, and the local
-//! endpoints (per-user unix sockets, Windows named pipes) processes find each
-//! other with. [`crate::transport::rpc::Peer`] speaks through this without
-//! knowing the wire.
-
 // ==== [error] ====
 
 use thiserror::Error;
@@ -16,10 +10,8 @@ pub enum AdapterError {
 	Eof,
 	#[error("adapter codec: {0}")]
 	Codec(#[from] CodecError),
-	// A peer answered and refused this caller.
 	#[error("adapter unauthenticated: {0}")]
 	Unauthenticated(String),
-	// This caller refused the endpoint before contacting it.
 	#[error("adapter untrusted endpoint: {0}")]
 	UntrustedEndpoint(String),
 	#[error("adapter: {0}")]
@@ -191,7 +183,6 @@ use bytes::BytesMut;
 use serde_json::Value;
 use tokio_util::codec::{Decoder, Encoder};
 
-// One JSON value per line. `with_max` caps a frame for servers that read from unauthenticated peers.
 #[derive(Default)]
 pub struct JsonEnvelopeCodec {
 	max: Option<usize>,
@@ -202,7 +193,6 @@ impl JsonEnvelopeCodec {
 		Self { max: None }
 	}
 
-	/// A codec that refuses any frame longer than `max` bytes.
 	pub fn with_max(max: usize) -> Self {
 		Self { max: Some(max) }
 	}
@@ -273,7 +263,6 @@ impl Channel {
 		Self::with_codec(adapter, JsonEnvelopeCodec::new())
 	}
 
-	/// A channel that refuses incoming frames longer than `max` bytes.
 	pub fn with_max_frame<A: Adapter>(adapter: A, max: usize) -> Self {
 		Self::with_codec(adapter, JsonEnvelopeCodec::with_max(max))
 	}
@@ -285,7 +274,6 @@ impl Channel {
 		Self { reader, writer }
 	}
 
-	/// The two halves, for a reader and a writer that run on different tasks.
 	pub fn into_split(
 		self,
 	) -> (
@@ -331,15 +319,6 @@ pub enum Endpoint {
 }
 
 impl Endpoint {
-	/// The local endpoint a path names, in whatever this platform offers. The
-	/// path *is* the identity: a base and a caller holding the same path derive
-	/// the same endpoint, so nothing has to be published for one to find the
-	/// other and there is no link on disk to keep true.
-	///
-	/// Windows has no socket in the filesystem, so the same path becomes a pipe
-	/// name through the same tag the rest of the base addresses runs by. It is
-	/// derived, never looked up: two spellings of one path are one endpoint,
-	/// and a path that does not exist yet still names its endpoint.
 	pub fn local(path: &Path) -> Self {
 		#[cfg(unix)]
 		{
@@ -409,9 +388,6 @@ pub struct NamedPipeAdapter {
 #[cfg(windows)]
 enum NamedPipeInner {
 	Server(tokio::net::windows::named_pipe::NamedPipeServer),
-	// A handed instance: on connection end this goes back to the listener's
-	// pool instead of being destroyed, since a confined node cannot make
-	// another to replace it (see `PIPE_INSTANCES`).
 	HandedServer(
 		tokio::net::windows::named_pipe::NamedPipeServer,
 		mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>,
@@ -426,9 +402,6 @@ impl NamedPipeAdapter {
 			inner: NamedPipeInner::Server(server),
 		}
 	}
-	/// From an instance the listener handed out of its pool: `split` arranges
-	/// for the instance to be disconnected and sent back on `returned` once
-	/// both halves of the connection are gone.
 	pub fn from_handed_server(
 		server: tokio::net::windows::named_pipe::NamedPipeServer,
 		returned: mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>,
@@ -553,8 +526,6 @@ impl Drop for HandedWrite {
 	}
 }
 
-/// Park this half in the shared slot, or, if the other half is already
-/// parked there, put the instance back together and hand it to the listener.
 #[cfg(windows)]
 fn reunite(
 	mine: HandedHalf,
@@ -573,11 +544,9 @@ fn reunite(
 	}
 }
 
-/// `disconnect()` discards whatever the client has not read yet, including a
-/// final reply it was sent (an auth refusal, a stop acknowledgment), so
-/// `FlushFileBuffers` waits for that read first. The wait is unbounded, hence
-/// an OS thread: inline it would stall the task dropping the last half, and on
-/// `spawn_blocking` it would hold up a runtime that is itself dropping.
+/// `disconnect()` discards what the client has not read yet (a final reply,
+/// an auth refusal), so `FlushFileBuffers` waits for that read first — on an
+/// OS thread, since the wait is unbounded and would stall a dropping runtime.
 #[cfg(windows)]
 fn return_handed_instance(
 	server: tokio::net::windows::named_pipe::NamedPipeServer,
@@ -591,13 +560,10 @@ fn return_handed_instance(
 		unsafe {
 			FlushFileBuffers(server.as_raw_handle() as _);
 		}
-		// mio maps ConnectNamedPipe's ERROR_PIPE_CONNECTED and ERROR_NO_DATA
-		// to "already connected, Ok", so a disconnect failure would hand
-		// back an instance that still looks connected: `accept` would pick
-		// it instantly, find no real peer, and busy-loop. Losing one of
-		// sixteen instances beats poisoning the pool with one like that,
-		// but it is worth knowing about: a confined node cannot make
-		// another to replace it.
+		// mio reads ConnectNamedPipe's ERROR_PIPE_CONNECTED/ERROR_NO_DATA as
+		// "already connected, Ok", so a failed disconnect would return an
+		// instance that still looks connected and makes `accept` busy-loop on
+		// it; losing the instance beats poisoning the pool with one like that.
 		if let Err(e) = server.disconnect() {
 			tracing::warn!(
 				target: "cartridge",
@@ -627,7 +593,6 @@ impl Adapter for LocalAdapter {
 	}
 }
 
-// The socket path and its target must belong to this user; checked before connecting.
 #[cfg(unix)]
 fn require_owned_by_caller(path: &Path) -> Result<(), AdapterError> {
 	use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -643,13 +608,9 @@ fn require_owned_by_caller(path: &Path) -> Result<(), AdapterError> {
 		}
 	})?;
 	let target = std::fs::metadata(path).map_err(|e| {
-		// A path that is not itself a symlink resolves to the exact file
-		// `link` above just lstat'd; if it is gone by the time this stat
-		// runs, that file was unlinked between the two calls (a restart
-		// racing this check), the same honest absence `symlink_metadata`
-		// special-cases, not a substitution. A path that *is* a symlink
-		// is different: its target missing is exactly what
-		// `a_dangling_symlink_is_refused` means to catch, race or not.
+		// A non-symlink path missing here just raced its own unlink (an honest
+		// restart, not a substitution); a symlink missing its target is exactly
+		// what `a_dangling_symlink_is_refused` catches.
 		if e.kind() == std::io::ErrorKind::NotFound && !link.file_type().is_symlink() {
 			AdapterError::Io(e)
 		} else {
@@ -681,7 +642,6 @@ fn require_peer_is_caller(adapter: &UnixStreamAdapter, path: &Path) -> Result<()
 	require_peer_uid(adapter, path, unsafe { libc::geteuid() })
 }
 
-// The expected uid is a parameter so tests can exercise the refusal.
 #[cfg(unix)]
 fn require_peer_uid(
 	adapter: &UnixStreamAdapter,
@@ -721,11 +681,9 @@ pub async fn connect(endpoint: &Endpoint) -> Result<LocalAdapter, AdapterError> 
 	}
 }
 
-// The pipe namespace is global: an unclaimed name is anyone local's to
-// create, so a client that opened it before checking would send the first
-// frame — the auth token — to whoever got there first. Checked the way
-// `require_peer_is_caller` checks a socket's peer, just later, because a
-// named pipe (unlike a socket) has no credential to read until it is open.
+// The pipe namespace is global, so an opened-but-unchecked pipe would send
+// the auth token to whoever claimed the name first; checked here, after
+// open, because a named pipe has no credential to read before then.
 #[cfg(windows)]
 fn require_pipe_served_by_caller(
 	adapter: &NamedPipeAdapter,
@@ -759,7 +717,6 @@ fn require_pipe_served_by_caller(
 	Ok(())
 }
 
-// Test seam: connect expecting a uid that is not the server's.
 #[cfg(unix)]
 #[cfg(test)]
 async fn connect_with_peer(
@@ -789,22 +746,19 @@ pub enum BindOutcome {
 pub enum BindError {
 	#[error("bind: {0}")]
 	Io(#[from] std::io::Error),
-	// Something this euid does not own holds the name.
 	#[error("bind refused: {0}")]
 	Untrusted(String),
 }
 
-// Owner-only permissions on the socket file.
 #[cfg(unix)]
 fn harden_socket(path: &Path) -> std::io::Result<()> {
 	use std::os::unix::fs::PermissionsExt;
 	std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
-// The kernel creates the socket `0777 & ~umask`; narrowing the umask across the
-// bind closes the window before `harden_socket` — 0o077 strips group and other
-// only, so a directory created inside the window keeps its owner execute bit.
-// Every umask write in the process takes this lock and restores what it read.
+// The kernel creates the socket `0777 & ~umask`, so narrowing the umask across
+// the bind closes the window before `harden_socket` runs. Every umask write
+// in the process takes this lock and restores what it read.
 #[cfg(unix)]
 static UMASK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
@@ -819,7 +773,6 @@ fn bind_owner_only(path: &Path) -> std::io::Result<tokio::net::UnixListener> {
 	bound
 }
 
-// Owner-only security descriptor for named pipes: one ACE for this process's SID.
 #[cfg(windows)]
 mod owner_only {
 	use std::io;
@@ -837,7 +790,6 @@ mod owner_only {
 		GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 	};
 
-	/// An owner-only security descriptor, freed on drop.
 	pub struct OwnerOnlySd(PSECURITY_DESCRIPTOR);
 
 	// SAFETY: the pointer is owned, never mutated after construction, and only
@@ -851,9 +803,8 @@ mod owner_only {
 			Self::from_sddl(&format!("D:P(A;;GA;;;{sid})"))
 		}
 
-		/// The same descriptor, plus one more SID that may use the pipe. A node
-		/// runs in an AppContainer with its own SID, and a pipe its parent made
-		/// for it is reachable only if that SID is on it.
+		/// A node's AppContainer has its own SID; without it on the descriptor
+		/// too, the pipe its parent made for it is unreachable.
 		pub fn shared_with(container: &str) -> io::Result<Self> {
 			let user = current_user_sid()?;
 			Self::from_sddl(&format!("D:P(A;;GA;;;{user})(A;;GA;;;{container})"))
@@ -882,7 +833,6 @@ mod owner_only {
 			self.attributes_with(false)
 		}
 
-		/// Inheritable, for a handle that is made to be handed to a child.
 		pub fn attributes_inheritable(&self) -> SECURITY_ATTRIBUTES {
 			self.attributes_with(true)
 		}
@@ -917,10 +867,6 @@ mod owner_only {
 		out
 	}
 
-	/// The SID of the user running process `pid`, read through its token.
-	/// Used to check who actually answers a claimed pipe name before the
-	/// first frame goes out: the pipe namespace is global, so the name alone
-	/// proves nothing about who is on the other end.
 	pub(super) fn user_sid_of_process(pid: u32) -> io::Result<String> {
 		// SAFETY: `pid` is whatever the caller read off the connection; a
 		// bad value just fails the call below, nothing unsafe about it.
@@ -996,7 +942,6 @@ fn create_pipe_instance(
 	}
 }
 
-// The expected peer uid is a parameter so tests can reach the refusal.
 #[cfg(unix)]
 async fn bind_unix(path: &Path, expected_peer: u32) -> Result<BindOutcome, BindError> {
 	let listener = match bind_owner_only(path) {
@@ -1005,7 +950,6 @@ async fn bind_unix(path: &Path, expected_peer: u32) -> Result<BindOutcome, BindE
 			return Err(e.into());
 		}
 		Err(_) => {
-			// The name is taken: refuse unless it is ours and either answers as ours or is stale.
 			require_owned_by_caller(path).map_err(|e| BindError::Untrusted(e.to_string()))?;
 			match UnixStreamAdapter::connect(path).await {
 				Ok(adapter) => {
@@ -1025,43 +969,27 @@ async fn bind_unix(path: &Path, expected_peer: u32) -> Result<BindOutcome, BindE
 	Ok(BindOutcome::Bound(LocalListener {
 		inner: listener,
 		socket_path: path.to_path_buf(),
+		socket_dev: socket_identity(path).ok(),
 	}))
 }
 
-/// `CreateNamedPipeW` answers these two often enough to be worth naming.
 #[cfg(windows)]
 const ERROR_ACCESS_DENIED: i32 = 5;
 #[cfg(windows)]
 const ERROR_PIPE_BUSY: i32 = 231;
 
-/// How many pipe instances a parent makes for one node. A node needs one per
-/// peer connected to it at once — the base, and each cartridge that sends to
-/// it — so this is a composition's worth with room over, and it is fixed
-/// because the node cannot make more: only its unconfined parent can.
 #[cfg(windows)]
 pub const PIPE_INSTANCES: usize = 16;
 
-/// The environment variable naming the instances a node was handed.
 #[cfg(windows)]
 pub const PIPE_HANDLES_ENV: &str = "CARTRIDGE_PIPE_HANDLES";
 
-/// Each instance's buffer. A frame is read in pieces either way, so this only
-/// decides how often.
 #[cfg(windows)]
 const PIPE_BUFFER: u32 = 64 * 1024;
 
-/// Make a node's listening pipe on its behalf, and hand back the raw handles
-/// to pass it.
-///
-/// A node runs in an AppContainer, which is denied the pipe namespace outright:
-/// it cannot create the name it is supposed to serve on, and an attempt reads
-/// as `Access is denied`. So its parent — which is not confined — creates every
-/// instance, grants the node's container SID on them, and lets the node inherit
-/// them. The node never creates a pipe and never needs to.
-///
-/// This is what `adopt` does on Unix with fd 0, for a different reason: there a
-/// successor inherits a listener to keep a socket unbroken across a restart,
-/// and here a child inherits one because it may not open its own.
+/// A node's AppContainer is denied the pipe namespace outright (`Access is
+/// denied` on any create), so its unconfined parent creates every instance
+/// here and the node only ever inherits them.
 #[cfg(windows)]
 pub fn broker(endpoint: &Endpoint, container_sid: &str) -> Result<Vec<usize>, BindError> {
 	use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
@@ -1078,11 +1006,10 @@ pub fn broker(endpoint: &Endpoint, container_sid: &str) -> Result<Vec<usize>, Bi
 	let mut handles = Vec::with_capacity(PIPE_INSTANCES);
 	for index in 0..PIPE_INSTANCES {
 		let attrs = security.attributes_inheritable();
-		// Made by hand rather than through `ServerOptions`, and this is the
-		// whole reason: tokio binds a handle it creates to *this* process's
-		// completion port, a handle belongs to one port for ever, and the node
-		// has to bind it to its own. A handle made here and registered there
-		// answers `The parameter is incorrect`, which is what it did.
+		// Raw `CreateNamedPipeW`, not `ServerOptions`: tokio binds a handle it
+		// creates to this process's completion port for good, and the node
+		// must bind its own — registering here first answered `The parameter
+		// is incorrect`.
 		//
 		// SAFETY: `wide` is NUL-terminated and `attrs` points at a descriptor
 		// `security` owns; both outlive the call.
@@ -1124,8 +1051,6 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 		}
 		#[cfg(windows)]
 		Endpoint::NamedPipe(name) => {
-			// Handed instances mean a parent made this pipe because this process
-			// may not: it serves them and creates nothing.
 			if let Some(listener) = adopt_handed(name)? {
 				return Ok(BindOutcome::Bound(listener));
 			}
@@ -1143,31 +1068,25 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 						handed_rx,
 					}))
 				}
-				// Every instance is busy, so a first instance cannot be made:
-				// something is already serving the name.
 				Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
 					Ok(BindOutcome::AlreadyRunning)
 				}
-				// `FILE_FLAG_FIRST_PIPE_INSTANCE` answers ACCESS_DENIED for two
-				// different facts: the name is already served, and this process
-				// may not create pipes at all — which is what a confined node
-				// gets, since an AppContainer has its own object namespace.
-				// Reading the first meaning into both is what made a permission
-				// failure read as contention, so the name is asked whether
-				// anything is actually there.
+				// `FILE_FLAG_FIRST_PIPE_INSTANCE` answers ACCESS_DENIED both when
+				// the name is already served and when this process (an
+				// AppContainer) simply can't create pipes; conflating the two
+				// turned a permission failure into false contention, so the name
+				// is asked directly whether anything is actually there.
 				Err(e)
 					if e.raw_os_error() == Some(ERROR_ACCESS_DENIED)
 						|| e.kind() == std::io::ErrorKind::PermissionDenied =>
 				{
 					match tokio::net::windows::named_pipe::ClientOptions::new().open(name) {
-						// Answered, or answered that every instance is busy:
-						// either way a server holds the name.
 						Ok(_) => Ok(BindOutcome::AlreadyRunning),
 						Err(busy) if busy.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
 							Ok(BindOutcome::AlreadyRunning)
 						}
-						// Nothing holds it, so the refusal was about this
-						// process and says so rather than blaming a neighbour.
+						// Nothing holds the name, so the refusal was about this
+						// process, not a neighbour.
 						Err(_) => Err(BindError::Untrusted(format!(
 							"{name}: {e}, and nothing serves that name — this \
 							 process may not create it"
@@ -1180,9 +1099,7 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 	}
 }
 
-/// The instances a parent made for this process, if it made any. Read once:
-/// a node has one pipe, and a second reader would take instances that are not
-/// its own.
+/// Read once: a second reader would take instances that are not its own.
 #[cfg(windows)]
 fn adopt_handed(name: &str) -> Result<Option<LocalListener>, BindError> {
 	let Some(handed) = std::env::var_os(PIPE_HANDLES_ENV) else {
@@ -1221,7 +1138,13 @@ fn adopt_handed(name: &str) -> Result<Option<LocalListener>, BindError> {
 	}))
 }
 
-/// Adopt fd 0 as an already-bound listener handed over by a predecessor process.
+#[cfg(unix)]
+fn socket_identity(path: &Path) -> std::io::Result<(u64, u64)> {
+	use std::os::unix::fs::MetadataExt;
+	let meta = std::fs::symlink_metadata(path)?;
+	Ok((meta.dev(), meta.ino()))
+}
+
 #[cfg(unix)]
 pub fn adopt(endpoint: &Endpoint) -> Result<LocalListener, BindError> {
 	use std::os::fd::FromRawFd;
@@ -1233,6 +1156,7 @@ pub fn adopt(endpoint: &Endpoint) -> Result<LocalListener, BindError> {
 	Ok(LocalListener {
 		inner,
 		socket_path: path.clone(),
+		socket_dev: socket_identity(path).ok(),
 	})
 }
 
@@ -1241,24 +1165,19 @@ pub struct LocalListener {
 	inner: tokio::net::UnixListener,
 	#[cfg(unix)]
 	socket_path: PathBuf,
+	#[cfg(unix)]
+	socket_dev: Option<(u64, u64)>,
 	#[cfg(windows)]
 	pipe_name: String,
-	// Kept for the life of the listener: `accept` creates the *next* instance,
-	// and an instance without this descriptor is a hole beside a locked door.
-	// `None` in a node, which was handed its instances because it may not make
-	// any — there is nothing for it to create them with, and nothing it could.
+	// `None` in a node: it was handed its instances and cannot make more, so
+	// there is nothing to create the next one with. Otherwise kept for the
+	// listener's life — `accept` uses it to create each next instance.
 	#[cfg(windows)]
 	security: Option<owner_only::OwnerOnlySd>,
 	#[cfg(windows)]
 	current: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
-	/// Instances a parent made and handed over, served in turn. Empty in a
-	/// process that makes its own.
 	#[cfg(windows)]
 	handed: Vec<tokio::net::windows::named_pipe::NamedPipeServer>,
-	/// Where a handed instance comes back to once its connection ends, so
-	/// the pool tracks instances concurrently in use rather than shrinking
-	/// for ever. Unused (nothing ever sends on it) when this listener makes
-	/// its own instances instead of serving handed ones.
 	#[cfg(windows)]
 	handed_tx: mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>,
 	#[cfg(windows)]
@@ -1267,7 +1186,6 @@ pub struct LocalListener {
 
 #[cfg(unix)]
 impl LocalListener {
-	/// A close-on-exec dup of the listening fd, for handing to a successor process.
 	pub fn dup_fd(&self) -> std::io::Result<std::os::fd::OwnedFd> {
 		use std::os::fd::AsFd;
 		self.inner.as_fd().try_clone_to_owned()
@@ -1275,7 +1193,6 @@ impl LocalListener {
 }
 
 impl LocalListener {
-	// The expected uid is a parameter so tests can reach the refusal.
 	#[cfg(unix)]
 	async fn accept_from(&mut self, expected: u32) -> Result<LocalAdapter, std::io::Error> {
 		loop {
@@ -1309,9 +1226,6 @@ impl LocalListener {
 		}
 		#[cfg(windows)]
 		{
-			// A process that makes its own instances has exactly one listening
-			// at a time, so there is one to wait on and the next is made behind
-			// it.
 			if let Some(security) = self.security.as_ref() {
 				let server = self.current.take().expect("listener uninitialised");
 				server.connect().await?;
@@ -1320,23 +1234,19 @@ impl LocalListener {
 					server,
 				)));
 			}
-			// A node's instances were all made before it started, so a
-			// finished connection goes back on `handed_rx` (see `split` on
-			// `NamedPipeInner::HandedServer`) instead of being destroyed —
-			// this node cannot make another to replace it.
+			// A node cannot make another instance to replace one, so a finished
+			// connection goes back on `handed_rx` (see `split` on
+			// `NamedPipeInner::HandedServer`) instead of being destroyed.
 			loop {
 				while let Ok(server) = self.handed_rx.try_recv() {
 					self.handed.push(server);
 				}
 				if self.handed.is_empty() {
-					// Every instance is checked out. A node's own peer count
-					// is bounded, so this clears once one of them finishes;
-					// blocking here (rather than erroring) keeps `serve`
-					// from tearing the node's live connections down over a
-					// queue that is about to drain. The channel cannot close
-					// while this runs: `self.handed_tx` is a live sender
-					// this same listener holds, plus a clone in every
-					// outstanding `HandedServer` adapter.
+					// Blocking here (rather than erroring) keeps `serve` from
+					// tearing live connections down over a queue about to
+					// drain. `self.handed_tx` is a live sender this listener
+					// holds, plus a clone in every outstanding `HandedServer`,
+					// so the channel cannot close while this waits.
 					let server = self
 						.handed_rx
 						.recv()
@@ -1345,11 +1255,9 @@ impl LocalListener {
 					self.handed.push(server);
 					continue;
 				}
-				// Idle instances are all listening at once, so a client
-				// lands on whichever the kernel picks. Waiting on one of
-				// them would be waiting for a client to guess it: every
-				// idle instance is waited on together, and the one that a
-				// client actually reached is the one that answers.
+				// Idle instances all listen at once and the kernel picks which
+				// one a client lands on, so every idle instance is waited on
+				// together rather than one at a time.
 				let pending: Vec<_> = self
 					.handed
 					.iter()
@@ -1371,8 +1279,12 @@ impl LocalListener {
 #[cfg(unix)]
 impl Drop for LocalListener {
 	fn drop(&mut self) {
-		// Best-effort cleanup so the next daemon doesn't trip the stale-sock probe.
-		let _ = std::fs::remove_file(&self.socket_path);
+		// Only unlinks if the path still names this listener's socket: a
+		// listener that outlives its stop can drop after a successor rebinds
+		// the same name, and unlink-by-path would take that one instead.
+		if self.socket_dev == socket_identity(&self.socket_path).ok() {
+			let _ = std::fs::remove_file(&self.socket_path);
+		}
 	}
 }
 

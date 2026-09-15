@@ -1,29 +1,3 @@
-//! `setup` and `doctor`: the installation tool.
-//!
-//! `setup` makes the working directory a project. It offers what it can see —
-//! cartridge folders under a directory, and the repositories the person's
-//! catalog knows — takes the ones chosen, clones or links each under the
-//! cartridge root, writes the `.cartridge/init.lua` that names them, and then
-//! lets each installed cartridge that declares a `setup` event ask what this
-//! project must decide. `doctor` asks every composed cartridge that declares a
-//! `doctor` event whether it is healthy here.
-//!
-//! The host knows no cartridge by name, so there is no list here of what a
-//! project "should" have: what setup offers is what it found, and what it
-//! writes is what was chosen. Bootstrapping is choosing.
-//!
-//! **The setup exchange.** The host sends the cartridge its `setup` event with
-//! `{"answers": {...}, "interactive": bool}` and reads back an object:
-//! `ask` is a list of `{"key", "prompt", "default"?}` the person is asked,
-//! their answers joining `answers` on the next call; `config` is the table to
-//! write under the entry's id in `config.lua`; `done` ends the exchange
-//! (an empty `ask` does too); `note` is printed as it is. Without a terminal
-//! every question takes its default, and one without a default stops the
-//! exchange and says so.
-//!
-//! **The doctor answer.** `{"ok": bool, "problems": [text]}`; anything else
-//! is reported as an answer the host did not understand.
-
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -38,20 +12,13 @@ use serde_json::{json, Map, Value};
 use super::settings::{lua_key, lua_value};
 use super::{Project, FAILED};
 
-/// What setup was asked: where to look, what to take, and whether to ask.
 pub(crate) struct Ask {
-	/// Directories holding cartridge folders. Empty: the cartridge root, or
-	/// the terminal is asked.
 	pub(crate) from: Vec<PathBuf>,
-	/// Cartridge names to take without asking.
 	pub(crate) with: Vec<String>,
-	/// Take everything offered without asking.
 	pub(crate) yes: bool,
-	/// The catalog of known repositories; absent, the person's own.
 	pub(crate) catalog: Option<PathBuf>,
 }
 
-/// One cartridge setup can offer: on disk already, or known by repository.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Candidate {
 	pub(crate) name: String,
@@ -61,20 +28,14 @@ pub(crate) struct Candidate {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Source {
-	/// A folder holding `cartridge.json`, to be linked under the root.
 	Folder(PathBuf),
-	/// A repository to clone under the root.
 	Repository(String),
 }
 
-/// The files setup writes under `.cartridge`; the folder is a project once
-/// `init.lua` exists.
 const INIT: &str = "init.lua";
 const CONFIG: &str = "config.lua";
 const IGNORE: &str = ".gitignore";
-/// The line that marks a `config.lua` setup wrote and may rewrite.
 const WRITTEN_BY_SETUP: &str = "-- Written by `cartridge setup`;";
-/// Questions a cartridge's setup may ask before the host stops asking.
 const ROUNDS: usize = 16;
 
 pub(crate) async fn setup(root: &Path, dir: &Path, ask: Ask) -> Result<ExitCode> {
@@ -167,9 +128,6 @@ pub(crate) async fn setup(root: &Path, dir: &Path, ask: Ask) -> Result<ExitCode>
 	Ok(ExitCode::SUCCESS)
 }
 
-/// Where to look when nobody said: the cartridge root if it already holds
-/// cartridges, else the directory above the project, where sibling checkouts
-/// usually sit.
 fn suggest(root: &Path, dir: &Path) -> PathBuf {
 	if !Ledger::scan(dir).is_empty() {
 		return dir.to_path_buf();
@@ -178,13 +136,11 @@ fn suggest(root: &Path, dir: &Path) -> PathBuf {
 		.map_or_else(|| root.to_path_buf(), Path::to_path_buf)
 }
 
-/// The person's catalog of known repositories: `$CARTRIDGE_HOME/catalog.json`
-/// or `~/.cartridge/catalog.json`, a map of name to `{repository, description}`.
 pub(crate) fn catalog_path() -> Result<PathBuf> {
 	Ok(cartridge::trust::home()?.join("catalog.json"))
 }
 
-/// The catalog read, in name order. A missing catalog is empty, not an error.
+/// A missing catalog is empty, not an error.
 pub(crate) fn read_catalog(path: &Path) -> Result<Vec<Candidate>> {
 	if !path.is_file() {
 		return Ok(Vec::new());
@@ -209,9 +165,7 @@ pub(crate) fn read_catalog(path: &Path) -> Result<Vec<Candidate>> {
 	Ok(out)
 }
 
-/// Every top-level cartridge folder under the directories named, then every
-/// catalog entry not already on disk, in name order. Nested cartridges belong
-/// to their parent and are not offered on their own.
+/// Nested cartridges belong to their parent and are not offered on their own.
 pub(crate) fn candidates(from: &[PathBuf], catalog: Vec<Candidate>) -> Vec<Candidate> {
 	let mut found: Vec<Candidate> = Vec::new();
 	for dir in from {
@@ -242,9 +196,6 @@ pub(crate) fn candidates(from: &[PathBuf], catalog: Vec<Candidate>) -> Vec<Candi
 	found
 }
 
-/// The list, then the question, until the answer picks: numbers or names
-/// take those, `all` and `none` say so, and anything else narrows the list
-/// to the candidates it matches and asks again.
 fn choose(prompt: &mut Prompt, candidates: &[Candidate]) -> Result<Vec<Candidate>> {
 	let mut shown: Vec<usize> = (0..candidates.len()).collect();
 	loop {
@@ -288,7 +239,6 @@ pub(crate) fn matches(candidate: &Candidate, query: &str) -> bool {
 		.all(|q| chars.any(|h| h == q))
 }
 
-/// The candidates the names pick, every name accounted for.
 fn select_named(candidates: &[Candidate], wanted: &[String]) -> Result<Vec<Candidate>> {
 	let mut chosen: Vec<Candidate> = Vec::new();
 	for name in wanted {
@@ -305,9 +255,7 @@ fn select_named(candidates: &[Candidate], wanted: &[String]) -> Result<Vec<Candi
 	Ok(chosen)
 }
 
-/// An answer at the prompt over the candidates shown: `all`, `none`, or
-/// numbers and names mixed. Anything else is an error the prompt turns into
-/// a narrowing.
+/// Anything else is an error the prompt turns into a narrowing.
 pub(crate) fn select(
 	candidates: &[Candidate],
 	shown: &[usize],
@@ -334,9 +282,6 @@ pub(crate) fn select(
 	select_named(candidates, &names)
 }
 
-/// Bring each chosen cartridge under the root: a repository is cloned into
-/// `<root>/<name>`, a folder elsewhere is linked as `<root>/<name>`, and one
-/// already under the root is left as it is. Returns the folders installed.
 pub(crate) fn install(dir: &Path, chosen: &[Candidate]) -> Result<Vec<(String, PathBuf)>> {
 	std::fs::create_dir_all(dir).map_err(|e| Error::file(dir, e))?;
 	let mut installed = Vec::new();
@@ -402,15 +347,9 @@ pub(crate) fn install(dir: &Path, chosen: &[Candidate]) -> Result<Vec<(String, P
 	Ok(installed)
 }
 
-/// Link `place` at `original`. A cartridge is installed by a link on every
-/// platform, so that what a project holds is a name for the cartridge rather
-/// than a copy of it that can drift.
-///
-/// Windows needs the symlink privilege for this, which a user has under
-/// Developer Mode and otherwise does not. There is no unprivileged link with
-/// the same meaning — a junction is not relative and not a file — so the
-/// refusal says what to turn on rather than quietly installing a copy that
-/// would stop tracking the cartridge it came from.
+/// Never falls back to a junction or a copy on Windows: a junction is not
+/// relative and a copy stops tracking the cartridge, so a missing symlink
+/// privilege is a refusal, not a silent substitute.
 fn link(original: &Path, place: &Path, target: &Path) -> Result<()> {
 	#[cfg(unix)]
 	{
@@ -433,8 +372,6 @@ fn link(original: &Path, place: &Path, target: &Path) -> Result<()> {
 	}
 }
 
-/// Write the descriptor that names what was installed. Returns one line per
-/// file written, for the person watching.
 pub(crate) fn write(
 	root: &Path,
 	dir: &Path,
@@ -457,9 +394,7 @@ pub(crate) fn write(
 	}
 	init.push_str("}\n");
 	put(&descriptor.join(INIT), &init, &mut done)?;
-	// A config.lua the tree already held is kept, but not trusted: the next
-	// command's refusal names it, the person reviews it, `cartridge trust`
-	// decides.
+	// A pre-existing config.lua is kept but not trusted here.
 	let kept_config = descriptor.join(CONFIG).exists();
 	if !kept_config {
 		put(
@@ -476,8 +411,7 @@ pub(crate) fn write(
 			&mut done,
 		)?;
 	}
-	// Choosing is the approval: the descriptor setup wrote, and each cartridge
-	// it linked or cloned — nothing else the tree happens to hold.
+	// Trust only what setup itself wrote or installed, nothing else the tree holds.
 	let mut wrote = vec![descriptor.join(INIT)];
 	if !kept_config {
 		wrote.push(descriptor.join(CONFIG));
@@ -489,8 +423,7 @@ pub(crate) fn write(
 	Ok(done)
 }
 
-/// `config.lua` as setup writes it: one table per entry id, rendered from
-/// data, marked so a later setup knows it may rewrite it.
+/// Keeps the WRITTEN_BY_SETUP header so a later setup knows it may rewrite this file.
 fn render_config(config: &Map<String, Value>) -> String {
 	let mut out = format!(
 		"{WRITTEN_BY_SETUP} what each cartridge's setup answered, one table per\n\
@@ -507,8 +440,6 @@ fn render_config(config: &Map<String, Value>) -> String {
 	out
 }
 
-/// Let each installed cartridge that declares a `setup` event ask what this
-/// project must decide, and write what it hands back into `config.lua`.
 async fn run_setups(
 	root: &Path,
 	dir: &Path,
@@ -619,10 +550,8 @@ async fn run_setups(
 	Ok(report)
 }
 
-/// Nothing the exchange may have written is approved: the only file that may
-/// still be pending is the `config.lua` setup is about to rewrite. A
-/// cartridge that ran with a write grant could have rewritten another
-/// manifest, and the record after the write would have approved it.
+/// A write-granted cartridge could have rewritten another manifest during
+/// the exchange; recording trust afterward would silently approve it.
 fn strayed(root: &Path, spare: &Path) -> Result<()> {
 	if let Some(file) = cartridge::trust::pending(root)?
 		.iter()
@@ -637,7 +566,6 @@ fn strayed(root: &Path, spare: &Path) -> Result<()> {
 	Ok(())
 }
 
-/// Start the descriptor, let `ask` send to it, and stop it whatever `ask` answered.
 async fn started<T, F, Fut>(host: &Arc<Host>, ask: F) -> Result<T>
 where
 	F: FnOnce() -> Fut,
@@ -645,8 +573,7 @@ where
 {
 	let body = async {
 		host.reconcile().await?;
-		// A cartridge still starting when the budget runs out answers with an
-		// error of its own, which says more than a timeout here would.
+		// No timeout here: a still-starting cartridge answers with its own error.
 		host.settled(cartridge::settings::host().verify_timeout())
 			.await;
 		ask().await
@@ -659,8 +586,6 @@ where
 	result
 }
 
-/// One question on the terminal, the default offered, the answer read as
-/// JSON when it parses and as text otherwise.
 fn answer(id: &str, question: &Value, default: &Value) -> Result<Value> {
 	let prompt = question["prompt"]
 		.as_str()
@@ -678,8 +603,6 @@ fn answer(id: &str, question: &Value, default: &Value) -> Result<Value> {
 	Ok(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_owned())))
 }
 
-/// `doctor`: every composed cartridge that declares a `doctor` event is asked
-/// whether it is healthy here, and the answers are printed one per line.
 pub(crate) async fn doctor(project: &Project) -> Result<ExitCode> {
 	let host = super::host::host(project, None)?;
 	let composed = host.entries().map_err(|e| {
@@ -762,14 +685,12 @@ fn names(candidates: &[&Candidate]) -> String {
 	}
 }
 
-/// A path made absolute lexically and cleaned of `.` and `..`, so two
-/// spellings of one directory compare equal without touching the disk.
+/// Lexical, not `fs::canonicalize`: two spellings of one directory must
+/// compare equal without touching the disk.
 fn absolute(path: &Path) -> PathBuf {
 	cartridge::trust::absolute_clean(path)
 }
 
-/// `to` as seen from inside `from`: the link text that keeps working when
-/// the whole tree moves.
 fn relative(from: &Path, to: &Path) -> PathBuf {
 	let mut f = from.components().peekable();
 	let mut t = to.components().peekable();
@@ -797,7 +718,6 @@ fn plural(n: usize, what: &str) -> String {
 	}
 }
 
-/// Questions on the terminal, answers off stdin.
 struct Prompt;
 
 impl Prompt {

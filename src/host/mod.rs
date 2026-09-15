@@ -1,7 +1,3 @@
-//! The host: reads the descriptor, starts every cartridge on its own socket, hands
-//! each its directory, and stops them. Calls and events between cartridges do
-//! not pass through it.
-
 mod plan;
 mod process;
 mod run;
@@ -11,6 +7,7 @@ mod watch;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::transport::cartridge::{Ctx, Directory, Outcome};
 use crate::transport::rpc::{Incoming, Peer};
@@ -92,18 +89,11 @@ pub struct Host {
 	pub(crate) dir: PathBuf,
 	pub(crate) descriptor: PathBuf,
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
-	/// The project's socket directory: `host.sock` and one subdirectory per run.
 	sockets: PathBuf,
-	/// This run's subdirectory of `sockets`, where its nodes' sockets live.
 	nodes: PathBuf,
 	host_token: String,
 	tokens: Mutex<HashMap<(String, Option<String>), String>>,
-	/// Each node's own credential, the one its socket grants as `Host`. A node
-	/// token names authority over that node only: the host socket refuses it,
-	/// so a leaked one is worth that node's own socket, which the child holds
-	/// anyway.
 	node_tokens: Mutex<HashMap<String, String>>,
-	/// What the base sends events with: the nodes' own send path, as the host.
 	ctx: Ctx,
 	slots: Mutex<Vec<Slot>>,
 	listeners: Mutex<HashMap<String, Vec<String>>>,
@@ -123,7 +113,6 @@ impl Drop for Host {
 }
 
 impl Host {
-	/// `dir` holds the cartridges, `descriptor` the `init.lua` and `config.lua`.
 	pub fn new(dir: impl Into<PathBuf>, descriptor: impl Into<PathBuf>) -> Result<Arc<Self>> {
 		let dir: PathBuf = dir.into();
 		let descriptor: PathBuf = descriptor.into();
@@ -163,37 +152,27 @@ impl Host {
 		&self.host_token
 	}
 
-	/// The node's own credential, minted when it was started. Empty when the
-	/// map ever misses, which it cannot: a token is written before the node is.
+	/// Never actually empty: a token is written before the node is.
 	pub(crate) fn node_token(&self, id: &str) -> String {
 		self.node_tokens.lock().get(id).cloned().unwrap_or_default()
 	}
 
-	/// Asked to stop, by the command line.
 	pub fn stop_signal(&self) -> tokio_util::sync::CancellationToken {
 		self.stop.clone()
 	}
 
-	/// Resolves once the base was asked to stop.
 	pub async fn stopped(&self) {
 		self.stop.cancelled().await;
 	}
 
-	/// The base's own socket: nodes and the command line reach it here. It sits
-	/// in the socket directory with the cartridges' own, which is the only
-	/// directory a node is granted, and its name is derived from the descriptor
-	/// rather than from this run — so a caller that knows the project knows the
-	/// address, and nothing has to be published to tell it.
 	pub fn socket_path(&self) -> PathBuf {
 		self.sockets.join("host.sock")
 	}
 
-	/// The socket a cartridge serves on, stable for the life of this host.
 	pub fn socket(&self, id: &str) -> PathBuf {
 		self.nodes.join(socket::file_name(id))
 	}
 
-	/// State changes of every cartridge, as `{id, state, error}`.
 	pub fn lifecycle(&self) -> broadcast::Receiver<Value> {
 		self.lifecycle.subscribe()
 	}
@@ -247,7 +226,6 @@ impl Host {
 			.collect()
 	}
 
-	/// Load the descriptor and bring the running cartridges in line with it.
 	pub async fn reconcile(self: &Arc<Self>) -> Result<()> {
 		let _op = self.op.lock().await;
 		if self.inner.get().is_none() {
@@ -318,8 +296,6 @@ impl Host {
 		Ok(())
 	}
 
-	/// Recompute the event catalogue and every directory, fail what declares
-	/// twice or names an unknown event, and tell running cartridges what changed.
 	async fn rewire(self: &Arc<Self>) {
 		let updates: Vec<(Peer, Directory)> = {
 			let mut slots = self.slots.lock();
@@ -368,13 +344,16 @@ impl Host {
 			updates
 		};
 		for (peer, directory) in updates {
-			let _ = peer
-				.call("directory", json!({ "directory": directory }))
-				.await;
+			// A wedged node must not stall every reload, stop and status; an
+			// unanswered directory is picked up next round instead.
+			let _ = tokio::time::timeout(
+				Duration::from_millis(500),
+				peer.call("directory", json!({ "directory": directory })),
+			)
+			.await;
 		}
 	}
 
-	/// Start every waiting cartridge whose needs are all served, wave by wave.
 	async fn start_ready(self: &Arc<Self>) {
 		loop {
 			let ready: Vec<(String, Arc<Plan>, Directory, u64)> = {
@@ -459,7 +438,6 @@ impl Host {
 		process::start(self, plan, directory, generation).await
 	}
 
-	/// A cartridge process ended on its own.
 	pub(crate) fn exited(&self, id: &str, generation: u64, why: String) {
 		let mut slots = self.slots.lock();
 		if let Some(slot) = slots
@@ -493,7 +471,6 @@ impl Host {
 		}
 	}
 
-	/// Stop and start one cartridge again from its current sources.
 	pub async fn replace(self: &Arc<Self>, id: &str) -> Result<()> {
 		let _op = self.op.lock().await;
 		self.replace_locked(id).await
@@ -508,6 +485,13 @@ impl Host {
 			.map(|s| s.entry.clone())
 			.ok_or_else(|| Error::Reload(format!("`{id}` is not an enabled entry")))?;
 		let plan = self.plan(&entry);
+		let was_active = {
+			let slots = self.slots.lock();
+			slots
+				.iter()
+				.find(|s| s.entry.id == id)
+				.is_some_and(|s| s.state == State::Active)
+		};
 		self.stop_slot(id).await;
 		let rewire = {
 			let mut slots = self.slots.lock();
@@ -517,10 +501,13 @@ impl Host {
 				.expect("slot of a known entry");
 			match &plan {
 				Ok(plan) => {
-					let rewire = slot
-						.plan
-						.as_ref()
-						.is_none_or(|old| old.wiring() != plan.wiring());
+					// Rewired whenever the slot was inactive before, or the
+					// wiring (schema included) changed — cheap when it didn't.
+					let rewire = !was_active
+						|| slot
+							.plan
+							.as_ref()
+							.is_none_or(|old| old.wiring() != plan.wiring());
 					slot.sources = plan.sources.iter().cloned().map(Source::new).collect();
 					slot.plan = Some(Arc::new(plan.clone()));
 					slot.state = State::Waiting;
@@ -541,7 +528,6 @@ impl Host {
 		plan.map(|_| ())
 	}
 
-	/// Replace every cartridge whose sources are among `paths` and changed.
 	pub(crate) async fn replace_changed(self: &Arc<Self>, paths: &[PathBuf]) {
 		let _op = self.op.lock().await;
 		let ids: Vec<String> = self
@@ -563,7 +549,6 @@ impl Host {
 		}
 	}
 
-	/// Stop every cartridge.
 	pub async fn stop(&self) {
 		let _op = self.op.lock().await;
 		let ids: Vec<String> = self
@@ -579,13 +564,15 @@ impl Host {
 				slot.state = State::Waiting;
 			}
 		}
-		// Every caller of this is on its way out, and a task may still hold
-		// this base past the runtime's end, so the files go now, not on drop.
+		// A task may still hold this base past the runtime's end, so the files
+		// go now, not on drop.
 		self.unpublish();
 	}
 
-	/// Take this run's nodes' sockets out of the socket directory.
+	// Synchronous: the listener's own deferred drop must not decide whether a
+	// successor can bind the name this host served.
 	fn unpublish(&self) {
+		let _ = std::fs::remove_file(self.socket_path());
 		let _ = std::fs::remove_dir_all(&self.nodes);
 	}
 
@@ -597,8 +584,6 @@ impl Host {
 			.and_then(|s| s.running.as_ref().map(|r| r.peer.clone()))
 	}
 
-	/// The host's sender, its directory brought up to date with what is active,
-	/// once `name` is known to be declared and `data` fits its schema.
 	fn sender(&self, name: &str, data: &Value) -> Result<Ctx> {
 		let directory = {
 			let slots = self.slots.lock();
@@ -625,7 +610,6 @@ impl Host {
 		Ok(self.ctx.clone())
 	}
 
-	/// Send `name` to one active cartridge and take its answer.
 	pub async fn send_to(&self, id: &str, name: &str, data: Value) -> Result<Value> {
 		let ctx = self.sender(name, &data)?;
 		let outcome = ctx
@@ -646,10 +630,16 @@ impl Host {
 		}
 	}
 
-	/// Ask listeners in order; the first non-null answer.
 	pub async fn bail(&self, name: &str, data: Value) -> Result<Option<Value>> {
 		let ctx = self.sender(name, &data)?;
-		if ctx.events()[name].listeners.is_empty() {
+		// Shared with other requests that may swap it between `sender`'s set
+		// and this read, so never index it: unknown or empty both mean nobody
+		// can answer.
+		if ctx
+			.events()
+			.get(name)
+			.is_none_or(|e| e.listeners.is_empty())
+		{
 			return Err(Error::Unavailable {
 				key: name.to_owned(),
 				why: "no active listener".into(),
@@ -658,13 +648,11 @@ impl Host {
 		ctx.bail(name, data).await.map_err(Error::Remote)
 	}
 
-	/// Send an event to every active listener; one outcome per listener.
 	pub async fn gather(&self, name: &str, data: Value) -> Result<Vec<Outcome>> {
 		let ctx = self.sender(name, &data)?;
 		ctx.gather(name, data).await.map_err(Error::Remote)
 	}
 
-	/// The cartridge a token was issued to.
 	pub(crate) fn caller(&self, token: &str) -> Option<String> {
 		self.tokens
 			.lock()
@@ -673,7 +661,6 @@ impl Host {
 			.map(|((id, _), _)| id.clone())
 	}
 
-	/// Enabled cartridges that are running, with their folders.
 	pub fn cartridges(&self) -> Value {
 		let slots = self.slots.lock();
 		Value::Array(
@@ -692,7 +679,6 @@ impl Host {
 		)
 	}
 
-	/// The composition as data: every entry, its state, wiring, sources and context paths.
 	pub fn snapshot(&self) -> Value {
 		let listeners = self.listeners.lock().clone();
 		let slots = self.slots.lock();
@@ -753,7 +739,6 @@ impl Host {
 		})
 	}
 
-	/// A new connection to an active cartridge, authenticated as the host.
 	pub async fn open(&self, id: &str) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
 		if self.peer_of(id).is_none() {
 			return Err(Error::Unavailable {
@@ -774,8 +759,12 @@ pub(crate) async fn connect(
 			.await
 			.map_err(|e| Error::Remote(format!("{}: {e}", socket.display())))?;
 	let (peer, incoming) = Peer::spawn(adapter, None);
-	peer.call("auth", json!({ "token": token }))
+	// A node that bound its socket but never serves keeps `auth` waiting
+	// forever without this timeout.
+	let auth = async { peer.call("auth", json!({ "token": token })).await };
+	tokio::time::timeout(crate::settings::host().startup_timeout(), auth)
 		.await
+		.map_err(|_| Error::Remote(format!("{}: auth timed out", socket.display())))?
 		.map_err(|e| Error::Remote(e.message))?;
 	Ok((peer, incoming))
 }

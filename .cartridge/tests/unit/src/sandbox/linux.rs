@@ -1,9 +1,8 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 
-/// The policy travels as `<base binary> __confine <json> -- <cmd…>`: the shape
-/// `confine` parses, with the trampoline on `cmd[0]` — the one caller's binary —
-/// and never `current_exe()`, which under the test harness is the harness.
+/// The trampoline reads `cmd[0]`, the caller's own binary, never
+/// `current_exe()` — which under this test harness would be the harness.
 #[test]
 fn the_trampoline_carries_the_policy_on_argv() {
 	let fixture = tempfile::tempdir().unwrap();
@@ -34,8 +33,8 @@ fn the_trampoline_carries_the_policy_on_argv() {
 	);
 }
 
-/// A granted path that is not there refuses, naming the path: Landlock is
-/// inode-based, and a dropped rule would be a silently ungranted one.
+/// Landlock is inode-based: a dropped rule for a missing path would be a
+/// silently ungranted one, so this refuses instead.
 #[test]
 fn a_grant_naming_a_path_that_is_not_there_is_refused() {
 	let missing = tempfile::tempdir()
@@ -57,9 +56,8 @@ fn a_grant_naming_a_path_that_is_not_there_is_refused() {
 	);
 }
 
-/// The socket filter is all or nothing: a nonempty `net` allows the internet
-/// domains, an empty one allows unix sockets only. (Applying the filter would
-/// restrict the test process; the two programs differ.)
+// Applying the filter would restrict this test process; comparing the two
+// generated programs instead.
 #[test]
 fn an_empty_net_grant_allows_only_unix_sockets() {
 	let fields = |program: BpfProgram| -> Vec<(u16, u8, u8, u32)> {
@@ -74,8 +72,6 @@ fn an_empty_net_grant_allows_only_unix_sockets() {
 	);
 }
 
-/// `exec: ["*"]` without the read-everything grant is refused, naming the grant
-/// that makes it honest.
 #[test]
 fn an_exec_everything_grant_without_reading_everything_is_refused() {
 	let root = std::env::temp_dir().join("cartridge-sandbox-linux");

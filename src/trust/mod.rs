@@ -1,11 +1,3 @@
-//! Project trust: the SHA-256 a person approved for every file the base
-//! evaluates or takes authority from — project `*.lua` and every
-//! `cartridge.json`, because the manifest carries the grant. The digest is the
-//! file's bytes alone, so `shasum -a 256 <file>` reproduces any stored value.
-//!
-//! A node reads no store: the base hands it the digest of the entry it
-//! verified, and the node refuses an entry whose bytes no longer match.
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -13,13 +5,10 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
-/// One directory, as the person who ran `cartridge trust` approved it.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct Record {
 	pub project: PathBuf,
-	/// Seconds since the epoch.
 	pub trusted_at: u64,
-	/// Canonical path to the file's SHA-256, lowercase hex.
 	pub files: BTreeMap<PathBuf, String>,
 }
 
@@ -27,16 +16,12 @@ fn hex(bytes: &[u8]) -> String {
 	bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// `$CARTRIDGE_HOME`, else `~/.cartridge`: the store, the global `config.lua`
-/// and the catalog. Creates nothing. Refuses a home that is not absolute: a
-/// relative one resolves against the project, making the project "the
-/// person's own" and putting the store inside it.
+/// Refuses a home that is not absolute: a relative one would resolve against
+/// the project, making the project "the person's own" and putting the store
+/// inside it.
 pub fn home() -> Result<PathBuf> {
 	let home = match std::env::var_os("CARTRIDGE_HOME") {
 		Some(home) => PathBuf::from(home),
-		// The person's own home is `crate::sandbox`'s to name: on Windows it
-		// is `%USERPROFILE%`, and `HOME` alone would leave the store, the
-		// global `config.lua` and the catalog unresolvable there.
 		None => crate::sandbox::home().map_or_else(PathBuf::new, |home| home.join(".cartridge")),
 	};
 	match home.is_absolute() {
@@ -64,8 +49,7 @@ fn ensure_store() -> Result<PathBuf> {
 	}
 	builder.create(&store).map_err(|e| Error::file(&store, e))?;
 	// `DirBuilder` leaves an existing, wider store as it is. Windows has no
-	// mode to narrow: the store lives under the user's own profile, which the
-	// system already keeps private to them, and no wider parent is created here.
+	// mode to narrow it.
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
@@ -75,26 +59,21 @@ fn ensure_store() -> Result<PathBuf> {
 	Ok(store)
 }
 
-/// The record for a canonical directory.
 fn record_path(dir: &Path) -> Result<PathBuf> {
 	let key = hex(&Sha256::digest(dir.as_os_str().as_encoded_bytes()));
 	Ok(store()?.join(format!("{key}.json")))
 }
 
-/// The bytes' SHA-256, lowercase hex.
 pub fn digest_bytes(bytes: &[u8]) -> String {
 	hex(&Sha256::digest(bytes))
 }
 
-/// The file's SHA-256, lowercase hex.
 pub fn digest(path: &Path) -> Result<String> {
 	Ok(digest_bytes(
 		&std::fs::read(path).map_err(|e| Error::file(path, e))?,
 	))
 }
 
-/// The project a refusal should name: the nearest ancestor holding a descriptor,
-/// by the rule of [`crate::loader::root`], else the file's own folder.
 fn nearest_project(file: &Path) -> PathBuf {
 	file.ancestors()
 		.skip(1)
@@ -104,9 +83,9 @@ fn nearest_project(file: &Path) -> PathBuf {
 		.to_path_buf()
 }
 
-/// Whether the file is the person's own: under the home as written or as
-/// resolved. As-written matters because a dotfiles setup symlinks its config
-/// elsewhere, and the paths here are spelled by the base itself.
+/// Checked as-written, not just resolved: a dotfiles setup symlinks its
+/// config elsewhere, and a file under the home only in its resolved form
+/// would wrongly skip the trust check.
 fn own(path: &Path, file: &Path) -> Result<bool> {
 	let home = home()?;
 	Ok(
@@ -115,11 +94,8 @@ fn own(path: &Path, file: &Path) -> Result<bool> {
 	)
 }
 
-/// Refuse a file no trusted directory above it recorded with its current hash,
-/// and hand back the bytes checked — the same read, so a caller that goes on
-/// to use the file's contents never opens it a second, unchecked time. Any
-/// ancestor's record authorises, so a nested record never shadows a fresher
-/// outer one.
+/// Hands back the bytes checked — the same read — so a caller never opens the
+/// file a second, unchecked time (TOCTOU).
 pub fn verify(path: &Path) -> Result<Vec<u8>> {
 	let bytes = std::fs::read(path).map_err(|e| Error::file(path, e))?;
 	let file = path.canonicalize().map_err(|e| Error::file(path, e))?;
@@ -129,10 +105,6 @@ pub fn verify(path: &Path) -> Result<Vec<u8>> {
 	Ok(bytes)
 }
 
-/// Whether the file sits under a directory the walk never records, between the
-/// project root and the file, so `cartridge trust` cannot fix its refusal.
-/// Directories above the project — a tempdir's `.tmp…`, a home's dotfiles —
-/// are not project source.
 fn unwalked(project: &Path, file: &Path) -> bool {
 	file.strip_prefix(project).is_ok_and(|rel| {
 		rel.ancestors().skip(1).any(|dir| {
@@ -145,7 +117,6 @@ fn unwalked(project: &Path, file: &Path) -> bool {
 	})
 }
 
-/// The canonical file against every record above it.
 fn checked(file: &Path, digest: &str) -> Result<()> {
 	let mut refusal = None;
 	for dir in file.ancestors().skip(1) {
@@ -153,10 +124,8 @@ fn checked(file: &Path, digest: &str) -> Result<()> {
 		let Ok(text) = std::fs::read_to_string(&at) else {
 			continue;
 		};
-		// A record cut short mid-write is a refusal with a remedy, not an
-		// opaque JSON error. It only becomes the answer if nothing else
-		// authorises, so the walk goes on: a corrupt nested record must not
-		// shadow a valid outer one.
+		// Keeps walking past a corrupt record instead of returning here: a
+		// valid outer record must still be able to authorise.
 		let Ok(record) = serde_json::from_str::<Record>(&text) else {
 			refusal.get_or_insert((dir.to_path_buf(), "has an unreadable trust record"));
 			continue;
@@ -185,13 +154,13 @@ fn checked(file: &Path, digest: &str) -> Result<()> {
 	})
 }
 
-/// A file's text, once it is trusted — hashed once, for the bytes it returns.
+/// Hashed once, for the bytes it returns.
 pub fn read(path: &Path) -> Result<String> {
 	String::from_utf8(verify(path)?).map_err(|e| Error::file(path, std::io::Error::other(e)))
 }
 
-/// Every file the trust set names, lexically: nothing is evaluated, no link is
-/// followed, and build output is not project source.
+/// No link is followed: a symlink into a directory outside the project must
+/// not pull untrusted files into it as project source.
 fn collect(dir: &Path, into: &mut Vec<PathBuf>) -> Result<()> {
 	for entry in std::fs::read_dir(dir).map_err(|e| Error::file(dir, e))? {
 		let entry = entry.map_err(|e| Error::file(dir, e))?;
@@ -213,7 +182,6 @@ fn collect(dir: &Path, into: &mut Vec<PathBuf>) -> Result<()> {
 	Ok(())
 }
 
-/// Approve a directory as it is now, replacing any earlier record of it.
 pub fn record(dir: &Path) -> Result<Record> {
 	let mut found = Vec::new();
 	collect(
@@ -223,10 +191,8 @@ pub fn record(dir: &Path) -> Result<Record> {
 	record_files(dir, &found)
 }
 
-/// Approve exactly the named files as they are now, under one directory,
-/// replacing any earlier record of it. The caller says what it approves:
-/// setup records what it wrote and chose, not what a tree happens to hold.
-/// Every file must live under `dir`; a missing one is an error, not a skip.
+/// A missing file is an error, not a skip: silently trusting less than the
+/// caller approved would be worse than failing loud.
 pub fn record_files(dir: &Path, files: &[PathBuf]) -> Result<Record> {
 	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
 	let files = files
@@ -260,7 +226,6 @@ pub fn record_files(dir: &Path, files: &[PathBuf]) -> Result<Record> {
 	Ok(record)
 }
 
-/// The files under a directory `verify` would refuse right now.
 pub fn pending(dir: &Path) -> Result<Vec<PathBuf>> {
 	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
 	let mut found = Vec::new();
@@ -269,10 +234,8 @@ pub fn pending(dir: &Path) -> Result<Vec<PathBuf>> {
 	Ok(found)
 }
 
-/// A path made absolute lexically and cleaned of `.` and `..`, so two
-/// spellings of one directory compare equal without touching the disk. The
-/// one implementation of this cleaning: `setup::absolute` (a binary, which
-/// may call into this lib) calls it rather than keeping its own copy.
+/// The one implementation of this cleaning: `setup::absolute` calls it rather
+/// than keeping its own copy.
 pub fn absolute_clean(path: &Path) -> PathBuf {
 	let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
 	let mut out = PathBuf::new();
@@ -288,19 +251,15 @@ pub fn absolute_clean(path: &Path) -> PathBuf {
 	out
 }
 
-/// The canonical spelling of a path that may no longer exist: the deepest
-/// existing ancestor resolved, the rest joined on, so a deleted `/var/…`
-/// still matches the record `/private/var/…`.
+/// The deepest existing ancestor resolved, the rest joined on: a deleted
+/// `/var/…` must still match a record stored as `/private/var/…`.
 fn resolved(dir: &Path) -> Result<PathBuf> {
 	if let Ok(canonical) = dir.canonicalize() {
 		return Ok(canonical);
 	}
-	// Absolute, then lexically cleaned of `.` and `..`: a bare relative name
-	// (`old-proj`, deleted, run from its parent) would otherwise pop straight
-	// to an empty path, and `absolute` alone leaves a literal `..` in place
-	// (it normalises only `.`) — a path ending in `..` has no `file_name`, so
-	// the walk below would end on itself before reaching an existing
-	// ancestor to canonicalise.
+	// Lexically cleaned of `.` and `..`: `absolute` alone normalises only
+	// `.`, and a path ending in a literal `..` has no `file_name`, so the walk
+	// below would stop before reaching an existing ancestor.
 	let cleaned = absolute_clean(dir);
 	let mut rest = Vec::new();
 	let mut existing = cleaned.clone();
@@ -322,10 +281,6 @@ fn resolved(dir: &Path) -> Result<PathBuf> {
 	Ok(cleaned)
 }
 
-/// Forget a directory and every record beneath it, without needing the
-/// directory on disk — a deleted project is untrusted by its absolute
-/// spelling. Zero when nothing matched.
-///
 /// Matched on [`project_of`] rather than on a whole [`Record`], so a record
 /// too stale to parse is still removed instead of being left behind.
 pub fn revoke(dir: &Path) -> Result<usize> {
@@ -340,8 +295,7 @@ pub fn revoke(dir: &Path) -> Result<usize> {
 	Ok(gone)
 }
 
-/// Every record in the store, as its file and its text. A store nothing has
-/// written yet holds none; a file that cannot be read is not a record.
+/// A file that cannot be read is not a record.
 fn stored() -> Result<Vec<(PathBuf, String)>> {
 	let store = store()?;
 	let entries = match std::fs::read_dir(&store) {
@@ -370,7 +324,6 @@ fn project_of(text: &str) -> Option<PathBuf> {
 		.map(PathBuf::from)
 }
 
-/// Every directory this machine trusts, by path.
 pub fn list() -> Result<Vec<Record>> {
 	let mut records: Vec<Record> = stored()?
 		.iter()

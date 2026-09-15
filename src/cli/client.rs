@@ -1,5 +1,3 @@
-//! Commands that talk to the running host over its socket.
-
 use std::process::ExitCode;
 
 use cartridge::transport::rpc::Incoming;
@@ -8,7 +6,6 @@ use serde_json::{json, Value};
 
 use super::Project;
 
-/// One request, its answer printed.
 pub(crate) async fn ask(project: &Project, method: &str, params: Value) -> Result<ExitCode> {
 	let (peer, _incoming) = cartridge::host::socket::client(&project.descriptor).await?;
 	let answer = peer
@@ -21,7 +18,6 @@ pub(crate) async fn ask(project: &Project, method: &str, params: Value) -> Resul
 	Ok(ExitCode::SUCCESS)
 }
 
-/// Print every event on a channel until the host goes away.
 pub(crate) async fn follow(
 	project: &Project,
 	channel: &str,
@@ -39,10 +35,6 @@ pub(crate) async fn follow(
 	Ok(ExitCode::SUCCESS)
 }
 
-/// The host already serving this project, for a command to join rather than
-/// start a second one beside it: the address is taken, and what the command
-/// wants — an event answered, a launch rendered, MCP lines served — the
-/// running host answers just as well.
 pub(crate) async fn served(
 	project: &Project,
 ) -> Option<(
@@ -54,7 +46,6 @@ pub(crate) async fn served(
 		.ok()
 }
 
-/// `cartridge.bail` on the running host: the first answer, null when none.
 pub(crate) async fn bail(
 	peer: &cartridge::transport::rpc::Peer,
 	name: &str,

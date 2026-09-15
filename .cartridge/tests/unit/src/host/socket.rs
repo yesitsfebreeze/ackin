@@ -1,10 +1,8 @@
 #[cfg(unix)]
 use super::*;
 
-/// A mode and an owner are POSIX facts. What the directory guarantees on
-/// Windows is the profile ACL the system puts on it, which is not this
-/// function's to assert; what it does refuse there — a name that is not the
-/// directory it claims — is covered below on both.
+/// Mode and owner are POSIX facts; Windows guarantees the same directory
+/// only through its profile ACL, not through this assertion.
 #[cfg(unix)]
 #[test]
 fn an_owner_only_directory_is_created_and_repaired() {
@@ -64,7 +62,7 @@ fn a_run_directory_is_owner_only() {
 fn each_run_owns_its_node_directory_and_a_dead_run_is_swept() {
 	let tmp = tempfile::tempdir().unwrap();
 	let run = run_dir(tmp.path()).unwrap();
-	let mut gone = std::process::Command::new("true").spawn().unwrap();
+	let mut gone = std::process::Command::new("/usr/bin/true").spawn().unwrap();
 	let dead = gone.id();
 	gone.wait().unwrap();
 	let stale = run.join(dead.to_string());

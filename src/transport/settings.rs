@@ -1,24 +1,15 @@
-//! Declared settings: a map of dotted key to `{type, default, optional, min, max, doc}`,
-//! the defaults it implies, and configuration laid over them field by field.
-
 use std::collections::BTreeMap;
 
 use serde_json::{json, Value as Json};
 
-/// What a setting's value must be. Narrow on purpose: a type that cannot be
-/// checked before a cartridge starts is not a setting, it is an argument.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
-	/// A whole number. `min`/`max` bound it; a bound is inclusive.
 	Integer,
-	/// A real number, bounded the same way.
 	Number,
 	Boolean,
 	String,
-	/// An ordered list. Replaced wholesale by an overriding layer.
 	List,
-	/// A nested table whose own keys are not individually declared.
 	Table,
 }
 
@@ -34,7 +25,6 @@ impl Kind {
 		}
 	}
 
-	/// Whether a value is of this kind.
 	fn holds(self, value: &Json) -> bool {
 		match self {
 			Kind::Integer => value.is_i64() || value.is_u64(),
@@ -47,24 +37,18 @@ impl Kind {
 	}
 }
 
-/// One declared key. Read straight off `cartridge.json`, so a misspelled field
-/// is an error at load rather than a silently ignored intention.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
 	#[serde(rename = "type")]
 	pub kind: Kind,
-	/// The value when no layer names the key.
 	pub default: Json,
-	/// Whether "nothing" is one of this key's values.
 	#[serde(default)]
 	pub optional: bool,
-	/// Inclusive bounds, for `integer` and `number` only.
 	#[serde(default)]
 	pub min: Option<f64>,
 	#[serde(default)]
 	pub max: Option<f64>,
-	/// What the key does, in one line. `cartridge settings` prints it.
 	#[serde(default)]
 	pub doc: Option<String>,
 }
@@ -103,15 +87,12 @@ impl Spec {
 		Ok(())
 	}
 
-	/// The declaration itself as data, for `cartridge settings --json` and for
-	/// anything else that wants to render the surface without re-reading it.
 	pub fn describe(&self) -> Json {
 		let mut out = json!({"type": self.kind.name(), "default": self.default});
 		let map = out.as_object_mut().expect("object");
 		if self.optional {
 			map.insert("optional".into(), json!(true));
 		}
-		// A bound on an integer reads as an integer.
 		let bound = |n: f64| match n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 {
 			true => json!(n as i64),
 			false => json!(n),
@@ -140,11 +121,9 @@ fn describe(value: &Json) -> &'static str {
 	}
 }
 
-/// A cartridge's declared surface: dotted key to declaration, ordered so two
-/// listings of the same cartridge read the same way.
+/// Ordered so two listings of the same cartridge read the same way.
 pub type Specs = BTreeMap<String, Spec>;
 
-/// Lay `over` on top of `base`, field by field.
 pub fn merge(base: &mut Json, over: Json) {
 	match (base, over) {
 		(Json::Object(base), Json::Object(over)) => {
@@ -166,13 +145,10 @@ pub fn merge(base: &mut Json, over: Json) {
 	}
 }
 
-/// Follow a dotted key into a table. `None` where any step is missing or is not
-/// a table, which is the same answer as "nothing configured it".
 pub fn get<'a>(value: &'a Json, key: &str) -> Option<&'a Json> {
 	key.split('.').try_fold(value, |at, step| at.get(step))
 }
 
-/// Write a dotted key into a table, creating the tables on the way down.
 pub fn set(value: &mut Json, key: &str, leaf: Json) {
 	if !value.is_object() {
 		*value = json!({});
@@ -196,39 +172,27 @@ pub fn set(value: &mut Json, key: &str, leaf: Json) {
 	}
 }
 
-/// The dotted keys `key` sits inside, outermost first: `owner.timeout_ms`
-/// yields `owner`. The key itself is not one of them.
 fn enclosing(key: &str) -> impl Iterator<Item = &str> {
 	key.match_indices('.').map(|(at, _)| &key[..at])
 }
 
-/// Whether `key` lies inside a declared table that is not there.
 fn absent(specs: &Specs, key: &str, settled: Option<&Json>) -> bool {
 	enclosing(key).any(|outer| match specs.get(outer) {
+		// Settling reads what the layers left; declaring has no layers yet.
 		Some(spec) if spec.optional => match settled {
-			// Settling: the table is whatever the layers left, and only a table
-			// that is really there admits its own keys.
 			Some(out) => get(out, outer).is_none_or(Json::is_null),
-			// Declaring: nothing has been laid over the defaults yet.
 			None => spec.default.is_null(),
 		},
 		_ => false,
 	})
 }
 
-/// The variable `--yolo` fills, set by the command before the host loads. A
-/// cartridge that declares a `yolo` setting has it turned on by the flag, over
-/// whatever a file says; a cartridge that declares none is untouched. Automatic
-/// execution is a property of the run, so it is named by the command and never
-/// by a configuration file.
 pub const YOLO_ENV: &str = "CARTRIDGE_YOLO";
 
-/// Whether this process was started with `--yolo`.
 pub fn yolo() -> bool {
 	std::env::var(YOLO_ENV).is_ok_and(|value| value == "1")
 }
 
-/// Every declared default, as the table a configuration lays itself over.
 pub fn defaults(specs: &Specs) -> Json {
 	let mut out = json!({});
 	for (key, spec) in specs {
@@ -240,17 +204,16 @@ pub fn defaults(specs: &Specs) -> Json {
 	out
 }
 
-/// Fill `config` with what it does not name and refuse what it names wrongly.
 pub fn apply(specs: &Specs, config: Json, at: &str) -> Result<Json, String> {
 	let mut out = defaults(specs);
 	merge(&mut out, config);
 	for (key, spec) in specs {
-		// Specs are ordered, so a table is settled before the keys inside it and
-		// `absent` reads the answer the layers actually left, not the default.
+		// Specs are ordered: a table settles before the keys inside it, so
+		// `absent` reads what the layers actually left, not the default.
 		if absent(specs, key, Some(&out)) {
 			continue;
 		}
-		// A layer may name a key as `null`, which [`merge`] reads as "back to the default" and removes.
+		// `merge` reads a layer's `null` as "back to the default" and removes it.
 		if get(&out, key).is_none() {
 			set(&mut out, key, spec.default.clone());
 		}
@@ -260,8 +223,6 @@ pub fn apply(specs: &Specs, config: Json, at: &str) -> Result<Json, String> {
 	Ok(out)
 }
 
-/// Configured keys no declaration mentions, dotted, sorted. The migration
-/// checklist: a cartridge is fully on settings exactly when this is empty.
 pub fn undeclared(specs: &Specs, config: &Json) -> Vec<String> {
 	fn walk(at: &Json, prefix: &str, specs: &Specs, out: &mut Vec<String>) {
 		let Some(map) = at.as_object() else {
@@ -275,7 +236,8 @@ pub fn undeclared(specs: &Specs, config: &Json) -> Vec<String> {
 			if specs.contains_key(&dotted) {
 				continue;
 			}
-			// A table may still be the *inside* of a declared dotted key, so descend before calling it undeclared; only a leaf with nothing declared under it is one.
+			// A table may itself be inside a declared dotted key; descend before
+			// calling it undeclared.
 			let inside = specs.keys().any(|k| k.starts_with(&format!("{dotted}.")));
 			match value.is_object() && inside {
 				true => walk(value, &dotted, specs, out),
@@ -289,7 +251,6 @@ pub fn undeclared(specs: &Specs, config: &Json) -> Vec<String> {
 	out
 }
 
-/// What a cartridge's own document declares, as the complete table of defaults its code can read without a host.
 pub fn declared(document: &str) -> Json {
 	#[derive(serde::Deserialize)]
 	struct Document {

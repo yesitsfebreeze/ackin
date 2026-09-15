@@ -2,8 +2,6 @@ use super::*;
 use crate::transport::typed::InprocAdapter;
 use std::time::Duration;
 
-/// A server that answers `echo` with its params, `slow` after a delay, `fail`
-/// with an application error, and drops `drop` unanswered.
 fn server(adapter: InprocAdapter) -> Peer {
 	let (peer, mut incoming) = Peer::spawn(adapter, None);
 	tokio::spawn(async move {

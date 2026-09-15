@@ -1,6 +1,5 @@
 use super::*;
 
-/// A project of this test's own, under the binary's one trust home.
 fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
 	crate::tests::home();
 	let dir = tempfile::tempdir().unwrap();
@@ -145,8 +144,8 @@ fn a_nested_record_does_not_shadow_a_fresh_outer_one() {
 	verify(&dir.path().join("cart/init.lua")).unwrap();
 }
 
-/// An empty or relative CARTRIDGE_HOME (or an empty HOME) must refuse, not
-/// silently turn trust off by making the project "the person's own".
+// An empty or relative CARTRIDGE_HOME (or an empty HOME) must refuse, not
+// silently turn trust off by making the project "the person's own".
 #[test]
 fn a_relative_or_empty_home_is_refused_rather_than_trust_disabling() {
 	let bin = crate::tests::built(&["--bin", "cartridge"]);
@@ -174,8 +173,7 @@ fn a_relative_or_empty_home_is_refused_rather_than_trust_disabling() {
 	}
 }
 
-/// `read` hashes the bytes it returns: a file that changed after it was
-/// trusted is refused by the same check, not by a second read of the disk.
+// `read` hashes the bytes it returns, not a second read of the disk.
 #[test]
 fn read_refuses_a_file_that_changed_after_it_was_trusted() {
 	let dir = project(&[("x.lua", "return {}\n")]);
@@ -188,9 +186,9 @@ fn read_refuses_a_file_that_changed_after_it_was_trusted() {
 	);
 }
 
-/// A dotfiles setup symlinks the global config outside the home; the home
-/// exemption must accept the file as the base spells it, not only as the
-/// kernel resolves it.
+// A dotfiles setup symlinks the global config outside the home; the home
+// exemption must accept the file as the base spells it, not as the kernel
+// resolves it.
 #[cfg(unix)]
 #[test]
 fn a_global_config_symlinked_out_of_the_home_still_passes() {
@@ -202,8 +200,6 @@ fn a_global_config_symlinked_out_of_the_home_still_passes() {
 	let _ = std::fs::remove_file(&link);
 }
 
-/// The bare-Lua branch of `resolve` passes the gate: an untrusted entry is
-/// refused before it is evaluated.
 #[test]
 fn an_untrusted_bare_lua_entry_is_refused_at_its_resolve() {
 	let dir = project(&[("x.lua", "return {}")]);
@@ -213,7 +209,6 @@ fn an_untrusted_bare_lua_entry_is_refused_at_its_resolve() {
 	assert!(refused.contains("is in no trusted project"), "{refused}");
 }
 
-/// A deleted project is still untrusted: revoke works without the directory.
 #[test]
 fn a_deleted_project_can_still_be_untrusted() {
 	let dir = project(&[(".cartridge/init.lua", "return {}")]);
@@ -228,10 +223,8 @@ fn a_deleted_project_can_still_be_untrusted() {
 		.all(|record| record.project != canonical));
 }
 
-/// A deleted project is still untrusted by a path relative to the shell's
-/// own working directory, not only by its absolute spelling — the bare-name
-/// case `resolved`'s cleaning exists for (`cd ~/projects && cartridge trust
-/// --revoke old-proj`, run after `rm -rf old-proj`).
+// Also untrusted by a path relative to the shell's own working directory,
+// not only by its absolute spelling.
 #[test]
 fn a_deleted_project_is_untrusted_by_a_relative_path() {
 	let dir = project(&[(".cartridge/init.lua", "return {}")]);
@@ -261,7 +254,6 @@ fn a_deleted_project_is_untrusted_by_a_relative_path() {
 		.all(|record| record.project != canonical));
 }
 
-/// Revoking a project takes its nested records with it.
 #[test]
 fn revoking_a_project_takes_its_nested_records() {
 	let dir = project(&[(".cartridge/init.lua", "return {}"), ("cart/init.lua", "")]);
@@ -272,8 +264,6 @@ fn revoking_a_project_takes_its_nested_records() {
 	assert!(refused.contains("run `cartridge trust"), "{refused}");
 }
 
-/// A file under a directory the walk never records is told the one action
-/// that works, not a `cartridge trust` that cannot fix it.
 #[test]
 fn a_file_under_a_skipped_directory_names_the_real_dead_end() {
 	let dir = project(&[(".cartridge/init.lua", "return {}"), ("target/x.lua", "")]);

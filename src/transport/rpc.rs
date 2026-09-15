@@ -1,22 +1,3 @@
-//! JSON-RPC 2.0 over one connection.
-//!
-//! A [`Peer`] owns a connection's reader and writer tasks. Calls made through
-//! it run concurrently: each request gets a fresh id and waits on its own
-//! reply, so a slow answer never holds up the next call. Requests and
-//! notifications the other side sends arrive on the [`Incoming`] receiver
-//! [`Peer::spawn`] returns; a [`Request`] is answered through
-//! [`Request::reply`], and one dropped unanswered is answered with an internal
-//! error, so the caller is never left waiting.
-//!
-//! Both queues are bounded. A caller waits for room to send; the reader stops
-//! reading while [`Incoming`] is full, so a server that falls behind slows its
-//! sender instead of growing. A notification or reply that finds the outgoing
-//! queue full closes the connection: the other side is not reading.
-//!
-//! Framing is one JSON object per line ([`crate::transport::typed::JsonEnvelopeCodec`]).
-//! Every frame written carries `"jsonrpc": "2.0"`; frames read are accepted with
-//! or without it.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -34,19 +15,14 @@ pub const INVALID_REQUEST: i64 = -32600;
 pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
 pub const INTERNAL_ERROR: i64 = -32603;
-/// The handler ran and failed; the message is its error.
 pub const APPLICATION_ERROR: i64 = -32000;
-/// No `auth`, a wrong token, or a request outside the token's grant.
 pub const UNAUTHORIZED: i64 = -32001;
-/// The server does not provide the key or event asked for.
 pub const NOT_PROVIDED: i64 = -32002;
 /// Local only, never on the wire: the connection is gone.
 pub const CLOSED: i64 = -32003;
 
-/// Frames a connection queues in each direction before it pushes back.
 pub const QUEUE: usize = 1024;
 
-/// A JSON-RPC error object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error)]
 #[error("{message}")]
 pub struct Error {
@@ -88,7 +64,6 @@ struct Inner {
 	next: AtomicU64,
 	closed: AtomicBool,
 	stop: CancellationToken,
-	/// Cancelled once the writer has flushed and shut its half.
 	flushed: CancellationToken,
 }
 
@@ -105,8 +80,6 @@ impl Inner {
 	}
 }
 
-/// One end of a JSON-RPC connection. Clones share the connection; dropping
-/// the last clone closes it.
 #[derive(Clone)]
 pub struct Peer {
 	inner: Arc<Inner>,
@@ -123,13 +96,11 @@ impl Drop for Guard {
 	}
 }
 
-/// What the other side sent that is not a reply.
 pub enum Incoming {
 	Request(Request),
 	Notification { method: String, params: Value },
 }
 
-/// A request waiting for its answer.
 pub struct Request {
 	pub method: String,
 	pub params: Value,
@@ -138,7 +109,6 @@ pub struct Request {
 }
 
 impl Request {
-	/// Answer the request. Consumes it, so it is answered once.
 	pub fn reply(mut self, result: Result<Value, Error>) {
 		if let Some(connection) = self.connection.take() {
 			connection.push(response(&self.id, result));
@@ -161,8 +131,7 @@ impl Drop for Request {
 }
 
 impl Inner {
-	/// Queue a frame without waiting; a full queue means the other side stopped
-	/// reading, and the connection is closed.
+	/// A full queue means the other side stopped reading, and the connection is closed.
 	fn push(&self, frame: Value) -> bool {
 		match self.out.try_send(frame) {
 			Ok(()) => true,
@@ -183,9 +152,8 @@ fn response(id: &Value, result: Result<Value, Error>) -> Value {
 }
 
 impl Peer {
-	/// Take over a connection. Frames longer than `max_frame` bytes, when
-	/// given, close it: the limit is what a server that reads a token from an
-	/// unauthenticated peer needs.
+	/// Frames longer than `max_frame` bytes, when given, close it: the limit is what
+	/// a server that reads a token from an unauthenticated peer needs.
 	pub fn spawn<A: Adapter>(
 		adapter: A,
 		max_frame: Option<usize>,
@@ -274,7 +242,6 @@ impl Peer {
 		)
 	}
 
-	/// Call `method` and wait for its result.
 	pub async fn call(&self, method: &str, params: Value) -> Result<Value, Error> {
 		let id = self.inner.next.fetch_add(1, Ordering::SeqCst);
 		let (tx, rx) = oneshot::channel();
@@ -295,8 +262,6 @@ impl Peer {
 		result
 	}
 
-	/// Send a notification; nothing comes back. A full queue closes the
-	/// connection and fails the notification.
 	pub fn notify(&self, method: &str, params: Value) -> Result<(), Error> {
 		if self.is_closed()
 			|| !self
@@ -312,18 +277,14 @@ impl Peer {
 		self.inner.closed.load(Ordering::SeqCst)
 	}
 
-	/// Resolves once the connection is gone.
 	pub async fn closed(&self) {
 		self.inner.stop.cancelled().await;
 	}
 
-	/// Resolves once the connection is gone and every frame queued before the
-	/// close has been written.
 	pub async fn flushed(&self) {
 		self.inner.flushed.cancelled().await;
 	}
 
-	/// Close the connection: waiting calls fail, queued frames are flushed.
 	pub fn close(&self) {
 		self.inner.close();
 	}

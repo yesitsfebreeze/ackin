@@ -1,37 +1,3 @@
-//! Windows implementation: an AppContainer, entered by the `__confine`
-//! trampoline `sandbox::command` spawns in front of the node.
-//!
-//! The policy rides on argv, like the macOS profile and the Linux one:
-//! nothing is written, and unlike an environment variable it does not survive
-//! into the node's environment.
-//!
-//! **Why a trampoline here too.** An AppContainer is a property of the token a
-//! process is created with, not something a running process can enter, so it
-//! cannot be applied the way Landlock restricts the caller. It has to be
-//! passed to `CreateProcessW` through a proc-thread attribute list, which
-//! `std::process::Command` cannot express on stable Rust. The trampoline is
-//! the base binary: it grants, creates the confined child, waits for it, and
-//! exits with the child's code. Unlike the Linux trampoline it does not
-//! disappear into the node — it stays as the node's parent for the child's
-//! whole life, because the grants below have to be taken back.
-//!
-//! **What this platform cannot express.** `grant.net` names hosts, and an
-//! AppContainer capability is all-or-nothing per capability, so a non-empty
-//! `grant.net` means the `internetClient` and `privateNetworkClientServer`
-//! capabilities and an empty one means neither. That is the same gap the
-//! other two platforms have, in the same place.
-//!
-//! **What this platform does that the others do not.** Landlock and
-//! `sandbox-exec` are pure: the policy lives in the process and nothing on
-//! disk changes. An AppContainer grants by writing an ACE for the container's
-//! SID onto each granted path, so confining here *mutates the filesystem*.
-//! The trampoline takes every ACE back when the child exits. A trampoline
-//! that is killed outright leaks its ACEs, so the container name is derived
-//! from the cartridge root and is therefore stable: the next start of the
-//! same cartridge re-grants the same ACEs to the same SID rather than
-//! accumulating new ones, and the leak is bounded by the number of granted
-//! paths, not by the number of starts.
-
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -67,8 +33,7 @@ use windows_sys::Win32::System::Threading::{
 
 use crate::loader::Grant;
 
-/// A grant compiled to what this platform takes. On argv, like the macOS
-/// profile: nothing on disk, and unlike env it does not survive into the
+/// On argv: nothing on disk, and unlike env it does not survive into the
 /// node's environment.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Policy {
@@ -76,16 +41,15 @@ pub(super) struct Policy {
 	write: Vec<PathBuf>,
 	exec: Vec<PathBuf>,
 	net: bool,
-	/// The AppContainer moniker, derived from the cartridge root so that the
-	/// same cartridge always confines into the same container.
+	/// Derived from the cartridge root: the same cartridge always confines
+	/// into the same container.
 	container: String,
 }
 
-/// The capabilities a non-empty `grant.net` buys. Outbound to the internet and
-/// to the local network; an AppContainer has no network at all without them.
+/// An AppContainer has no network at all without them.
 const NET_CAPABILITIES: [&str; 2] = ["internetClient", "privateNetworkClientServer"];
 
-/// A nul-terminated UTF-16 string, as every `W` entry point wants it.
+/// As every `W` entry point wants it.
 fn wide(text: impl AsRef<OsStr>) -> Vec<u16> {
 	text.as_ref().encode_wide().chain(Some(0)).collect()
 }
@@ -98,9 +62,8 @@ pub(super) fn command(
 ) -> std::io::Result<std::process::Command> {
 	let binary = Path::new(&cmd[0]).canonicalize()?;
 	let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-	// Exec: the node's own binary, what the grant named, and each one's
-	// installation. There is no loader directory to add: the system image is
-	// already readable to every AppContainer through ALL APPLICATION PACKAGES.
+	// There is no loader directory to add: the system image is already
+	// readable to every AppContainer through ALL APPLICATION PACKAGES.
 	let mut exec: Vec<PathBuf> = vec![binary.clone()];
 	exec.extend(super::interpreters(&binary));
 	for program in &grant.exec {
@@ -120,8 +83,7 @@ pub(super) fn command(
 	exec.extend(installations.iter().cloned());
 	exec.sort();
 	exec.dedup();
-	// Read: the cartridge folder, what the grant names — a write is also a
-	// read — the socket directory and the installations.
+	// A write is also a read.
 	let mut read: Vec<PathBuf> = vec![root.clone()];
 	for path in grant.read.iter().chain(grant.write.iter()) {
 		read.extend(super::granted_paths(path, &root));
@@ -164,15 +126,13 @@ pub(super) fn command(
 	Ok(command)
 }
 
-/// The container moniker for a cartridge root. Stable across starts, so the
-/// ACEs a leaked trampoline left behind are re-granted rather than added to.
-/// An AppContainer name is capped at 64 characters; this is 26.
+/// Stable across starts, so the ACEs a leaked trampoline left behind are
+/// re-granted rather than added to. An AppContainer name is capped at 64
+/// characters; this is 26.
 fn container_name(root: &Path) -> String {
 	format!("cartridge-{}", crate::transport::typed::path_tag(root))
 }
 
-/// The container SID a node confined under `root` will run as, as a string.
-///
 /// The parent needs it before the node exists: a pipe the node will serve on
 /// has to name that SID, because only the parent can create one and only the
 /// container can use it.
@@ -204,8 +164,7 @@ pub(crate) fn container_sid_for(root: &Path) -> crate::Result<String> {
 	Ok(out)
 }
 
-/// A SID that is freed when it goes out of scope. Both of the derive entry
-/// points hand back a SID the caller owns.
+/// Both of the derive entry points hand back a SID the caller owns.
 struct Sid(PSID);
 
 impl Drop for Sid {
@@ -218,9 +177,8 @@ impl Drop for Sid {
 	}
 }
 
-/// The container's SID, creating the profile the first time this cartridge is
-/// confined. An existing profile is not an error: the moniker is deliberately
-/// stable, so every start after the first lands here.
+/// An existing profile is not an error: the moniker is deliberately stable,
+/// so every start after the first lands here.
 fn container_sid(name: &str) -> crate::Result<Sid> {
 	let name = wide(name);
 	let mut psid: PSID = std::ptr::null_mut();
@@ -249,9 +207,9 @@ fn container_sid(name: &str) -> crate::Result<Sid> {
 	Ok(Sid(psid))
 }
 
-/// The SIDs for one named capability. `DeriveCapabilitySidsFromName` hands back
-/// two `LocalAlloc`ed arrays; only the capability SIDs are wanted, and both
-/// arrays and every SID in them belong to the caller.
+/// `DeriveCapabilitySidsFromName` hands back two `LocalAlloc`ed arrays; only
+/// the capability SIDs are wanted, and both arrays and every SID in them
+/// belong to the caller.
 fn capability_sids(name: &str) -> Vec<PSID> {
 	let name = wide(name);
 	let mut group_sids: *mut PSID = std::ptr::null_mut();
@@ -291,11 +249,10 @@ fn capability_sids(name: &str) -> Vec<PSID> {
 	out
 }
 
-/// Grant or revoke one access mask for `sid` on `path`. Windows has no way to
-/// say "this path and nothing under it" for a directory a child must traverse,
-/// so a directory grant inherits: the ACE is written with
-/// `SUB_CONTAINERS_AND_OBJECTS_INHERIT`, which is the same shape as Landlock's
-/// path-beneath rule and the seatbelt's subpath clause.
+/// Windows has no way to say "this path and nothing under it" for a directory
+/// a child must traverse, so a directory grant inherits: the ACE is written
+/// with `SUB_CONTAINERS_AND_OBJECTS_INHERIT`, which is the same shape as
+/// Landlock's path-beneath rule and the seatbelt's subpath clause.
 fn ace(path: &Path, sid: PSID, rights: u32, grant: bool) -> crate::Result<()> {
 	let name = wide(path);
 	let mut dacl: *mut ACL = std::ptr::null_mut();
@@ -370,9 +327,9 @@ fn ace(path: &Path, sid: PSID, rights: u32, grant: bool) -> crate::Result<()> {
 	Ok(())
 }
 
-/// Every (path, rights) pair a policy grants. Read carries no execute, so
-/// `grant.read` does not become `grant.exec`; a write is also a read, matching
-/// what the document promises and what the other two platforms do.
+/// Read carries no execute, so `grant.read` does not become `grant.exec`; a
+/// write is also a read, matching what the document promises and what the
+/// other two platforms do.
 fn grants(policy: &Policy) -> Vec<(&Path, u32)> {
 	let mut out = Vec::new();
 	for path in &policy.read {
@@ -387,9 +344,9 @@ fn grants(policy: &Policy) -> Vec<(&Path, u32)> {
 	out
 }
 
-/// Restrict `cmd` to `policy` and become its parent. Unlike the Linux
-/// trampoline this one returns only on failure *to start*: once the child is
-/// running it waits, takes its grants back and exits with the child's code.
+/// Unlike the Linux trampoline this one returns only on failure *to start*:
+/// once the child is running it waits, takes its grants back and exits with
+/// the child's code.
 pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::convert::Infallible> {
 	let policy: Policy = serde_json::from_str(policy)?;
 	let sid = container_sid(&policy.container)?;
@@ -430,9 +387,8 @@ pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::conver
 	std::process::exit(code as i32)
 }
 
-/// Take back every ACE this trampoline wrote. A revoke that fails is reported
-/// and does not stop the others: one path left granted must not leave the rest
-/// granted too.
+/// A revoke that fails is reported and does not stop the others: one path
+/// left granted must not leave the rest granted too.
 fn revoke(granted: &[(&Path, u32)], sid: PSID) {
 	for (path, rights) in granted {
 		if let Err(error) = ace(path, sid, *rights, false) {
@@ -441,9 +397,8 @@ fn revoke(granted: &[(&Path, u32)], sid: PSID) {
 	}
 }
 
-/// Create the confined child. The trampoline's own standard handles are the
-/// child's, so the host's pipes reach the node through this process without
-/// it reading a byte of them.
+/// The trampoline's own standard handles are the child's, so the host's pipes
+/// reach the node through this process without it reading a byte of them.
 fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_INFORMATION> {
 	let fail = |what: &str| {
 		crate::Error::process(
@@ -545,9 +500,9 @@ fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_IN
 	Ok(process)
 }
 
-/// `cmd` as one command line. `CreateProcessW` takes a string, not a vector,
-/// so each argument is quoted the way the C runtime parses it back: backslashes
-/// double only where they run into the closing quote.
+/// `CreateProcessW` takes a string, not a vector, so each argument is quoted
+/// the way the C runtime parses it back: backslashes double only where they
+/// run into the closing quote.
 fn command_line(cmd: &[String]) -> String {
 	let mut out = String::new();
 	for (index, argument) in cmd.iter().enumerate() {

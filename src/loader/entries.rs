@@ -1,6 +1,3 @@
-//! The descriptor: every installed cartridge as a disabled entry, `init.lua` over
-//! them, and the configuration files laid over each entry.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -20,7 +17,6 @@ pub(crate) fn validate(entry: &Entry) -> Result<()> {
 }
 
 impl Host {
-	/// One disabled entry per installed top-level cartridge, keyed by its ledger path.
 	fn derived(&self) -> Vec<Entry> {
 		crate::ledger::Ledger::scan(&self.dir)
 			.entries()
@@ -34,9 +30,6 @@ impl Host {
 			.collect()
 	}
 
-	/// The ledger's entries, overridden and extended by `init.lua`, with
-	/// `~/.cartridge/config.lua` and the project's `config.lua` laid over each
-	/// entry's config.
 	pub fn entries(self: &Arc<Self>) -> Result<Vec<Entry>> {
 		let solo = self.solo.lock().clone();
 		let is_solo = solo.is_some();
@@ -56,8 +49,8 @@ impl Host {
 				entries
 			}
 		};
-		// The checks below cover the solo list too: `Host::verify_one` builds
-		// those ids from ledger paths, which collide the same way.
+		// Covers the solo list too: `Host::verify_one` builds those ids from
+		// ledger paths, which collide the same way.
 		let mut ids = std::collections::HashSet::new();
 		let mut sockets = std::collections::HashMap::new();
 		for entry in &entries {
@@ -68,11 +61,9 @@ impl Host {
 					entry.id
 				)));
 			}
-			// An id must be unique as a socket file name too: two that differ
-			// only in the characters `file_name` folds to `_`, or only in case
-			// (a case-insensitive filesystem and a pipe name fold it), share
-			// one socket, and the second node to start would rebind the first
-			// node's live one.
+			// Two ids that fold to the same socket name (case, or the chars
+			// `file_name` turns to `_`) share one socket; the second node to
+			// start would rebind the first node's live one.
 			let socket = crate::host::socket::file_name(&entry.id);
 			if let Some(other) = sockets.insert(socket.to_ascii_lowercase(), &entry.id) {
 				return Err(Error::Descriptor(format!(
@@ -111,7 +102,6 @@ impl Host {
 		Ok(entries)
 	}
 
-	/// Every configurable surface of the descriptor, read from documents only.
 	pub fn settings(self: &Arc<Self>) -> Result<Vec<SettingsInfo>> {
 		Ok(self
 			.entries()?
@@ -141,7 +131,7 @@ impl Host {
 			.collect())
 	}
 
-	/// Every entry's declarations. Disabled entries are read, never evaluated.
+	/// Disabled entries are read, never evaluated.
 	pub fn manifest(self: &Arc<Self>) -> Result<Vec<CartridgeInfo>> {
 		Ok(self
 			.entries()?

@@ -68,7 +68,6 @@ fn an_empty_grant_builds_no_allowance_beyond_the_runtime() {
 #[test]
 fn a_write_grant_names_the_canonicalized_path_and_implies_the_read() {
 	let root = std::env::temp_dir().canonicalize().unwrap();
-	// Only the field under test; a new grant field must not edit three literals.
 	let grant = Grant {
 		write: vec!["cache".into()],
 		..Grant::default()
@@ -106,8 +105,6 @@ fn an_exec_grant_that_resolves_builds_a_literal_and_one_that_does_not_builds_not
 	assert!(!text.contains("no-such-program-xyz"), "{text}");
 }
 
-/// `profile` compiles the macOS seatbelt profile; there is nothing to read
-/// out of it on a platform that does not use one.
 #[cfg(target_os = "macos")]
 #[test]
 fn a_script_names_its_interpreter() {
@@ -125,8 +122,8 @@ fn a_script_names_its_interpreter() {
 	);
 }
 
-/// A program reaches its own installation prefix: `@executable_path/..` is
-/// plumbing, not a capability, and the empty grant still runs the program.
+// `@executable_path/..` is plumbing, not a capability: the empty grant still
+// reaches it.
 #[cfg(target_os = "macos")]
 #[test]
 fn an_interpreter_reaches_its_own_installation() {
@@ -160,11 +157,8 @@ fn an_interpreter_reaches_its_own_installation() {
 	assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "runtime");
 }
 
-/// The prefix stops at a system directory: `/usr/bin/env` shares `/usr`, it
-/// does not make the whole of it one program's installation. Nor does the
-/// user's home: a `~/bin` helper does not make the whole home directory one
-/// program's installation either, and the guard fires off whichever of
-/// `HOME`/`USERPROFILE` is set, not just the first.
+// A shared directory (`/usr`, or the home a `~/bin` helper sits under) must
+// not become one program's installation prefix.
 #[test]
 fn the_prefix_stops_at_a_system_directory() {
 	let shared = profile(&Grant::default(), &root(), Path::new("/usr/bin/env"), None);
@@ -195,8 +189,8 @@ fn the_prefix_stops_at_a_system_directory() {
 	);
 }
 
-/// The runtime is named canonically: `/etc` and `/var` are symlinks, and a
-/// clause written through a symlinked prefix matches nothing.
+// `/etc` and `/var` are symlinks: a clause written through them would match
+// nothing.
 #[cfg(target_os = "macos")]
 #[test]
 fn the_runtime_is_named_canonically() {

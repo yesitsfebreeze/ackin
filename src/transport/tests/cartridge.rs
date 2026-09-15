@@ -36,8 +36,6 @@ async fn apply_directory(path: &std::path::Path, name: &str, directory: &Directo
 		.unwrap();
 }
 
-/// `a` listens to `a.echo`, `ping` and `slow`; `b` may send it all three.
-/// `a.echo` takes an object; `slow` answers after its 50ms deadline.
 fn directories(dir: &std::path::Path) -> (Directory, Directory) {
 	let a_address = |token: &str| Address {
 		cartridge: "a".into(),

@@ -37,7 +37,7 @@ fn a_regular_file_is_not_an_endpoint() {
 #[test]
 fn a_path_owned_by_another_uid_is_refused() {
 	let Some(path) = foreign_path() else {
-		return; // running as root: nothing here is foreign
+		return;
 	};
 	let err = require_owned_by_caller(&path).expect_err("a foreign owner must refuse");
 	assert!(
@@ -76,7 +76,7 @@ fn a_dangling_symlink_is_refused() {
 #[test]
 fn a_symlink_to_a_foreign_target_is_refused() {
 	let Some(foreign) = foreign_path() else {
-		return; // running as root: nothing here is foreign
+		return;
 	};
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("test.sock");
@@ -121,8 +121,6 @@ async fn the_peer_check_reads_the_server_uid_and_decides_both_ways() {
 	);
 }
 
-// The no-regression half in one test: a socket we bound, reached through the
-// real entry point, with both checks in the way.
 #[tokio::test]
 async fn connect_accepts_a_socket_this_user_bound() {
 	let dir = tempfile::tempdir().unwrap();
@@ -137,7 +135,7 @@ async fn connect_accepts_a_socket_this_user_bound() {
 #[tokio::test]
 async fn connect_refuses_a_foreign_endpoint_before_it_connects() {
 	let Some(path) = foreign_path() else {
-		return; // running as root: nothing here is foreign
+		return;
 	};
 	let err = connect(&Endpoint::Unix(path))
 		.await

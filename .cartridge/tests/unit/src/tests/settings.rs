@@ -10,10 +10,8 @@ fn specs() -> Specs {
 	.unwrap()
 }
 
-/// An optional table that nothing configures stays nothing. Filling the keys
-/// declared *inside* it would build the table its absence is the whole point
-/// of — an unattached memory would arrive holding an owner and read as
-/// attached, which is the failure this guards.
+// Filling the keys declared *inside* an absent optional table would build
+// the table its absence is the whole point of.
 #[test]
 fn keys_inside_an_absent_optional_table_stay_absent() {
 	assert_eq!(defaults(&specs())["owner"], json!(null));
@@ -21,16 +19,14 @@ fn keys_inside_an_absent_optional_table_stay_absent() {
 	assert_eq!(settled, json!({"dir": "bank", "owner": null}));
 }
 
-/// Naming the table is what brings its inside into being, defaults and all.
 #[test]
 fn naming_the_table_fills_the_keys_inside_it() {
 	let settled = apply(&specs(), json!({"owner": {}}), "memory").unwrap();
 	assert_eq!(settled["owner"], json!({"timeout_ms": 30000}));
 }
 
-/// `--yolo` reaches a cartridge through its own declaration and nothing else:
-/// the flag wins over the file that turned it off, and a cartridge that
-/// declares no `yolo` is left exactly as its layers settled it.
+// `--yolo` wins over a file that turned it off, but only where a cartridge
+// declares the key; one that does not is left as its layers settled it.
 #[test]
 fn yolo_overrides_the_configured_value_only_where_the_cartridge_declares_it() {
 	let automatic: Specs = serde_json::from_value(json!({
@@ -53,8 +49,6 @@ fn yolo_overrides_the_configured_value_only_where_the_cartridge_declares_it() {
 		.is_none());
 }
 
-/// The project config is a gated read: an untrusted one is refused where the
-/// layer is evaluated, not only in the trust tests.
 #[test]
 fn an_untrusted_project_config_is_refused_at_its_read() {
 	crate::tests::home();
@@ -66,8 +60,6 @@ fn an_untrusted_project_config_is_refused_at_its_read() {
 	assert!(refused.contains("is in no trusted project"), "{refused}");
 }
 
-/// A configuration file that never returns is refused, not a hang: the state
-/// the file runs in has a budget, and the base's own path keeps refusing.
 #[test]
 fn a_configuration_file_that_never_returns_is_refused() {
 	crate::tests::home();
@@ -81,8 +73,8 @@ fn a_configuration_file_that_never_returns_is_refused() {
 	assert!(refused.contains("config.lua"), "{refused}");
 }
 
-/// A refused setting warns while the host settings are still being settled;
-/// with diagnostics on that warning must not re-enter the settling.
+// A refused setting warns while the host settings are still being settled;
+// with diagnostics on, that warning must not re-enter the settling.
 #[test]
 fn refused_settings_do_not_wedge_the_process_when_diagnostics_are_on() {
 	let bin = super::built(&["--bin", "cartridge"]);
@@ -91,7 +83,6 @@ fn refused_settings_do_not_wedge_the_process_when_diagnostics_are_on() {
 	super::write(dir.path(), ".cartridge/init.lua", "return {}");
 	super::write(dir.path(), ".cartridge/config.lua", "this is not lua ((");
 	let clean = |mut child: std::process::Child| {
-		// SAFETY: the loop below only reads `try_wait`; the kill is for a hang.
 		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
 		while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
 			std::thread::sleep(std::time::Duration::from_millis(50));

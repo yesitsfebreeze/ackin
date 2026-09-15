@@ -1,6 +1,3 @@
-//! The host's own settings: declared in `.cartridge/settings.json`,
-//! settled once against the descriptor's files, read everywhere as one answer.
-
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -9,17 +6,10 @@ use serde_json::json;
 
 use super::{apply, defaults, get, layers, Specs};
 
-/// The host's own document. It has no `cartridge.json` — nothing composes the
-/// host — so its declarations live in `.cartridge/settings.json`, in the same
-/// shape a cartridge's `settings` block uses. Embedded rather than read from
-/// disk: these are the values the binary was built with, and a host that could
-/// not find its own declarations would have no defaults to fall back to.
 const DOCUMENT: &str = include_str!("../../.cartridge/settings.json");
 
-/// What the host declares, parsed once off [`DOCUMENT`]. The numbers, bounds
-/// and documentation live there and nowhere else; [`Host`] below names the same
-/// keys to give them types, and a mismatch between the two is a deserialization
-/// error rather than a silent divergence.
+/// [`Host`] below names the same keys DOCUMENT does to give them types; a
+/// mismatch is a deserialization error, not a silent divergence.
 pub fn host_specs() -> &'static Specs {
 	static SPECS: OnceLock<Specs> = OnceLock::new();
 	SPECS.get_or_init(|| {
@@ -33,10 +23,6 @@ pub fn host_specs() -> &'static Specs {
 	})
 }
 
-/// The host's settled settings: every key of [`DOCUMENT`], typed. Read it; do
-/// not re-derive it. Durations are kept as the numbers the document declares
-/// and handed out as `Duration` by the methods below, so the unit is in the
-/// key's name at every layer a person reads.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Host {
@@ -72,9 +58,8 @@ impl Host {
 	}
 }
 
-/// The settled table as [`Host`]. A key no declaration names survives the
-/// merge and `deny_unknown_fields` refuses it; one typo must not end every
-/// command, so the reason is gathered and the declared defaults stand.
+/// `deny_unknown_fields` refuses a key no declaration names; the reason is
+/// gathered rather than propagated, so one typo does not end every command.
 fn typed(settled: serde_json::Value, refused: &mut Vec<String>) -> Host {
 	serde_json::from_value(settled).unwrap_or_else(|e| {
 		refused.push(format!("host: {e}"));
@@ -85,21 +70,9 @@ fn typed(settled: serde_json::Value, refused: &mut Vec<String>) -> Host {
 
 static HOST: OnceLock<Host> = OnceLock::new();
 
-/// The `host` table of the configuration files, settled against [`DOCUMENT`].
-///
-/// A file that will not read, or a value out of its declared range, does not
-/// take the host down: the reason goes to stderr once and the declared defaults
-/// stand. A limit is the thing that keeps a runaway bounded, and refusing to
-/// start because someone typed a limit wrongly trades a bounded system for no
-/// system at all.
-///
-/// `descriptor` is where the project's configuration file sits. The CLI settles
-/// against the descriptor it resolved, before anything else runs; everything
-/// downstream reads that one settled answer through [`host`].
 pub fn settle(descriptor: &Path) -> &'static Host {
-	// The refusals are logged after the cell is set, never inside it: the
-	// event reaches the diagnostic sink, which reads
-	// `host.diagnostics_max_bytes` through here.
+	// Logged after the cell is set, never inside it: the diagnostic sink
+	// itself reads `host.diagnostics_max_bytes` through here.
 	let mut refused: Vec<String> = Vec::new();
 	let settled = HOST.get_or_init(|| {
 		let configured = layers(descriptor)
@@ -120,9 +93,6 @@ pub fn settle(descriptor: &Path) -> &'static Host {
 	settled
 }
 
-/// The host's settings, settling them against the descriptor beside the working
-/// directory on first use — which is what a process with no CLI to settle
-/// for it, gets.
 pub fn host() -> &'static Host {
 	settle(Path::new(".cartridge"))
 }

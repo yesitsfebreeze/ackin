@@ -1,70 +1,37 @@
-//! `cartridge.json`: the format, read as data and checked against itself, and
-//! the resolution of the files it names.
-
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
 use super::normalize;
 
-/// Cartridge metadata is data, so reading it never evaluates the entry point.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cartridge {
 	pub name: String,
 	pub entry: String,
-	/// Human-readable purpose, alongside the executable behavior declaration.
 	pub description: Option<String>,
-	/// Documented commands; reading a manifest never executes them.
 	#[serde(default)]
 	pub commands: std::collections::BTreeMap<String, Command>,
-	/// Optional executable basename when it differs from the cartridge folder.
 	pub binary: Option<String>,
-	/// Events this cartridge listens to that prove it; `cartridge verify` sends them.
 	#[serde(default)]
 	pub contracts: Vec<String>,
-	/// An event this cartridge listens to that `cartridge setup` sends after
-	/// installing it, to ask what this project must decide and take back the
-	/// configuration to write. The exchange is described in `cli/setup.rs`.
 	pub setup: Option<String>,
-	/// An event this cartridge listens to that `cartridge doctor` sends to ask
-	/// whether it is healthy here: `{"ok": bool, "problems": [text]}`.
 	pub doctor: Option<String>,
-	/// Repository URL or other retrieval reference when source is not installed.
 	pub source: Option<String>,
-	/// The cartridge's own configuration, carried by the document. The ledger
-	/// shape has no descriptor `config.lua` to lay fields on at composition time,
-	/// so the document is where an author's configuration travels; the caller's
-	/// own config, when it names one, is laid over it.
 	#[serde(default)]
 	pub config: serde_json::Value,
-	/// The keys this cartridge contributes to the configuration: dotted name to
-	/// `{type, default, min, max, doc}`. What is declared here is filled with
-	/// its default before the cartridge starts, checked against its kind and
-	/// bounds, listed by `cartridge settings`, and settable in the global
-	/// `~/.cartridge/config.lua` or the project's own — under this entry's id.
-	/// A cartridge that declares its keys carries no fallbacks of its own.
 	#[serde(default)]
 	pub settings: crate::settings::Specs,
-	/// Events this cartridge defines: name to description and payload schema.
 	#[serde(default)]
 	pub events: std::collections::BTreeMap<String, Event>,
-	/// Events that must have a listener before this cartridge starts.
 	#[serde(default)]
 	pub needs: Vec<String>,
-	/// Events this cartridge listens to.
 	#[serde(default)]
 	pub listen: Vec<String>,
-	/// The capability request: the same declaration the resolver grants and the
-	/// sandbox confines to. Absent means nothing is asked for, which is the
-	/// tightest policy and not the loosest.
 	#[serde(default)]
 	pub grant: Grant,
 }
 
-/// One event a cartridge defines. `schema` is a JSON Schema for the payload;
-/// absent, any payload passes. `timeout_ms` is how long a sender waits for
-/// each listener; absent, the host's `event_timeout_ms`.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Event {
@@ -76,7 +43,6 @@ pub struct Event {
 	pub timeout_ms: Option<u64>,
 }
 
-/// An argument array to run from `cwd`, relative to the manifest's folder.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Command {
@@ -85,41 +51,24 @@ pub struct Command {
 	pub description: Option<String>,
 }
 
-/// What a cartridge asks the machine for. Read twice — once to grant, once to
-/// confine — out of this one document, so there is no second policy file.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Grant {
-	/// Filesystem paths readable by this cartridge, relative to its own folder
-	/// unless absolute.
 	#[serde(default)]
 	pub read: Vec<String>,
-	/// Filesystem paths writable by this cartridge. A writable path is readable.
 	#[serde(default)]
 	pub write: Vec<String>,
-	/// Hosts this cartridge may reach. `*` is every host.
 	#[serde(default)]
 	pub net: Vec<String>,
-	/// Programs this cartridge may execute, by basename or path.
 	#[serde(default)]
 	pub exec: Vec<String>,
-	/// Environment variables this cartridge may read, by exact name or by a
-	/// `PREFIX*` glob. The base clears a node's environment and passes its own
-	/// allow-list; a cartridge whose composition names a credential variable —
-	/// a mailbox token, a roster credential — declares the shape of that name
-	/// here, so the composition can choose it without the base handing over
-	/// every secret the operator's shell held. A bare `*` is refused.
 	#[serde(default)]
 	pub env: Vec<String>,
 }
 
 impl Cartridge {
-	/// The document, read and checked against itself and nothing else. Every
-	/// failure here is a failure of the document: it will not parse, or it
-	/// declares something the format refuses. Nothing on the filesystem around
-	/// the cartridge is touched — the Lua entry is not resolved — because a
-	/// cartridge declares what it declares whether or not the files it points
-	/// at are in place.
+	/// Never resolves the entry: a cartridge declares what it declares whether
+	/// or not the files it points at are in place.
 	pub fn document(manifest: &Path) -> Result<Cartridge> {
 		let source = std::fs::read_to_string(manifest).map_err(|e| Error::file(manifest, e))?;
 		Self::parse(manifest, &source)
@@ -156,9 +105,6 @@ impl Cartridge {
 		Ok(cartridge)
 	}
 
-	/// The document, plus the files it names: the Lua entry is resolved. An
-	/// error from here may be a fact about the tree rather than about the
-	/// document — which is why [`Cartridge::document`] exists beside it.
 	pub fn read(manifest: &Path) -> Result<(Cartridge, PathBuf)> {
 		let (cartridge, entry, _) = Self::read_verified(manifest)?;
 		Ok((cartridge, entry))
@@ -193,8 +139,6 @@ impl Cartridge {
 		Ok((cartridge, entry, entry_bytes))
 	}
 
-	/// Every declaration this document carries, checked without reading anything
-	/// else. A key is a nonempty exact string; a wildcard is not a declaration.
 	fn check(&self, manifest: &Path) -> Result<()> {
 		let at = |what: &str| Error::document(manifest, what);
 		let key = |field: &str, k: &String| -> Result<()> {
@@ -251,8 +195,6 @@ impl Cartridge {
 	}
 }
 
-/// The document's name on disk. A folder is a cartridge exactly when it holds
-/// one, and every reader of the format agrees on this one spelling.
 pub const MANIFEST: &str = "cartridge.json";
 
 impl Grant {
@@ -295,8 +237,6 @@ impl Grant {
 	}
 }
 
-/// The file a path names: a Lua entry as written, otherwise the manifest of the
-/// folder (or the manifest itself). One rule, so watching and loading agree.
 pub(super) fn classify(path: &Path) -> PathBuf {
 	if path.extension().is_some_and(|ext| ext == "lua")
 		|| path.file_name().is_some_and(|name| name == MANIFEST)
@@ -306,8 +246,6 @@ pub(super) fn classify(path: &Path) -> PathBuf {
 	path.join(MANIFEST)
 }
 
-/// What an entry declares, with every file it names resolved. A bare Lua entry
-/// has no document and declares through the table it returns.
 #[derive(Debug)]
 pub(crate) struct Declared {
 	pub(crate) entry: PathBuf,
@@ -335,7 +273,6 @@ pub fn is_bare_name(name: &str) -> bool {
 		&& parts.next().is_none()
 }
 
-/// The grant a descriptor entry's document declares, without resolving its files.
 pub(crate) fn document(path: &Path) -> Result<Grant> {
 	let path = normalize(&classify(path));
 	if path.extension().is_some_and(|ext| ext == "lua") {

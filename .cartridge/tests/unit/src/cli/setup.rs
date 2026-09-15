@@ -7,8 +7,6 @@ pub(crate) fn trust_home() -> std::sync::MutexGuard<'static, ()> {
 	TURNS.lock().unwrap()
 }
 
-/// A cartridge folder `under/<name>.ctg`: `more` is laid over the manifest,
-/// and `lua` is its `init.lua`.
 fn cartridge(under: &Path, name: &str, description: &str, more: Value, lua: &str) {
 	let dir = under.join(format!("{name}.ctg"));
 	std::fs::create_dir_all(&dir).unwrap();
@@ -68,7 +66,6 @@ fn setup_offers_what_it_finds_and_the_catalog_and_filters_by_subsequence() {
 		found.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
 		["alpha", "beta", "gamma"]
 	);
-	// On disk wins over the catalog for the same name.
 	assert_eq!(found[1].description, "Second.");
 	assert!(matches!(found[1].source, Source::Folder(_)));
 	assert_eq!(
@@ -99,8 +96,6 @@ fn setup_links_the_chosen_writes_a_descriptor_the_host_reads_and_lets_a_cartridg
 	std::env::set_var("CARTRIDGE_HOME", tmp.path().join("home"));
 	let checkouts = tmp.path().join("checkouts");
 	cartridge(&checkouts, "alpha", "First.", json!({}), "");
-	// A cartridge with a setup exchange: one question with a default, then
-	// the configuration to write, and a doctor that reports on it.
 	cartridge(
 		&checkouts,
 		"beta",
@@ -135,7 +130,6 @@ fn setup_links_the_chosen_writes_a_descriptor_the_host_reads_and_lets_a_cartridg
 		std::fs::canonicalize(builtin.join("beta")).unwrap(),
 		std::fs::canonicalize(checkouts.join("beta.ctg")).unwrap()
 	);
-	// Installing again is idempotent.
 	install(&builtin, &chosen).unwrap();
 	assert_eq!(std::fs::read_link(builtin.join("beta")).unwrap(), link);
 
@@ -145,7 +139,6 @@ fn setup_links_the_chosen_writes_a_descriptor_the_host_reads_and_lets_a_cartridg
 	assert!(init.contains(r#"{ id = "beta", path = "beta" }"#), "{init}");
 	assert!(project.join(".cartridge/.gitignore").is_file());
 
-	// The descriptor it wrote is one the host composes.
 	let host = Host::new(&builtin, project.join(".cartridge")).unwrap();
 	let enabled = host.entries().unwrap();
 	assert_eq!(
@@ -172,7 +165,6 @@ fn setup_links_the_chosen_writes_a_descriptor_the_host_reads_and_lets_a_cartridg
 	let config = cartridge::settings::read(&project.join(".cartridge/config.lua")).unwrap();
 	assert_eq!(config["beta"]["port"], 4242, "{config}");
 
-	// The doctor asks the same cartridge and reports its verdict.
 	let project = Project {
 		dir: builtin.clone(),
 		descriptor: project.join(".cartridge"),
@@ -204,8 +196,8 @@ fn a_setup_or_doctor_event_the_cartridge_does_not_listen_to_is_refused() {
 	}
 }
 
-/// The record after the exchange approves nothing a running cartridge may
-/// have written: a file that changed while the cartridges ran fails setup.
+/// The record approves nothing a running cartridge may have written: a file
+/// changed while the exchange ran is not trusted after the fact.
 #[test]
 fn a_file_changed_by_the_exchange_is_not_recorded() {
 	let _turn = trust_home();
@@ -216,7 +208,6 @@ fn a_file_changed_by_the_exchange_is_not_recorded() {
 	std::fs::create_dir_all(root.join(".cartridge")).unwrap();
 	std::fs::write(root.join(".cartridge/init.lua"), "return {}").unwrap();
 	cartridge::trust::record(&root).unwrap();
-	// What a cartridge with a write grant could have written while it ran.
 	cartridge(
 		&root,
 		"sneaky",
@@ -233,9 +224,8 @@ fn a_file_changed_by_the_exchange_is_not_recorded() {
 	);
 }
 
-/// Choosing is the approval: setup records the descriptor it wrote and each
-/// cartridge it chose — a folder the tree already held stays untrusted, and
-/// so does a config.lua setup did not write.
+/// Choosing is the approval: a folder the tree already held stays untrusted,
+/// and so does a config.lua setup did not write.
 #[test]
 fn setup_trusts_what_it_chose_not_what_the_tree_holds() {
 	let _turn = trust_home();
@@ -246,7 +236,6 @@ fn setup_trusts_what_it_chose_not_what_the_tree_holds() {
 	let project = tmp.path().join("project");
 	std::fs::create_dir_all(&project).unwrap();
 	let builtin = project.join("builtin");
-	// What a clone could bring along: a folder nobody chose, and a config.
 	cartridge(
 		&builtin,
 		"stray",
