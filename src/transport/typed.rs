@@ -799,6 +799,11 @@ pub const PIPE_INSTANCES: usize = 16;
 #[cfg(windows)]
 pub const PIPE_HANDLES_ENV: &str = "CARTRIDGE_PIPE_HANDLES";
 
+/// Each instance's buffer. A frame is read in pieces either way, so this only
+/// decides how often.
+#[cfg(windows)]
+const PIPE_BUFFER: u32 = 64 * 1024;
+
 /// Make a node's listening pipe on its behalf, and hand back the raw handles
 /// to pass it.
 ///
@@ -813,26 +818,53 @@ pub const PIPE_HANDLES_ENV: &str = "CARTRIDGE_PIPE_HANDLES";
 /// and here a child inherits one because it may not open its own.
 #[cfg(windows)]
 pub fn broker(endpoint: &Endpoint, container_sid: &str) -> Result<Vec<usize>, BindError> {
-	use std::os::windows::io::AsRawHandle;
+	use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+	use windows_sys::Win32::Storage::FileSystem::{
+		FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
+	};
+	use windows_sys::Win32::System::Pipes::{
+		CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+	};
+
 	let Endpoint::NamedPipe(name) = endpoint;
 	let security = owner_only::OwnerOnlySd::shared_with(container_sid)?;
+	let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
 	let mut handles = Vec::with_capacity(PIPE_INSTANCES);
 	for index in 0..PIPE_INSTANCES {
-		let mut attrs = security.attributes_inheritable();
-		// SAFETY: `attrs` lives across the call and points at a descriptor
-		// `security` owns.
-		let server = unsafe {
-			tokio::net::windows::named_pipe::ServerOptions::new()
-				.first_pipe_instance(index == 0)
-				.create_with_security_attributes_raw(
-					name,
-					std::ptr::addr_of_mut!(attrs).cast::<std::ffi::c_void>(),
-				)
-		}?;
-		handles.push(server.as_raw_handle() as usize);
-		// The child inherits its own copy, so this one is let go rather than
-		// closed: closing it here would take the instance down with it.
-		std::mem::forget(server);
+		let attrs = security.attributes_inheritable();
+		// Made by hand rather than through `ServerOptions`, and this is the
+		// whole reason: tokio binds a handle it creates to *this* process's
+		// completion port, a handle belongs to one port for ever, and the node
+		// has to bind it to its own. A handle made here and registered there
+		// answers `The parameter is incorrect`, which is what it did.
+		//
+		// SAFETY: `wide` is NUL-terminated and `attrs` points at a descriptor
+		// `security` owns; both outlive the call.
+		let handle = unsafe {
+			CreateNamedPipeW(
+				wide.as_ptr(),
+				PIPE_ACCESS_DUPLEX
+					| FILE_FLAG_OVERLAPPED
+					| if index == 0 {
+						FILE_FLAG_FIRST_PIPE_INSTANCE
+					} else {
+						0
+					},
+				PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+				PIPE_INSTANCES as u32,
+				PIPE_BUFFER,
+				PIPE_BUFFER,
+				0,
+				&attrs,
+			)
+		};
+		if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+			return Err(BindError::Io(std::io::Error::last_os_error()));
+		}
+		// Left open on purpose: the child inherits its own copy, and closing
+		// the last handle to an instance takes the instance with it. They go
+		// when this process exits, which is when the node's are gone too.
+		handles.push(handle as usize);
 	}
 	Ok(handles)
 }
