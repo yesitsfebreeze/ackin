@@ -630,6 +630,16 @@ fn spawn(
 		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::inherit())
 		.kill_on_drop(true);
+	// A node's own wiring is not its helpers'. The socket it serves, the
+	// credential it was minted, the entry it ran, the pipe instances it was
+	// handed — a helper needs none of them, and one that reads them is holding
+	// the node's credential. The base already withholds its own from the node;
+	// this is the same rule one step down.
+	for (key, _) in std::env::vars_os() {
+		if key.to_string_lossy().starts_with("CARTRIDGE_") {
+			process.env_remove(key);
+		}
+	}
 	let mut timeout = Duration::from_secs(30);
 	if let Some(options) = options {
 		if let Some(cwd) = options.get::<Option<String>>("cwd")? {
