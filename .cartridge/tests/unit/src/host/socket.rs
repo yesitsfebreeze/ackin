@@ -1,9 +1,13 @@
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
 use super::*;
 
+/// A mode and an owner are POSIX facts. What the directory guarantees on
+/// Windows is the profile ACL the system puts on it, which is not this
+/// function's to assert; what it does refuse there — a name that is not the
+/// directory it claims — is covered below on both.
+#[cfg(unix)]
 #[test]
 fn an_owner_only_directory_is_created_and_repaired() {
+	use std::os::unix::fs::{MetadataExt, PermissionsExt};
 	let tmp = tempfile::tempdir().unwrap();
 	let dir = tmp.path().join("sockets");
 	owner_only_dir(&dir).unwrap();
@@ -24,6 +28,7 @@ fn an_owner_only_directory_is_created_and_repaired() {
 	);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_symlinked_socket_directory_is_refused() {
 	let tmp = tempfile::tempdir().unwrap();
@@ -39,8 +44,10 @@ fn a_symlinked_socket_directory_is_refused() {
 	);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_run_directory_is_owner_only() {
+	use std::os::unix::fs::PermissionsExt;
 	let tmp = tempfile::tempdir().unwrap();
 	let dir = run_dir(tmp.path()).unwrap();
 	let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;

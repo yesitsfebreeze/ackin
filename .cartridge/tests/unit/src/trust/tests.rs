@@ -74,6 +74,7 @@ fn a_file_the_record_does_not_name_is_refused() {
 	);
 }
 
+#[cfg(unix)]
 #[test]
 fn every_spelling_of_a_directory_is_one_record() {
 	let dir = project(&[(".cartridge/init.lua", "return {}"), ("sub/x.lua", "")]);
@@ -105,6 +106,7 @@ fn the_users_own_home_needs_no_trust() {
 	verify(&crate::tests::home().join("own/config.lua")).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn the_store_is_private_to_this_user() {
 	use std::os::unix::fs::PermissionsExt;
@@ -116,6 +118,7 @@ fn the_store_is_private_to_this_user() {
 	assert_eq!(mode(&at), 0o600);
 }
 
+#[cfg(unix)]
 #[test]
 fn the_walk_skips_build_output_and_links() {
 	let dir = project(&[
@@ -188,6 +191,7 @@ fn read_refuses_a_file_that_changed_after_it_was_trusted() {
 /// A dotfiles setup symlinks the global config outside the home; the home
 /// exemption must accept the file as the base spells it, not only as the
 /// kernel resolves it.
+#[cfg(unix)]
 #[test]
 fn a_global_config_symlinked_out_of_the_home_still_passes() {
 	let elsewhere = project(&[("config.lua", "return {}")]);

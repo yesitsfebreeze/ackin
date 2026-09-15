@@ -241,7 +241,6 @@ unsafe impl Send for Group {}
 #[cfg(windows)]
 impl Group {
 	fn of(child: &tokio::process::Child) -> std::io::Result<Self> {
-		use std::os::windows::io::AsRawHandle;
 		use windows_sys::Win32::System::JobObjects::{
 			AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
 			SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,

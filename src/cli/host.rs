@@ -278,6 +278,8 @@ pub(crate) async fn verify(project: &Project, cartridge: Option<&str>) -> Result
 #[path = "../../.cartridge/tests/unit/stdio.rs"]
 mod stdio_tests;
 
-#[cfg(test)]
+// Signals are POSIX. What this covers — an interrupt stops the base unless a
+// program holds the terminal — has no counterpart to raise on Windows.
+#[cfg(all(test, unix))]
 #[path = "../../.cartridge/tests/unit/src/cli/signals.rs"]
 mod signal_tests;

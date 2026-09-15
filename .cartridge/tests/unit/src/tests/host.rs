@@ -1075,15 +1075,13 @@ cartridge.listen("pid", function() return pid end)"#,
 	}
 	assert!(pid > 0, "the program never reported its child");
 	host.stop().await;
-	let pid = pid as libc::pid_t;
-	// SAFETY: signal 0 only checks that the process exists.
+	let pid = pid as u32;
 	let gone = (0..100).any(|_| {
 		std::thread::sleep(Duration::from_millis(20));
-		let alive = unsafe { libc::kill(pid, 0) };
-		alive != 0
+		!alive(pid)
 	});
 	if !gone {
-		unsafe { libc::kill(pid, libc::SIGKILL) };
+		kill_now(pid);
 	}
 	assert!(gone, "a program's child outlived its cartridge");
 }
@@ -1155,4 +1153,53 @@ async fn a_terminated_mcp_exits_with_its_input_still_open() {
 	let exited = tokio::time::timeout(Duration::from_secs(20), mcp.wait()).await;
 	drop(input);
 	assert!(exited.is_ok(), "mcp held its exit on an open stdin");
+}
+
+/// Whether a process id names a live process. The group guarantee below is
+/// made by a process group on Unix and a job object on Windows, and is worth
+/// asserting on both.
+#[cfg(unix)]
+fn alive(pid: u32) -> bool {
+	// SAFETY: signal 0 only checks that the process exists.
+	unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(unix)]
+fn kill_now(pid: u32) {
+	// SAFETY: the pid was reported by a child of this test.
+	unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+}
+
+#[cfg(windows)]
+fn alive(pid: u32) -> bool {
+	use windows_sys::Win32::Foundation::CloseHandle;
+	use windows_sys::Win32::System::Threading::{
+		GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
+	};
+	// SAFETY: a query-only handle, closed below; a dead or unknown pid opens
+	// nothing. A pid that still has an exit code is a handle, not a process.
+	unsafe {
+		let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+		if handle.is_null() {
+			return false;
+		}
+		let mut code = 0u32;
+		let read = GetExitCodeProcess(handle, &mut code);
+		CloseHandle(handle);
+		read != 0 && code == STILL_ACTIVE as u32
+	}
+}
+
+#[cfg(windows)]
+fn kill_now(pid: u32) {
+	use windows_sys::Win32::Foundation::CloseHandle;
+	use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+	// SAFETY: the pid was reported by a child of this test.
+	unsafe {
+		let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+		if !handle.is_null() {
+			TerminateProcess(handle, 1);
+			CloseHandle(handle);
+		}
+	}
 }

@@ -464,9 +464,49 @@ async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'st
 	true
 }
 
-/// A FIFO whose lines a native module's own threads may write from: they reach
+/// Every line one writer sends, until it closes. Shared by both platforms so
+/// the protocol a native module speaks is the same wherever it runs.
+async fn pipe_lines(
+	reader: impl tokio::io::AsyncRead + Unpin,
+	lua: Lua,
+	ctx: Ctx,
+	f: Option<Function>,
+) {
+	let mut lines = BufReader::new(reader).lines();
+	while let Ok(Some(line)) = lines.next_line().await {
+		let value: Value = serde_json::from_str(&line).unwrap_or(Value::String(line));
+		let answer = {
+			let (lua, f) = (lua.clone(), f.clone());
+			move |answer: Value| {
+				let Some(f) = f else { return };
+				tokio::spawn(async move {
+					let run = async { f.call_async::<()>(lua.to_value(&answer)?).await };
+					if let Err(error) = run.await {
+						tracing::warn!(target: "cartridge", "pipe handler failed: {error}");
+					}
+				});
+			}
+		};
+		if relay(&ctx, &value, answer).await {
+			continue;
+		}
+		let Some(f) = &f else { continue };
+		let run = async { f.call_async::<()>(lua.to_value(&value)?).await };
+		if let Err(error) = run.await {
+			tracing::warn!(target: "cartridge", "pipe handler failed: {error}");
+		}
+	}
+}
+
+/// A pipe whose lines a native module's own threads may write from: they reach
 /// the node in Rust, so the Lua state is never entered from those threads.
 /// Protocol lines are served by the node itself; anything else goes to `f`.
+///
+/// A FIFO on Unix and a named pipe on Windows. Both are opened by a writer with
+/// nothing but the name this returns, and both outlive any one writer: the node
+/// holds the FIFO open itself so a reader never sees EOF between writers, and
+/// on Windows takes the next connection when one ends.
+#[cfg(unix)]
 fn pipe(
 	lua: &Lua,
 	ctx: &Ctx,
@@ -502,33 +542,61 @@ fn pipe(
 		let Ok(file) = tokio::fs::File::open(&reader).await else {
 			return;
 		};
-		let mut lines = BufReader::new(file).lines();
-		while let Ok(Some(line)) = lines.next_line().await {
-			let value: Value = serde_json::from_str(&line).unwrap_or(Value::String(line));
-			let answer = {
-				let (lua, f) = (lua.clone(), f.clone());
-				move |answer: Value| {
-					let Some(f) = f else { return };
-					tokio::spawn(async move {
-						let run = async { f.call_async::<()>(lua.to_value(&answer)?).await };
-						if let Err(error) = run.await {
-							tracing::warn!(target: "cartridge", "pipe handler failed: {error}");
-						}
-					});
-				}
-			};
-			if relay(&ctx, &value, answer).await {
-				continue;
-			}
-			let Some(f) = &f else { continue };
-			let run = async { f.call_async::<()>(lua.to_value(&value)?).await };
-			if let Err(error) = run.await {
-				tracing::warn!(target: "cartridge", "pipe handler failed: {error}");
-			}
-		}
+		pipe_lines(file, lua, ctx, f).await;
 		drop(keep);
 	});
 	Ok(path.to_string_lossy().into_owned())
+}
+
+#[cfg(windows)]
+fn pipe(
+	lua: &Lua,
+	ctx: &Ctx,
+	dir: &Path,
+	counter: &AtomicU64,
+	f: Option<Function>,
+) -> mlua::Result<String> {
+	use tokio::net::windows::named_pipe::ServerOptions;
+	// The directory names the node's own sockets; a pipe is not a file, so it
+	// borrows the directory's identity for its name rather than living in it.
+	let name = format!(
+		r"\\.\pipe\cartridge-{}-{}-{}",
+		crate::transport::typed::path_tag(dir),
+		std::process::id(),
+		counter.fetch_add(1, Ordering::SeqCst)
+	);
+	// The first instance is made here, before init.lua goes on, so a writer
+	// that opens the name immediately finds it already there.
+	let mut server = ServerOptions::new()
+		.first_pipe_instance(true)
+		.create(&name)
+		.map_err(|e| external(format!("{name}: {e}")))?;
+	let (lua, ctx) = (lua.clone(), ctx.clone());
+	let listening = name.clone();
+	tokio::spawn(async move {
+		loop {
+			if server.connect().await.is_err() {
+				return;
+			}
+			// The next instance is made before this one is served, so a writer
+			// arriving while another is mid-line still finds the name open.
+			let next = match ServerOptions::new().create(&listening) {
+				Ok(next) => next,
+				Err(error) => {
+					tracing::warn!(target: "cartridge", "pipe {listening}: {error}");
+					return;
+				}
+			};
+			pipe_lines(
+				std::mem::replace(&mut server, next),
+				lua.clone(),
+				ctx.clone(),
+				f.clone(),
+			)
+			.await;
+		}
+	});
+	Ok(name)
 }
 
 /// A helper program: lines of JSON in and out. `request` matches a reply by `id`;
