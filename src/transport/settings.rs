@@ -216,6 +216,18 @@ fn absent(specs: &Specs, key: &str, settled: Option<&Json>) -> bool {
 	})
 }
 
+/// The variable `--yolo` fills, set by the command before the host loads. A
+/// cartridge that declares a `yolo` setting has it turned on by the flag, over
+/// whatever a file says; a cartridge that declares none is untouched. Automatic
+/// execution is a property of the run, so it is named by the command and never
+/// by a configuration file.
+pub const YOLO_ENV: &str = "CARTRIDGE_YOLO";
+
+/// Whether this process was started with `--yolo`.
+pub fn yolo() -> bool {
+	std::env::var(YOLO_ENV).is_ok_and(|value| value == "1")
+}
+
 /// Every declared default, as the table a configuration lays itself over.
 pub fn defaults(specs: &Specs) -> Json {
 	let mut out = json!({});

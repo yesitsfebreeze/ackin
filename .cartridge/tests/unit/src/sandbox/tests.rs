@@ -49,7 +49,13 @@ fn root() -> PathBuf {
 fn an_empty_grant_builds_no_allowance_beyond_the_runtime() {
 	let text = profile(&Grant::default(), &root(), Path::new("/bin/tool"), None);
 	assert!(text.contains("(deny default)"), "{text}");
-	assert!(!text.contains("file-write*"), "{text}");
+	// The discard sink is plumbing, not a grant: every program a cartridge
+	// may run opens `/dev/null` without any grant naming it.
+	assert!(text.contains("file-write*"), "{text}");
+	assert!(
+		text.contains("(allow file-write* (literal \"/dev/null\"))"),
+		"{text}"
+	);
 	assert!(!text.contains("network"), "{text}");
 	assert!(
 		text.contains("(allow process-exec (literal \"/bin/tool\"))"),
@@ -62,11 +68,10 @@ fn an_empty_grant_builds_no_allowance_beyond_the_runtime() {
 #[test]
 fn a_write_grant_names_the_canonicalized_path_and_implies_the_read() {
 	let root = std::env::temp_dir().canonicalize().unwrap();
+	// Only the field under test; a new grant field must not edit three literals.
 	let grant = Grant {
-		read: vec![],
 		write: vec!["cache".into()],
-		net: vec![],
-		exec: vec![],
+		..Grant::default()
 	};
 	let text = profile(&grant, &root, Path::new("/bin/tool"), None);
 	let line = format!("(subpath \"{}\")", root.join("cache").display());
@@ -76,10 +81,8 @@ fn a_write_grant_names_the_canonicalized_path_and_implies_the_read() {
 #[test]
 fn a_net_grant_turns_the_network_on_and_an_empty_one_leaves_it_off() {
 	let grant = Grant {
-		read: vec![],
-		write: vec![],
 		net: vec!["api.host".into()],
-		exec: vec![],
+		..Grant::default()
 	};
 	let on = profile(&grant, &root(), Path::new("/bin/tool"), None);
 	assert!(on.contains("(allow network*)"), "{on}");
@@ -91,10 +94,8 @@ fn a_net_grant_turns_the_network_on_and_an_empty_one_leaves_it_off() {
 #[test]
 fn an_exec_grant_that_resolves_builds_a_literal_and_one_that_does_not_builds_nothing() {
 	let grant = Grant {
-		read: vec![],
-		write: vec![],
-		net: vec![],
 		exec: vec!["ls".into(), "no-such-program-xyz".into()],
+		..Grant::default()
 	};
 	let text = profile(&grant, &root(), Path::new("/bin/tool"), None);
 	let resolved = granted_exec("ls", &root()).expect("ls is on PATH");

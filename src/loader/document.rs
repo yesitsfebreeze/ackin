@@ -20,8 +20,6 @@ pub struct Cartridge {
 	pub commands: std::collections::BTreeMap<String, Command>,
 	/// Optional executable basename when it differs from the cartridge folder.
 	pub binary: Option<String>,
-	/// Optional Solid UI module, relative to this cartridge's folder.
-	pub ui: Option<String>,
 	/// Events this cartridge listens to that prove it; `cartridge verify` sends them.
 	#[serde(default)]
 	pub contracts: Vec<String>,
@@ -105,15 +103,23 @@ pub struct Grant {
 	/// Programs this cartridge may execute, by basename or path.
 	#[serde(default)]
 	pub exec: Vec<String>,
+	/// Environment variables this cartridge may read, by exact name or by a
+	/// `PREFIX*` glob. The base clears a node's environment and passes its own
+	/// allow-list; a cartridge whose composition names a credential variable —
+	/// a mailbox token, a roster credential — declares the shape of that name
+	/// here, so the composition can choose it without the base handing over
+	/// every secret the operator's shell held. A bare `*` is refused.
+	#[serde(default)]
+	pub env: Vec<String>,
 }
 
 impl Cartridge {
 	/// The document, read and checked against itself and nothing else. Every
 	/// failure here is a failure of the document: it will not parse, or it
 	/// declares something the format refuses. Nothing on the filesystem around
-	/// the cartridge is touched — the Lua entry is not resolved and a declared
-	/// `ui` file is not looked for — because a cartridge declares what it
-	/// declares whether or not the files it points at are in place.
+	/// the cartridge is touched — the Lua entry is not resolved — because a
+	/// cartridge declares what it declares whether or not the files it points
+	/// at are in place.
 	pub fn document(manifest: &Path) -> Result<Cartridge> {
 		let source = std::fs::read_to_string(manifest).map_err(|e| Error::file(manifest, e))?;
 		let cartridge: Cartridge =
@@ -145,31 +151,13 @@ impl Cartridge {
 				"expected a nonempty name and a relative Lua entry inside the cartridge folder",
 			));
 		}
-		if let Some(ui) = &cartridge.ui {
-			let path = Path::new(ui);
-			if path.as_os_str().is_empty()
-				|| !path
-					.components()
-					.all(|p| matches!(p, std::path::Component::Normal(_)))
-				|| !path
-					.extension()
-					.is_some_and(|e| e == "tsx" || e == "ts" || e == "js" || e == "jsx")
-			{
-				return Err(Error::document(
-					manifest,
-					"ui must be a relative JavaScript/TypeScript module",
-				));
-			}
-		}
 		cartridge.check(manifest)?;
 		Ok(cartridge)
 	}
 
-	/// The document, plus the files it names: the Lua entry is resolved and a
-	/// declared `ui` is located. The loader and the bundler share this, so what
-	/// ships and what loads agree on the format. An error from here may be a
-	/// fact about the tree rather than about the document — which is why
-	/// [`Cartridge::document`] exists beside it.
+	/// The document, plus the files it names: the Lua entry is resolved. An
+	/// error from here may be a fact about the tree rather than about the
+	/// document — which is why [`Cartridge::document`] exists beside it.
 	pub fn read(manifest: &Path) -> Result<(Cartridge, PathBuf)> {
 		// The grant and the entry take effect from here; listing a document does not.
 		crate::trust::verify(manifest)?;
@@ -191,19 +179,6 @@ impl Cartridge {
 			));
 		}
 		crate::trust::verify(&entry)?;
-		if let Some(ui) = &cartridge.ui {
-			let path = Path::new(ui);
-			let resolved = root
-				.join(path)
-				.canonicalize()
-				.map_err(|e| Error::file(root.join(path), e))?;
-			if !resolved.starts_with(&root) || !resolved.is_file() {
-				return Err(Error::document(
-					manifest,
-					"ui must be a file inside its cartridge folder",
-				));
-			}
-		}
 		Ok((cartridge, entry))
 	}
 
@@ -370,12 +345,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		});
 	}
 	let (manifest, entry) = Cartridge::read(&path)?;
-	let root = path.parent().expect("manifest has a folder");
-	let mut sources = vec![path.clone(), entry.clone()];
-	if let Some(ui) = &manifest.ui {
-		let ui = root.join(ui);
-		sources.push(ui.canonicalize().map_err(|e| Error::file(&ui, e))?);
-	}
+	let sources = vec![path.clone(), entry.clone()];
 	Ok(Declared {
 		entry_sha256: crate::trust::digest(&entry)?,
 		entry,

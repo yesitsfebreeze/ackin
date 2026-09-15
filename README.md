@@ -1,12 +1,7 @@
 # Cartridge
 
-A base that runs programs as cartridges and wires them together with events.
-
-A cartridge is a folder with a `cartridge.json` and an `init.lua`. The base
-injects a `cartridge` global into every entry: the event system, streams and
-registration. Everything a cartridge registers there is published in the base.
-Code in another language ships as a Lua module the entry loads, or as a helper
-program the entry talks to; neither imports anything from the base.
+Cartridge is a modular application runtime that composes independent components
+through declared events, isolated processes, and managed lifecycles.
 
 ```lua
 local fs = cartridge.load("fs")
@@ -31,7 +26,7 @@ Early (`0.1.0`). Interfaces change without notice.
 
 - **Cartridge**: `cartridge.json` declares `events` (name, description,
   schema), `listen` (listened), `needs` (must have a listener), `grant` (machine
-  access) and `settings`. `init.lua` registers into the base. A grant is
+  access and named environment variables) and `settings`. `init.lua` registers into the base. A grant is
   compiled into an operating-system policy the node starts inside —
   `sandbox-exec` on macOS, Landlock plus a seccomp socket filter on Linux; a
   platform that cannot confine refuses to start the cartridge.

@@ -7,7 +7,6 @@
 //!   "description": "Stores data",
 //!   "commands": { "test": {"argv": ["just", "test", "store"], "cwd": "."} },
 //!   "binary": "store-bin",      // executable basename, when it differs from the folder
-//!   "ui": "ui/index.ts",
 //!   "contracts": ["store.check"], // events it listens to that prove it
 //!   "setup": "store.setup",     // an event it listens to, sent by `cartridge setup`
 //!   "doctor": "store.doctor",   // an event it listens to, sent by `cartridge doctor`

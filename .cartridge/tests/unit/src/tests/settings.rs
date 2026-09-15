@@ -28,6 +28,31 @@ fn naming_the_table_fills_the_keys_inside_it() {
 	assert_eq!(settled["owner"], json!({"timeout_ms": 30000}));
 }
 
+/// `--yolo` reaches a cartridge through its own declaration and nothing else:
+/// the flag wins over the file that turned it off, and a cartridge that
+/// declares no `yolo` is left exactly as its layers settled it.
+#[test]
+fn yolo_overrides_the_configured_value_only_where_the_cartridge_declares_it() {
+	let automatic: Specs = serde_json::from_value(json!({
+		"yolo": {"type": "boolean", "default": false},
+		"dir": {"type": "string", "default": "."},
+	}))
+	.unwrap();
+	assert_eq!(
+		apply(&automatic, json!({"yolo": false}), "agent").unwrap()["yolo"],
+		json!(false)
+	);
+	std::env::set_var(crate::settings::YOLO_ENV, "1");
+	let settled = apply(&automatic, json!({"yolo": false}), "agent").unwrap();
+	std::env::remove_var(crate::settings::YOLO_ENV);
+	assert_eq!(settled["yolo"], json!(true));
+	assert_eq!(settled["dir"], json!("."));
+	assert!(apply(&specs(), json!({}), "memory")
+		.unwrap()
+		.get("yolo")
+		.is_none());
+}
+
 /// The project config is a gated read: an untrusted one is refused where the
 /// layer is evaluated, not only in the trust tests.
 #[test]

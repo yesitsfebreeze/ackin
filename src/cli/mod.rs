@@ -60,6 +60,7 @@ fn dispatch() -> ExitCode {
 			.block_on(cartridge::node::main())
 			.unwrap_or_else(|error| fail(FAILED, error));
 	}
+	let yolo = cli.yolo;
 	let outcome = cli.check().and_then(|()| match cli.command {
 		// Setup is what makes a project, so it runs where it was typed
 		// rather than in a project above it.
@@ -94,6 +95,9 @@ fn dispatch() -> ExitCode {
 				if let Some(key) = host::minted_proxy_key()? {
 					std::env::set_var(host::PROXY_KEY_ENV, key);
 				}
+			}
+			if yolo {
+				std::env::set_var(cartridge::settings::YOLO_ENV, "1");
 			}
 			let runtime = tokio::runtime::Runtime::new()?;
 			let outcome = runtime.block_on(run(command, &project));

@@ -56,7 +56,7 @@ in Lua; a node that exited with status 70 kept looping after it. Raise
 host.lua_instruction_budget if the work is real.
 
 A runtime that cannot read something it needs before `main` dies on a signal
-with nothing on stderr — bun traps (SIGTRAP), dyld aborts (SIGABRT). On macOS,
+with nothing on stderr — an interpreter's trap (SIGTRAP), dyld aborts (SIGABRT). On macOS,
 `log stream --predicate 'senderImagePath CONTAINS "Sandbox"'` while the
 cartridge starts names the denied path. On Linux the node's first stderr line
 names the Landlock ABI it was confined at; below V9 a unix socket named by a

@@ -954,13 +954,15 @@ fn adopt_handed(name: &str) -> Result<Option<LocalListener>, BindError> {
 		}?;
 		servers.push(server);
 	}
-	let Some(current) = servers.pop() else {
+	if servers.is_empty() {
 		return Ok(None);
-	};
+	}
+	// Every instance goes in the pool `accept` waits on; one held back in
+	// `current` would be an instance a client can reach and nobody serves.
 	Ok(Some(LocalListener {
 		pipe_name: name.to_owned(),
 		security: None,
-		current: Some(current),
+		current: None,
 		handed: servers,
 	}))
 }

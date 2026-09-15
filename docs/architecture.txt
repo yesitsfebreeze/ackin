@@ -125,7 +125,7 @@ WHAT THE SANDBOX DOES NOT COVER
 Both platforms: `grant.net` names hosts and no kernel policy filters by host,
 so a nonempty `net` allows outbound network and an empty one allows none.
 
-macOS: an interpreter linked against other installations — a Homebrew node
+macOS: an interpreter linked against other installations — a Homebrew python
 reaching /opt/homebrew/opt — needs those paths in `grant.read`; only its own
 installation prefix is implicit.
 

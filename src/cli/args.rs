@@ -16,7 +16,8 @@ pub(crate) struct Cli {
 	/// Cartridge root: entry paths in init.lua resolve against it (default: the project)
 	#[arg(long, global = true)]
 	pub(crate) dir: Option<PathBuf>,
-	/// Automatic execution: bypass tool policy and skip resolver provenance recording
+	/// Automatic execution: bypass tool policy and skip resolver provenance
+	/// recording, for the agent this command runs or launches
 	#[arg(long, global = true)]
 	pub(crate) yolo: bool,
 	#[command(subcommand)]
@@ -157,9 +158,13 @@ pub(crate) enum Command {
 impl Cli {
 	/// What clap cannot say: a flag that only some commands take.
 	pub(crate) fn check(&self) -> Result<()> {
-		if self.yolo && !matches!(&self.command, Command::Run { .. } | Command::Daemon) {
+		if self.yolo
+			&& !matches!(
+				&self.command,
+				Command::Run { .. } | Command::Daemon | Command::Launch { .. }
+			) {
 			return Err(Error::Argument(
-				"--yolo requires run or daemon; it cannot change an existing daemon".into(),
+				"--yolo requires run, launch or daemon; it cannot change an existing daemon".into(),
 			));
 		}
 		Ok(())

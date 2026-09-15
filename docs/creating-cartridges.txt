@@ -110,7 +110,7 @@ A HELPER PROGRAM
 A cartridge may start a program in any language and speak to it over lines of
 JSON; the program knows nothing of the base.
 
-  local app = cartridge.spawn({"bun", cartridge.root .. "/src/main.ts"})
+  local app = cartridge.spawn({"python3", cartridge.root .. "/src/helper.py"})
   cartridge.listen("live.status", function(args) return app:request({op = "status"}) end)
   app:on_line(function(line) if line.event then cartridge.emit(line.event, line.data) end end)
 
@@ -127,7 +127,7 @@ of its own leaves that group and is not.
 
 The base allows that executable's own installation with it — the prefix a
 program in a `bin/` was installed under. An interpreter that reaches other
-installations (a Homebrew `node` reaching /opt/homebrew/opt) needs that tree
+installations (a Homebrew `python` reaching /opt/homebrew/opt) needs that tree
 in `grant.read`.
 
 MANIFEST FIELDS
@@ -140,7 +140,9 @@ name and entry are required; entry is a relative .lua path inside the folder.
   needs           events that must have a listener before this cartridge starts;
                   `tool.*` names every event with that prefix another enabled
                   cartridge listens to, and nothing when there is none
-  grant           {read, write, net, exec}; absent grants nothing
+  grant           {read, write, net, exec, env}; absent grants nothing.
+                  `env` names variables a node inherits from the base's shell,
+                  exact or `PREFIX*`; a bare `*` is refused
   settings        dotted key -> {type, default, optional?, min?, max?, doc?}; see settings.txt
   config          author defaults laid over the declared ones
   contracts       events in `listen` that prove the cartridge; `cartridge verify` sends them
@@ -148,7 +150,6 @@ name and entry are required; entry is a relative .lua path inside the folder.
   doctor          an event in `listen` that `cartridge doctor` sends
   commands        label -> {argv, cwd, description?}; documentation, never run by the base
   binary          executable basename when it differs from the folder
-  ui              a JavaScript or TypeScript client module inside the folder
   source          where the source lives
 
 Names are nonempty exact strings, except a trailing `*` in `needs`. Unknown

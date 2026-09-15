@@ -77,7 +77,7 @@ fn sends(
 
 /// Prints one line per cartridge and answers how many **documents** could not be
 /// read — not how many entries failed, which is a different and larger number:
-/// a cartridge whose Lua entry or declared `ui` file is missing has still made
+/// a cartridge whose Lua entry is missing has still made
 /// its declarations, and they are printed. An unreadable document prints why
 /// and no declaration columns at all, so it never reads as a document that
 /// asked for nothing.

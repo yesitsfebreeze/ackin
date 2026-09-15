@@ -816,10 +816,69 @@ done
 	host.stop().await;
 }
 
+/// `grant.env` is the one way a secret from the base's environment reaches a
+/// node: the cartridge declares the shape of the name, the composition chooses
+/// the name, and nothing else in the environment comes with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_granted_env_prefix_reaches_the_node_and_nothing_beside_it_does() {
+	let dir = tempfile::tempdir().unwrap();
+	std::env::set_var("ENVTEST_ALLOWED_TOKEN", "granted");
+	std::env::set_var("ENVTEST_OTHER_TOKEN", "withheld");
+	cartridge(
+		dir.path(),
+		"reader",
+		json!({
+			"name": "reader", "entry": "init.lua",
+			"events": {"env": {}}, "listen": ["env"],
+			"grant": {"exec": ["/usr/bin/env"], "env": ["ENVTEST_ALLOWED_*"]},
+		}),
+		r#"local lines = {}
+			local env = cartridge.spawn({"/usr/bin/env"})
+			env:on_line(function(line) table.insert(lines, line) end)
+			cartridge.listen("env", function() return lines end)"#,
+	);
+	descriptor(dir.path(), &["reader"]);
+	let host = boot(dir.path()).await;
+	let mut lines = json!([]);
+	for _ in 0..50 {
+		lines = host
+			.bail("env", json!(null))
+			.await
+			.unwrap()
+			.unwrap_or_default();
+		if lines.as_array().is_some_and(|s| !s.is_empty()) {
+			break;
+		}
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+	let lines = lines.as_array().expect("env printed its environment");
+	let has = |name: &str| {
+		lines
+			.iter()
+			.any(|line| line.as_str().unwrap_or_default().starts_with(name))
+	};
+	assert!(
+		has("ENVTEST_ALLOWED_TOKEN=granted"),
+		"the granted prefix reaches the node: {lines:?}"
+	);
+	assert!(
+		!has("ENVTEST_OTHER_TOKEN"),
+		"a variable outside the grant does not: {lines:?}"
+	);
+	host.stop().await;
+}
+
 /// A node's environment is its own: no injected secret, no ambient shell — a
 /// helper it spawns sees the allow-list, not the base's environment.
+///
+/// Two `CARTRIDGE_*` variables are deliberate and named here: `CARTRIDGE_BIN`
+/// and `CARTRIDGE_HOME` tell a helper that re-enters the CLI which binary to
+/// run as and which home to resolve, so it agrees with the base that spawned
+/// it. Both are paths and carry no credential. Everything else — the seven
+/// variables naming this node, and any `CARTRIDGE_*` the operator's shell held
+/// — must not reach a helper.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_spawned_helper_sees_no_cartridge_variable_and_a_path() {
+async fn a_spawned_helper_sees_only_the_two_named_cartridge_variables_and_a_path() {
 	let dir = tempfile::tempdir().unwrap();
 	std::env::set_var("CARTRIDGE_TEST_SECRET", "host-admin-leak");
 	cartridge(
@@ -850,11 +909,19 @@ async fn a_spawned_helper_sees_no_cartridge_variable_and_a_path() {
 		tokio::time::sleep(Duration::from_millis(20)).await;
 	}
 	let lines = lines.as_array().expect("env printed its environment");
+	let leaked: Vec<&str> = lines
+		.iter()
+		.filter_map(|line| line.as_str())
+		.filter(|line| line.starts_with("CARTRIDGE_"))
+		.filter(|line| {
+			!["CARTRIDGE_BIN=", "CARTRIDGE_HOME="]
+				.iter()
+				.any(|named| line.starts_with(named))
+		})
+		.collect();
 	assert!(
-		lines
-			.iter()
-			.all(|line| !line.as_str().unwrap_or_default().starts_with("CARTRIDGE_")),
-		"no CARTRIDGE_* variable reaches a helper: {lines:?}"
+		leaked.is_empty(),
+		"only CARTRIDGE_BIN and CARTRIDGE_HOME reach a helper: {leaked:?}"
 	);
 	assert!(
 		lines

@@ -69,6 +69,30 @@ fn expand(needs: Vec<String>, listened: &[String]) -> Result<Vec<String>> {
 	Ok(out)
 }
 
+/// `${config.<key>}` in needs names the event that setting holds: a cartridge
+/// whose composition chooses which key answers it — a clock, a terminal — may
+/// send what it was pointed at, and nothing else. An empty setting is "not
+/// configured" and contributes no need, so an unused hook grants nothing.
+fn configured(needs: Vec<String>, config: &serde_json::Value) -> Result<Vec<String>> {
+	let mut out = Vec::new();
+	for key in needs {
+		let Some(setting) = key
+			.strip_prefix("${config.")
+			.and_then(|rest| rest.strip_suffix('}'))
+		else {
+			out.push(key);
+			continue;
+		};
+		let value = crate::settings::get(config, setting)
+			.and_then(serde_json::Value::as_str)
+			.ok_or_else(|| Error::Descriptor(format!("need `{key}` names no string setting")))?;
+		if !value.is_empty() {
+			out.push(value.to_owned());
+		}
+	}
+	Ok(out)
+}
+
 fn dedup(keys: &mut Vec<String>) {
 	let mut seen = std::collections::HashSet::new();
 	keys.retain(|key| seen.insert(key.clone()));
@@ -104,6 +128,7 @@ impl Host {
 			listened.dedup();
 			needs = expand(needs, &listened)?;
 		}
+		needs = configured(needs, &config)?;
 		exact(&needs)?;
 		dedup(&mut needs);
 		let grant = self.expand_grant(&declared.grant, &config)?;
@@ -183,11 +208,21 @@ impl Host {
 			Ok(path.clone())
 		};
 		let all = |paths: &[String]| paths.iter().map(expand).collect::<Result<Vec<_>>>();
+		// Variable names, not paths: a `${config.<key>}` names one, a trailing
+		// `*` is a prefix, and a bare `*` would hand over every secret the
+		// operator's shell held, so it is refused here rather than at use.
+		let env = configured(grant.env.clone(), config)?;
+		if env.iter().any(|name| name == "*") {
+			return Err(Error::Descriptor(
+				"a bare `*` in grant.env; name a variable or a prefix".into(),
+			));
+		}
 		Ok(Grant {
 			read: all(&grant.read)?,
 			write: all(&grant.write)?,
 			net: grant.net.clone(),
 			exec: all(&grant.exec)?,
+			env,
 		})
 	}
 

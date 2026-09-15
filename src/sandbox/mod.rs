@@ -21,7 +21,7 @@
 //! only where the grant names it.
 //!
 //! **What it does not cover.** An interpreter linked against other
-//! installations — a Homebrew node reaching `/opt/homebrew/opt` — is the user's
+//! installations — a Homebrew python reaching `/opt/homebrew/opt` — is the user's
 //! package tree, granted only where `grant.read` names it.
 //!
 //! **The empty grant is the tightest policy.** A cartridge that declares
@@ -289,15 +289,20 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	lines.extend(read.iter().map(|p| format!("(subpath {})", literal(p))));
 	profile.push_str(&format!("(allow file-read* {})\n", lines.join(" ")));
 	// Write: only what the grant names, in every spelling the child may open.
-	let writes: Vec<String> = grant
-		.write
-		.iter()
-		.flat_map(|path| granted_paths(path, &root))
-		.map(|p| format!("(subpath {})", literal(&p)))
-		.collect();
-	if !writes.is_empty() {
-		profile.push_str(&format!("(allow file-write* {})\n", writes.join(" ")));
-	}
+	// One sink is always writable: `/dev/null` is plumbing, not a capability —
+	// git, shells and runtimes discard output to it without any grant naming it,
+	// so a program allowed to run at all may open it.
+	let writes: Vec<String> =
+		std::iter::once(format!("(literal {})", literal(Path::new("/dev/null"))))
+			.chain(
+				grant
+					.write
+					.iter()
+					.flat_map(|path| granted_paths(path, &root))
+					.map(|p| format!("(subpath {})", literal(&p))),
+			)
+			.collect();
+	profile.push_str(&format!("(allow file-write* {})\n", writes.join(" ")));
 	// Terminals: a cartridge that may write devices may open and drive a pseudo-terminal.
 	if grant
 		.write

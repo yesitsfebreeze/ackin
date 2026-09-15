@@ -19,15 +19,18 @@ pub const NODE_BIN_ENV: &str = "CARTRIDGE_NODE_BIN";
 
 /// What a node may inherit from the base's environment: nothing it needs to
 /// do its job is missing, and nothing it needs not to see is present. The six
-/// `CARTRIDGE_*` variables are set explicitly below. `PATH` resolves the
-/// helpers `grant.exec` names; `HOME` reaches the global `config.lua` and the
-/// trust store; `XDG_RUNTIME_DIR` names the sockets base; the rest keep a
-/// node's timestamps, messages and temp files from changing with the base's
-/// shell. Everything else — secrets the person's shell held — is dropped.
+/// The other `CARTRIDGE_*` variables are set explicitly below. `PATH` resolves
+/// the helpers `grant.exec` names; `HOME` and `CARTRIDGE_HOME` reach the global
+/// `config.lua` and the trust store, and a node that resolves a different home
+/// from the base that started it reads a different machine's preferences;
+/// `XDG_RUNTIME_DIR` names the sockets base; the rest keep a node's timestamps,
+/// messages and temp files from changing with the base's shell. Everything
+/// else — secrets the person's shell held — is dropped.
 #[cfg(unix)]
 const PASSTHROUGH: &[&str] = &[
 	"PATH",
 	"HOME",
+	"CARTRIDGE_HOME",
 	"TMPDIR",
 	"TZ",
 	"LANG",
@@ -36,6 +39,12 @@ const PASSTHROUGH: &[&str] = &[
 	"LOGNAME",
 	"SHELL",
 	"XDG_RUNTIME_DIR",
+	// The proxy's own credential, not a shell secret: `launch` mints it in
+	// this process and `just proxy` names one, and the proxy node reads it
+	// after the config that binds its listener has already travelled from
+	// here — the one env-borne thing a node needs that the base, not the
+	// shell, may hold.
+	"CARTRIDGE_PROXY_KEY",
 ];
 
 /// The same list for Windows, which needs a longer one to mean the same thing.
@@ -64,6 +73,26 @@ const PASSTHROUGH: &[&str] = &[
 	"NUMBER_OF_PROCESSORS",
 	"PROCESSOR_ARCHITECTURE",
 ];
+
+/// The variables a cartridge's `grant.env` names, by exact name or `PREFIX*`.
+/// This is the one way a secret from the base's environment reaches a node, and
+/// it reaches only the node that declared the shape of its name. A bare `*`
+/// grants nothing: the loader refuses it, and this refuses it again.
+fn granted_env(grant: &[String]) -> Vec<(String, std::ffi::OsString)> {
+	let allows = |name: &str| {
+		grant.iter().any(|pattern| match pattern.strip_suffix('*') {
+			Some("") => false,
+			Some(prefix) => name.starts_with(prefix),
+			None => name == pattern,
+		})
+	};
+	std::env::vars_os()
+		.filter_map(|(key, value)| {
+			let name = key.to_str()?.to_owned();
+			allows(&name).then_some((name, value))
+		})
+		.collect()
+}
 
 pub(super) async fn start(
 	host: &Arc<Host>,
@@ -113,6 +142,7 @@ pub(super) async fn start(
 				.iter()
 				.filter_map(|key| std::env::var_os(key).map(|value| (key, value))),
 		)
+		.envs(granted_env(&plan.grant.env))
 		.env(SOCKET_ENV, &socket)
 		.env(NODE_TOKEN_ENV, &token)
 		.env(
@@ -176,10 +206,11 @@ pub(super) async fn start(
 				format!("exited before serving: {status}{}", said()),
 			));
 		}
-		if socket.exists() {
-			if let Ok(connected) = super::connect(&socket, &token).await {
-				break connected;
-			}
+		// Not gated on the path existing: on Windows the socket path names a
+		// pipe that never appears in the filesystem, and on Unix a connect to
+		// a missing path fails at once anyway.
+		if let Ok(connected) = super::connect(&socket, &token).await {
+			break connected;
 		}
 		if tokio::time::Instant::now() >= deadline {
 			let _ = child.kill().await;
