@@ -6,7 +6,7 @@ const B_TO_A: &str = "b-to-a";
 
 struct Running {
 	ctx: Ctx,
-	task: tokio::task::JoinHandle<()>,
+	task: tokio::task::JoinHandle<Result<()>>,
 }
 
 async fn start(path: &std::path::Path, apply: Apply) -> Running {
@@ -217,7 +217,7 @@ async fn gather_reports_every_listener_outcome() {
 		.call("dispose", json!({}))
 		.await
 		.unwrap();
-	a.task.await.unwrap();
+	a.task.await.unwrap().unwrap();
 	let quick = Ctx::new(HOST, Duration::from_millis(100));
 	quick.set_directory(b.ctx.directory());
 	assert!(matches!(
@@ -384,6 +384,7 @@ async fn a_send_reconnects_after_the_listener_restarts() {
 		.unwrap();
 	tokio::time::timeout(Duration::from_secs(3), a.task)
 		.await
+		.unwrap()
 		.unwrap()
 		.unwrap();
 	assert_eq!(

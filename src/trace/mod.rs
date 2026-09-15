@@ -175,13 +175,15 @@ impl Sink {
 				cap,
 				written: 0,
 			},
-			Ok(p) if !p.is_empty() && p != "off" => {
-				Sink::file(PathBuf::from(p), cap).unwrap_or(Sink {
-					out: Out::Stderr,
-					cap,
-					written: 0,
-				})
-			}
+			Ok(p) if !p.is_empty() && p != "off" => Sink::file(PathBuf::from(&p), cap)
+				.unwrap_or_else(|err| {
+					eprintln!("cartridge: {p}: {err}; diagnostics go to stderr");
+					Sink {
+						out: Out::Stderr,
+						cap,
+						written: 0,
+					}
+				}),
 			_ => Sink {
 				out: Out::Disabled,
 				cap,
@@ -287,6 +289,14 @@ fn drain(sink: &mut Sink, notes: &std::sync::mpsc::Receiver<Note>, dropped: &Ato
 /// thread, so it reads the environment and working directory it reads today;
 /// the blocking write happens on the writer thread.
 fn out() -> &'static std::sync::mpsc::SyncSender<Note> {
+	// Settle before entering the cell, not inside it: the initializer reads
+	// `settings::host()`, and settling warns through `tracing::warn!` for each
+	// refused value, which comes back here — re-entering a `OnceLock` from its
+	// own initializer, which deadlocks. Only on the way to the first `out()`;
+	// afterwards this is the cell's own check.
+	if OUT.get().is_none() {
+		let _ = crate::settings::host();
+	}
 	OUT.get_or_init(|| {
 		let mut sink = Sink::from_env();
 		let (lines, notes) =
@@ -315,9 +325,25 @@ fn now_ms() -> u64 {
 pub fn flush() {
 	let Some(lines) = OUT.get() else { return };
 	let (ack, done) = std::sync::mpsc::sync_channel::<()>(1);
-	if lines.send(Note::Flush(ack)).is_ok() {
-		let _ = done.recv_timeout(std::time::Duration::from_secs(5));
+	// Enqueue without blocking: the queue is full exactly when the writer
+	// thread is stalled inside its own write, and a plain `send` would wait on
+	// it past the cap below.
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+	let mut note = Note::Flush(ack);
+	loop {
+		match lines.try_send(note) {
+			Ok(()) => break,
+			Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return,
+			Err(std::sync::mpsc::TrySendError::Full(n)) => {
+				if std::time::Instant::now() >= deadline {
+					return;
+				}
+				note = n;
+				std::thread::sleep(std::time::Duration::from_millis(10));
+			}
+		}
 	}
+	let _ = done.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()));
 }
 
 /// One diagnostic line: `{"t","trace","src","msg",…}`, sensitive fields omitted.
@@ -369,10 +395,20 @@ pub fn diagnostic_line(src: &str, line: &str) {
 	}
 	match serde_json::from_str::<Json>(line) {
 		Ok(Json::Object(mut o)) => {
+			// A cartridge wrote this msg, so a non-string one clears the same
+			// redaction as the rest of the line: the OMIT list above must not
+			// be bypassed by nesting a field under it.
 			let msg = o
 				.remove("msg")
 				.or_else(|| o.remove("message"))
-				.and_then(|m| m.as_str().map(str::to_owned))
+				.map(|m| match m {
+					Json::String(s) => s,
+					Json::Null => String::new(),
+					mut other => {
+						redact(&mut other, &mut Vec::new());
+						other.to_string()
+					}
+				})
 				.unwrap_or_default();
 			diagnostic(src, msg, Json::Object(o));
 		}

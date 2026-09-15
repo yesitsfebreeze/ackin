@@ -38,3 +38,29 @@ pub(crate) async fn follow(
 	}
 	Ok(ExitCode::SUCCESS)
 }
+
+/// The host already serving this project, for a command to join rather than
+/// start a second one beside it: the address is taken, and what the command
+/// wants — an event answered, a launch rendered, MCP lines served — the
+/// running host answers just as well.
+pub(crate) async fn served(
+	project: &Project,
+) -> Option<(
+	cartridge::transport::rpc::Peer,
+	tokio::sync::mpsc::Receiver<Incoming>,
+)> {
+	cartridge::host::socket::client(&project.descriptor)
+		.await
+		.ok()
+}
+
+/// `cartridge.bail` on the running host: the first answer, null when none.
+pub(crate) async fn bail(
+	peer: &cartridge::transport::rpc::Peer,
+	name: &str,
+	data: Value,
+) -> Result<Value> {
+	peer.call("bail", json!({ "name": name, "data": data }))
+		.await
+		.map_err(|e| Error::Remote(e.message))
+}

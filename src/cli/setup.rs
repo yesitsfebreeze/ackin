@@ -25,7 +25,7 @@
 //! is reported as an answer the host did not understand.
 
 use std::io::{BufRead, IsTerminal, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -341,6 +341,14 @@ pub(crate) fn install(dir: &Path, chosen: &[Candidate]) -> Result<Vec<(String, P
 	std::fs::create_dir_all(dir).map_err(|e| Error::file(dir, e))?;
 	let mut installed = Vec::new();
 	for c in chosen {
+		// `.cartridge` is the descriptor's own folder, so a cartridge may not
+		// be installed as it.
+		if !cartridge::loader::is_bare_name(&c.name) || c.name == ".cartridge" {
+			return Err(Error::Argument(format!(
+				"{}: not a valid cartridge name",
+				c.name
+			)));
+		}
 		let place = dir.join(&c.name);
 		match &c.source {
 			Source::Repository(url) => {
@@ -757,18 +765,7 @@ fn names(candidates: &[&Candidate]) -> String {
 /// A path made absolute lexically and cleaned of `.` and `..`, so two
 /// spellings of one directory compare equal without touching the disk.
 fn absolute(path: &Path) -> PathBuf {
-	let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-	let mut out = PathBuf::new();
-	for part in abs.components() {
-		match part {
-			Component::CurDir => {}
-			Component::ParentDir => {
-				out.pop();
-			}
-			other => out.push(other),
-		}
-	}
-	out
+	cartridge::trust::absolute_clean(path)
 }
 
 /// `to` as seen from inside `from`: the link text that keeps working when

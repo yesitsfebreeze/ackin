@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 
 use document::classify;
 pub(crate) use document::{document, resolve, Declared};
-pub use document::{Cartridge, Command, Event, Grant, MANIFEST};
+pub use document::{is_bare_name, Cartridge, Command, Event, Grant, MANIFEST};
 
 /// A descriptor entry: a cartridge folder, or a bare Lua file.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]

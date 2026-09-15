@@ -92,7 +92,10 @@ pub struct Host {
 	pub(crate) dir: PathBuf,
 	pub(crate) descriptor: PathBuf,
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
+	/// The project's socket directory: `host.sock` and one subdirectory per run.
 	sockets: PathBuf,
+	/// This run's subdirectory of `sockets`, where its nodes' sockets live.
+	nodes: PathBuf,
 	host_token: String,
 	tokens: Mutex<HashMap<(String, Option<String>), String>>,
 	/// Each node's own credential, the one its socket grants as `Host`. A node
@@ -115,7 +118,7 @@ impl Drop for Host {
 		if let Some(task) = self.inner.get() {
 			task.abort();
 		}
-		let _ = std::fs::remove_dir_all(&self.sockets);
+		self.unpublish();
 	}
 }
 
@@ -128,6 +131,7 @@ impl Host {
 		let host_token = crate::transport::token();
 		Ok(Arc::new(Self {
 			sockets: socket::run_dir(&descriptor)?,
+			nodes: socket::host_dir(&descriptor)?,
 			dir: dir.canonicalize().unwrap_or(dir),
 			descriptor,
 			solo: Mutex::new(None),
@@ -186,7 +190,7 @@ impl Host {
 
 	/// The socket a cartridge serves on, stable for the life of this host.
 	pub fn socket(&self, id: &str) -> PathBuf {
-		self.sockets.join(socket::file_name(id))
+		self.nodes.join(socket::file_name(id))
 	}
 
 	/// State changes of every cartridge, as `{id, state, error}`.
@@ -575,6 +579,14 @@ impl Host {
 				slot.state = State::Waiting;
 			}
 		}
+		// Every caller of this is on its way out, and a task may still hold
+		// this base past the runtime's end, so the files go now, not on drop.
+		self.unpublish();
+	}
+
+	/// Take this run's nodes' sockets out of the socket directory.
+	fn unpublish(&self) {
+		let _ = std::fs::remove_dir_all(&self.nodes);
 	}
 
 	fn peer_of(&self, id: &str) -> Option<Peer> {

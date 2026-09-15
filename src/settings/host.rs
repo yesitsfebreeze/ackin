@@ -47,7 +47,6 @@ pub struct Host {
 	pub verify_timeout_secs: u64,
 	pub watch_debounce_ms: u64,
 	pub mcp_reply_queue: usize,
-	pub proxy_key_bytes: usize,
 	pub sandbox_error_chars: usize,
 	pub diagnostics_max_bytes: u64,
 	pub diagnostics_queue: usize,

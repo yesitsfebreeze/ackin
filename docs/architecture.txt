@@ -127,7 +127,8 @@ so a nonempty `net` allows outbound network and an empty one allows none.
 
 macOS: an interpreter linked against other installations — a Homebrew python
 reaching /opt/homebrew/opt — needs those paths in `grant.read`; only its own
-installation prefix is implicit.
+installation prefix is implicit, and the person's home directory is never that
+prefix.
 
 Linux: below Landlock ABI V9 (Linux 7.1) a unix socket named by a path is not
 gated, so a node can connect to any socket on the machine — another project's

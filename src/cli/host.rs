@@ -8,7 +8,7 @@ use cartridge::host::{socket, Host};
 use cartridge::{Error, Result};
 use serde_json::{json, Value};
 
-use super::{fail, Project, FAILED};
+use super::{client, fail, Project, FAILED};
 
 /// Nodes lead their own process groups, so the terminal signals this process
 /// alone: a terminate stops the host, and so does an interrupt unless a program
@@ -70,6 +70,13 @@ fn serve_beside(host: &Arc<Host>) -> tokio::task::JoinHandle<()> {
 }
 
 pub(crate) async fn run(project: &Project, key: &str, args: Value) -> Result<ExitCode> {
+	if let Some((peer, _incoming)) = client::served(project).await {
+		let value = client::bail(&peer, key, args).await?;
+		if !value.is_null() {
+			println!("{value}");
+		}
+		return Ok(ExitCode::SUCCESS);
+	}
 	let host = host(project, None)?;
 	let served = serve_beside(&host);
 	let result = host.run(key, args).await;
@@ -87,9 +94,17 @@ pub(crate) async fn launch(
 	model: String,
 	args: Vec<String>,
 ) -> Result<ExitCode> {
+	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
+	// A host already serves this project: its proxy renders the launch, and
+	// the agent runs here against it.
+	if let Some((peer, _incoming)) = client::served(project).await {
+		let status = spawn(client::bail(&peer, "proxy", request).await?).await?;
+		return Ok(ExitCode::from(
+			status.as_i64().unwrap_or(1).clamp(0, 255) as u8
+		));
+	}
 	let foreground = Arc::new(std::sync::atomic::AtomicBool::new(false));
 	let host = host(project, Some(foreground.clone()))?;
-	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
 	let result = host
 		.run_then("proxy", request, move |launch| {
 			let foreground = foreground.clone();
@@ -105,28 +120,6 @@ pub(crate) async fn launch(
 	Ok(ExitCode::from(
 		status.as_i64().unwrap_or(1).clamp(0, 255) as u8
 	))
-}
-
-/// The variable [`minted_proxy_key`] fills.
-pub(crate) const PROXY_KEY_ENV: &str = "CARTRIDGE_PROXY_KEY";
-
-/// A fresh proxy key, or `None` when the environment already carries one. The
-/// caller installs it before the runtime exists: `setenv` races every other
-/// thread's `getenv`, and `config.lua` reads it in this process.
-pub(crate) fn minted_proxy_key() -> Result<Option<String>> {
-	match std::env::var(PROXY_KEY_ENV) {
-		Ok(key) if !key.is_empty() => Ok(None),
-		_ => random_hex(cartridge::settings::host().proxy_key_bytes).map(Some),
-	}
-}
-
-fn random_hex(bytes: usize) -> Result<String> {
-	use std::io::Read;
-	let mut buf = vec![0u8; bytes];
-	std::fs::File::open("/dev/urandom")
-		.and_then(|mut f| f.read_exact(&mut buf))
-		.map_err(|e| Error::file("/dev/urandom", e))?;
-	Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Run a rendered launch `{program, args, env, unset, cwd}` on this terminal
@@ -169,14 +162,39 @@ async fn spawn(launch: Value) -> Result<Value> {
 pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
 	// The client owns this process's lifetime: the pump ends at end of
 	// input and the descriptor is disposed on the way out.
+	// A host already serving this project answers the client's lines itself.
+	if let Some((peer, _incoming)) = client::served(project).await {
+		stdio(Backend::Remote(peer)).await?;
+		return Ok(ExitCode::SUCCESS);
+	}
 	let host = host(project, None)?;
 	let serve = {
 		let host = host.clone();
-		|_| async move { stdio(host).await }
+		|_| async move { stdio(Backend::Local(host)).await }
 	};
 	host.run_then("mcp", json!({ "op": "ready" }), serve)
 		.await?;
 	Ok(ExitCode::SUCCESS)
+}
+
+/// Who answers the `mcp` event: this process's host, or the one already serving.
+#[derive(Clone)]
+enum Backend {
+	Local(Arc<Host>),
+	Remote(cartridge::transport::rpc::Peer),
+}
+
+impl Backend {
+	async fn message(&self, line: &str) -> Result<Value> {
+		let data = json!({ "op": "message", "line": line });
+		match self {
+			Backend::Local(host) => host
+				.bail("mcp", data)
+				.await
+				.map(|answer| answer.unwrap_or(Value::Null)),
+			Backend::Remote(peer) => client::bail(peer, "mcp", data).await,
+		}
+	}
 }
 
 /// Newline-delimited JSON-RPC between an MCP client and the `mcp` service:
@@ -184,7 +202,7 @@ pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
 /// One task per message, so a cancellation notification is read and acted on
 /// while the call it cancels is still running. Diagnostics stay on stderr;
 /// stdout carries the protocol and nothing else.
-async fn stdio(host: Arc<Host>) -> Result<Value> {
+async fn stdio(backend: Backend) -> Result<Value> {
 	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 	let (replies, mut pending) =
 		tokio::sync::mpsc::channel::<String>(cartridge::settings::host().mcp_reply_queue);
@@ -202,12 +220,9 @@ async fn stdio(host: Arc<Host>) -> Result<Value> {
 		if line.trim().is_empty() {
 			continue;
 		}
-		let (host, replies) = (host.clone(), replies.clone());
+		let (backend, replies) = (backend.clone(), replies.clone());
 		serving.spawn(async move {
-			let result = host
-				.bail("mcp", json!({ "op": "message", "line": line }))
-				.await
-				.map(|answer| answer.unwrap_or(Value::Null));
+			let result = backend.message(&line).await;
 			if let Some(reply) = mcp_bridge_reply(&line, result) {
 				let _ = replies.send(format!("{reply}\n")).await;
 			}

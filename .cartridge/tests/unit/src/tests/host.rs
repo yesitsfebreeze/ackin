@@ -988,6 +988,31 @@ async fn an_untrusted_descriptor_is_refused_where_it_is_enforced() {
 	assert!(refused.contains("cartridge trust"), "{refused}");
 }
 
+/// Two solo entry ids that fold to the same socket file name are refused,
+/// case differences included: `entries` runs this check on the solo list
+/// too, not only on the derived-plus-descriptor list.
+#[tokio::test(flavor = "multi_thread")]
+async fn solo_entries_sharing_a_socket_name_are_refused() {
+	let dir = tempfile::tempdir().unwrap();
+	let host = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();
+	*host.solo.lock() = Some(vec![
+		crate::loader::Entry {
+			id: "vendor/x".into(),
+			path: "vendor/x".into(),
+			config: json!(null),
+			disabled: false,
+		},
+		crate::loader::Entry {
+			id: "vendor_x".into(),
+			path: "vendor_x".into(),
+			config: json!(null),
+			disabled: false,
+		},
+	]);
+	let refused = host.entries().unwrap_err().to_string();
+	assert!(refused.contains("share the socket name"), "{refused}");
+}
+
 /// Lua that runs without handing control back is refused, and the node keeps
 /// serving everything else — no 60 s deadline, no wedged state.
 #[tokio::test(flavor = "multi_thread")]

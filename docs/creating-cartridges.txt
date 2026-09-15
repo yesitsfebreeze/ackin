@@ -123,16 +123,23 @@ is recorded by the base. Its executable must be in the cartridge's `grant.exec`.
 
 `kill()` ends the program. A program runs in its cartridge's process group and
 is killed with it when the cartridge stops; one that starts a session or group
-of its own leaves that group and is not.
+of its own leaves that group and is not. A program that stops reading its stdin
+is killed too: a write that does not finish within the cartridge's timeout
+leaves a half-written line nobody can complete, so the base ends the program
+and fails that send or request, and every later one, rather than writing on.
 
 The base allows that executable's own installation with it — the prefix a
-program in a `bin/` was installed under. An interpreter that reaches other
-installations (a Homebrew `python` reaching /opt/homebrew/opt) needs that tree
-in `grant.read`.
+program in a `bin/` was installed under. The person's home directory is never
+that installation: a program in `~/bin` or `~/.local/bin` is allowed with the
+`bin/` it sits in, not with everything the home holds. An interpreter that
+reaches other installations (a Homebrew `python` reaching /opt/homebrew/opt)
+needs that tree in `grant.read`.
 
 MANIFEST FIELDS
 
 name and entry are required; entry is a relative .lua path inside the folder.
+The name is the folder the cartridge is installed as, so one carrying a
+separator, `..` or the name `.cartridge` is refused rather than placed.
 
   description     one line of purpose
   events          name -> {description?, schema?}; events this cartridge defines

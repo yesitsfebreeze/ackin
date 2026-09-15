@@ -100,23 +100,62 @@ pub fn path(descriptor: &Path) -> Result<PathBuf> {
 	Ok(run_dir(descriptor)?.join("host.sock"))
 }
 
-fn token_path(descriptor: &Path) -> Result<PathBuf> {
-	Ok(base()?.join(format!("{}.token", tag(descriptor))))
-}
-
-/// The directory holding every socket of the base serving `descriptor`: its
-/// own and one per cartridge. Named for the project, not for the run, so the
-/// address of a base is a fact about the project rather than about which
-/// process happens to be serving it.
-///
-/// One directory per project also means one base per project, which is the
-/// rule anyway: the second one finds the address taken when it binds. A run
-/// that died leaves its sockets here, and `bind` reclaims the ones nothing
-/// answers on — which is what the process check this used to do was for.
+/// The directory holding the base's own socket for `descriptor`, and one
+/// subdirectory per run for the cartridges' sockets. Named for the project,
+/// not for the run, so the address of a base is a fact about the project
+/// rather than about which process happens to be serving it.
 pub(crate) fn run_dir(descriptor: &Path) -> Result<PathBuf> {
 	let dir = base()?.join(tag(descriptor));
 	owner_only_dir(&dir)?;
 	Ok(dir)
+}
+
+/// This process's own directory under [`run_dir`], for its nodes' sockets.
+/// Several bases of one project run at once — a daemon beside a `run`, a
+/// launch beside the `mcp` its agent starts — and each unlinks its sockets
+/// when it stops, so they must not share one directory or the second to start
+/// takes the first's node sockets away and every event to them waits out its
+/// deadline. Named by pid, so the directory of a run that died is recognised
+/// and removed by the next one to start.
+pub(crate) fn host_dir(descriptor: &Path) -> Result<PathBuf> {
+	let run = run_dir(descriptor)?;
+	sweep(&run);
+	let dir = run.join(std::process::id().to_string());
+	owner_only_dir(&dir)?;
+	Ok(dir)
+}
+
+/// Remove the directories of runs whose process is gone.
+fn sweep(run: &Path) {
+	let Ok(entries) = std::fs::read_dir(run) else {
+		return;
+	};
+	for entry in entries.flatten() {
+		let Some(pid) = entry
+			.file_name()
+			.to_str()
+			.and_then(|name| name.parse::<u32>().ok())
+		else {
+			continue;
+		};
+		if pid != std::process::id() && !alive(pid) {
+			let _ = std::fs::remove_dir_all(entry.path());
+		}
+	}
+}
+
+#[cfg(unix)]
+fn alive(pid: u32) -> bool {
+	// SAFETY: signal 0 delivers nothing; it only asks whether `pid` exists.
+	let exists = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+	exists || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+// ponytail: no liveness check on Windows, so nothing is swept there; a dead
+// run's directory stays until the user clears it.
+#[cfg(windows)]
+fn alive(_pid: u32) -> bool {
+	true
 }
 
 /// A socket file name for an entry id.
@@ -150,40 +189,39 @@ pub(crate) async fn accept(
 	host: std::sync::Weak<Host>,
 	mut listener: crate::transport::typed::LocalListener,
 ) {
-	while let Ok(adapter) = listener.accept().await {
-		let Some(host) = host.upgrade() else { break };
-		let stop = host.stop_signal();
-		tokio::spawn(connection(host, adapter, stop));
-	}
-}
-
-/// Publish this base as the project's, for the command line, until asked to
-/// stop. Returns `Ok(false)` when another base already serves this project.
-pub async fn serve(host: Arc<Host>) -> Result<bool> {
-	let token = token_path(&host.descriptor)?;
-	// Nothing is published to say where this base listens. Its address is
-	// derived from the descriptor, so a caller holding the project computes the
-	// same one; there is no link to write, to read back, or to leave stale.
-	//
-	// That also moves the refusal of a second base for one project: it is the
-	// bind in `listen` that finds the address taken and answers AlreadyRunning,
-	// before this runs. Reaching here means this base holds the address, so the
-	// `false` this returns for the caller's sake no longer occurs.
-	write_private(&token, host.host_token())?;
-	let _published = Published(vec![token]);
-	host.stopped().await;
-	Ok(true)
-}
-
-/// Files that name this base to the command line, gone when it stops serving.
-struct Published(Vec<PathBuf>);
-
-impl Drop for Published {
-	fn drop(&mut self) {
-		for path in &self.0 {
-			let _ = std::fs::remove_file(path);
+	// The accept task is spawned while the base lives; a host already dropped
+	// is not one to answer for.
+	let Some(host) = host.upgrade() else { return };
+	let stop = host.stop_signal();
+	loop {
+		tokio::select! {
+			_ = stop.cancelled() => break,
+			accepted = listener.accept() => match accepted {
+				Ok(adapter) => {
+					let stop = host.stop_signal();
+					tokio::spawn(connection(host.clone(), adapter, stop));
+				}
+				// A real accept(2) failure — the fd table exhausted, say — is
+				// transient on a listening socket: the next call answers
+				// again. Ending the loop here would leave the base running
+				// with a socket nobody can reach, so log and go on. Only a
+				// stop ends the loop.
+				Err(error) => tracing::warn!(
+					target: "cartridge",
+					"accept failed, continuing: {error}"
+				),
+			},
 		}
 	}
+}
+
+/// Keep this base the project's, for the command line, until asked to stop.
+/// Nothing is published to say where it listens: its address is derived from
+/// the descriptor, and the socket's owner-only mode is what admits a caller.
+/// Always `Ok(true)`; the refusal of a second base happens in `listen`.
+pub async fn serve(host: Arc<Host>) -> Result<bool> {
+	host.stopped().await;
+	Ok(true)
 }
 
 pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
@@ -222,9 +260,15 @@ async fn connection(
 	let caller = match incoming.recv().await {
 		Some(Incoming::Request(request)) if request.method == "auth" => {
 			let token = request.params["token"].as_str().unwrap_or_default();
-			let caller = match token == host.host_token() {
-				true => Some(Caller::Host),
-				false => host.caller(token).map(|_| Caller::Cartridge),
+			// The socket is owner-only, so whoever reaches it is the user: no
+			// token means the command line. A node names itself with its own
+			// token; any other token is refused.
+			// ponytail: a node that omits its token passes as the command line;
+			// bind the node role to the peer instead if nodes ever run untrusted.
+			let caller = match token {
+				"" => Some(Caller::Host),
+				token if token == host.host_token() => Some(Caller::Host),
+				token => host.caller(token).map(|_| Caller::Cartridge),
 			};
 			match caller {
 				Some(caller) => {
@@ -387,11 +431,6 @@ pub(crate) async fn forward(mut events: broadcast::Receiver<Value>, peer: Peer) 
 
 /// A connection to the host serving `descriptor`.
 pub async fn client(descriptor: &Path) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
-	let token =
-		std::fs::read_to_string(token_path(descriptor)?).map_err(|e| Error::Unavailable {
-			key: "host".into(),
-			why: format!("no base serves {}: {e}", descriptor.display()),
-		})?;
 	// The same derivation the base used to bind: the descriptor is the address.
-	super::connect(&path(descriptor)?, token.trim()).await
+	super::connect(&path(descriptor)?, "").await
 }

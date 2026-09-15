@@ -189,11 +189,29 @@ impl Host {
 					})?;
 				return Ok(project.join(value).to_string_lossy().into_owned());
 			}
-			let home = std::env::var("HOME").unwrap_or_default();
+			// Resolved, and refused, only for a grant that names it: an unset
+			// home must not root `$HOME/...` at the cartridge root or at `/`,
+			// the way an `unwrap_or_default` would. Through `sandbox::home`,
+			// so which variable names it is decided in one place.
+			if let Some(rest) = path.strip_prefix("$HOME") {
+				if rest.is_empty() || rest.starts_with('/') {
+					let home = crate::sandbox::home().filter(|home| home.is_absolute());
+					let Some(home) = home else {
+						let var = if cfg!(target_os = "windows") {
+							"USERPROFILE"
+						} else {
+							"HOME"
+						};
+						return Err(Error::Descriptor(format!(
+							"grant `{path}` expands $HOME, but {var} is not set to an absolute path"
+						)));
+					};
+					return Ok(format!("{}{rest}", home.to_string_lossy()));
+				}
+			}
 			let tmp = std::env::temp_dir();
 			for (name, base) in [
 				("$PROJECT", project.to_string_lossy().into_owned()),
-				("$HOME", home),
 				(
 					"$TMPDIR",
 					tmp.to_string_lossy().trim_end_matches('/').to_owned(),

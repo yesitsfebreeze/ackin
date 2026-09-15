@@ -110,15 +110,20 @@ fn granted_paths(path: &str, root: &Path) -> Vec<PathBuf> {
 /// On macOS `/bin/sh` is a launcher that execs a variant — `/bin/bash` — so
 /// the variant is allowed beside it: the same plumbing a child needs to exist.
 fn interpreter(binary: &Path) -> Option<PathBuf> {
-	let Ok(first) = std::fs::read(binary) else {
-		return None;
-	};
+	use std::io::Read;
+	// Only the shebang matters, so only the first `sandbox_error_chars` bytes
+	// are read: the whole binary is tens of megabytes on every node start.
+	let limit = crate::settings::host().sandbox_error_chars as u64;
+	let mut first = Vec::new();
+	std::fs::File::open(binary)
+		.ok()?
+		.take(limit)
+		.read_to_end(&mut first)
+		.ok()?;
 	if !first.starts_with(b"#!") {
 		return None;
 	}
-	let line = String::from_utf8_lossy(
-		&first[..first.len().min(crate::settings::host().sandbox_error_chars)],
-	);
+	let line = String::from_utf8_lossy(&first);
 	let line = line.lines().next().unwrap_or("").trim_start_matches("#!");
 	let program = line.split_whitespace().next()?;
 	let path = PathBuf::from(program);
@@ -148,16 +153,63 @@ fn interpreters(binary: &Path) -> Vec<PathBuf> {
 	interpreter(binary).map(with_variants).unwrap_or_default()
 }
 
+/// Names the OS uses for the user's home directory, most authoritative first.
+/// `%USERPROFILE%` leads on Windows: the `PASSTHROUGH` list in `host::process`
+/// does not carry `HOME` to a node at all, and a shell like Git Bash sets it
+/// to an MSYS path naming somewhere else.
+pub(crate) fn home_var_names() -> &'static [&'static str] {
+	if cfg!(target_os = "windows") {
+		&["USERPROFILE", "HOME"]
+	} else {
+		&["HOME", "USERPROFILE"]
+	}
+}
+
+/// The user's home directory: the first of [`home_var_names`] that is set.
+/// The one resolver every caller shares. Not `crate::trust::home()`, which is
+/// `$CARTRIDGE_HOME` — a store under this directory, not this directory.
+pub(crate) fn home() -> Option<PathBuf> {
+	home_var_names()
+		.iter()
+		.find_map(std::env::var_os)
+		.map(PathBuf::from)
+}
+
 /// The installation an executable belongs to: the prefix `@executable_path/..`
 /// names, when the program sits in a `bin/`. A prefix directly under the root
-/// (`/bin/sh` → `/`, `/usr/bin/env` → `/usr`) is shared, not one program's.
-fn installation(program: &Path) -> Option<PathBuf> {
+/// (`/bin/sh` → `/`, `/usr/bin/env` → `/usr`) is shared, not one program's,
+/// and so is the person's home: a `~/bin` helper does not make everything the
+/// home holds one program's installation. Every home that is set is tested,
+/// since a Windows shell can set `HOME` beside the `USERPROFILE` it ignores,
+/// and both sides are canonical so a verbatim `\\?\` spelling still compares
+/// equal to a plain one.
+/// Every home directory this machine names, canonically. Read once per
+/// profile, not once per executable in it.
+pub(crate) fn homes() -> Vec<PathBuf> {
+	home_var_names()
+		.iter()
+		.filter_map(std::env::var_os)
+		.map(PathBuf::from)
+		.map(|home| home.canonicalize().unwrap_or(home))
+		.collect()
+}
+
+pub(crate) fn installation_outside(program: &Path, homes: &[PathBuf]) -> Option<PathBuf> {
 	let dir = program.parent()?;
 	if dir.file_name()? != "bin" {
 		return None;
 	}
 	let prefix = dir.parent()?;
-	(prefix.components().count() > 2).then(|| prefix.to_path_buf())
+	if prefix.components().count() <= 2 {
+		return None;
+	}
+	let prefix = prefix
+		.canonicalize()
+		.unwrap_or_else(|_| prefix.to_path_buf());
+	match homes.iter().any(|home| home.starts_with(&prefix)) {
+		true => None,
+		false => Some(prefix),
+	}
 }
 
 /// The machine's own runtime. Named as written and canonically: `/etc` and
@@ -200,10 +252,63 @@ fn granted_exec(program: &str, root: &Path) -> Option<PathBuf> {
 			}))
 			.collect()
 	};
+	let extensions = pathext();
 	candidates
 		.into_iter()
+		.flat_map(|candidate| spellings(candidate, &extensions))
 		.find(|p| p.is_file())
 		.and_then(|p| p.canonicalize().ok())
+}
+
+/// The extensions a bare program name may be spelled with on Windows, where
+/// `git` on PATH is the file `git.exe` and `is_file()` on the bare name is
+/// false. `PATHEXT` is only guaranteed for a process started from cmd or
+/// PowerShell, and the host is normally launched by an MCP client, so an unset
+/// one falls back to Windows's own defaults rather than skipping the probe.
+/// Empty off Windows, where a name is the file.
+fn pathext() -> Vec<String> {
+	if !cfg!(target_os = "windows") {
+		return Vec::new();
+	}
+	let list = std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
+	std::env::split_paths(&list)
+		.map(|ext| ext.to_string_lossy().trim_start_matches('.').to_owned())
+		.collect()
+}
+
+/// A candidate under each of `extensions`, then as written.
+fn spellings(candidate: PathBuf, extensions: &[String]) -> Vec<PathBuf> {
+	// A name already spelled with one of them is tried as itself only.
+	// `extension().is_some()` cannot tell that from a dotted name like
+	// `python3.12`, whose "extension" is `12`, and which still needs every
+	// extension probed to find `python3.12.exe`.
+	let spelled = candidate.extension().is_some_and(|ext| {
+		extensions
+			.iter()
+			.any(|pathext| pathext.eq_ignore_ascii_case(&ext.to_string_lossy()))
+	});
+	if extensions.is_empty() || spelled {
+		return vec![candidate];
+	}
+	let name = candidate
+		.file_name()
+		.unwrap_or_default()
+		.to_string_lossy()
+		.into_owned();
+	let mut spellings: Vec<PathBuf> = extensions
+		.iter()
+		.map(|ext| candidate.with_file_name(format!("{name}.{ext}")))
+		.collect();
+	spellings.push(candidate);
+	spellings
+}
+
+/// Whether a grant path names `/dev` or something beneath it, compared path
+/// component by path component rather than as a string prefix: `/devices` and
+/// `/development` start with the four characters `/dev` but are not under it,
+/// and a grant naming them must not pick up device access nothing asked for.
+fn is_dev(path: &str) -> bool {
+	Path::new(path).starts_with("/dev")
 }
 
 /// One `literal` clause, escaped the way the profile language needs it: a
@@ -242,7 +347,11 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	exec.sort();
 	exec.dedup();
 	// A program's own installation is plumbing, not a capability.
-	let mut installations: Vec<PathBuf> = exec.iter().filter_map(|p| installation(p)).collect();
+	let homes = homes();
+	let mut installations: Vec<PathBuf> = exec
+		.iter()
+		.filter_map(|p| installation_outside(p, &homes))
+		.collect();
 	installations.sort();
 	installations.dedup();
 	// `*` is every program: a shell or a version-control client runs what it is told.
@@ -304,11 +413,7 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 			.collect();
 	profile.push_str(&format!("(allow file-write* {})\n", writes.join(" ")));
 	// Terminals: a cartridge that may write devices may open and drive a pseudo-terminal.
-	if grant
-		.write
-		.iter()
-		.any(|path| path == "/" || path.starts_with("/dev"))
-	{
+	if grant.write.iter().any(|path| path == "/" || is_dev(path)) {
 		profile.push_str("(allow pseudo-tty)\n(allow file-ioctl)\n");
 	}
 	// Network is all or nothing on this platform: a nonempty `net` allows

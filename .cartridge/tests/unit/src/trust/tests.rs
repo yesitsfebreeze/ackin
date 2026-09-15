@@ -228,6 +228,39 @@ fn a_deleted_project_can_still_be_untrusted() {
 		.all(|record| record.project != canonical));
 }
 
+/// A deleted project is still untrusted by a path relative to the shell's
+/// own working directory, not only by its absolute spelling — the bare-name
+/// case `resolved`'s cleaning exists for (`cd ~/projects && cartridge trust
+/// --revoke old-proj`, run after `rm -rf old-proj`).
+#[test]
+fn a_deleted_project_is_untrusted_by_a_relative_path() {
+	let dir = project(&[(".cartridge/init.lua", "return {}")]);
+	let canonical = dir.path().canonicalize().unwrap();
+	record(dir.path()).unwrap();
+	let inside = dir.keep();
+	let parent = inside.parent().unwrap().to_path_buf();
+	let name = inside.file_name().unwrap().to_owned();
+	std::fs::remove_dir_all(&inside).unwrap();
+	let bin = crate::tests::built(&["--bin", "cartridge"]);
+	let output = std::process::Command::new(&bin)
+		.arg("trust")
+		.arg("--revoke")
+		.arg(&name)
+		.current_dir(&parent)
+		.env("CARTRIDGE_HOME", crate::tests::home())
+		.output()
+		.unwrap();
+	assert!(
+		output.status.success(),
+		"{}",
+		String::from_utf8_lossy(&output.stderr)
+	);
+	assert!(list()
+		.unwrap()
+		.iter()
+		.all(|record| record.project != canonical));
+}
+
 /// Revoking a project takes its nested records with it.
 #[test]
 fn revoking_a_project_takes_its_nested_records() {

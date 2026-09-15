@@ -29,10 +29,14 @@ Early (`0.1.0`). Interfaces change without notice.
   access and named environment variables) and `settings`. `init.lua` registers into the base. A grant is
   compiled into an operating-system policy the node starts inside —
   `sandbox-exec` on macOS, Landlock plus a seccomp socket filter on Linux; a
-  platform that cannot confine refuses to start the cartridge.
+  platform that cannot confine refuses to start the cartridge. A granted
+  program is allowed with its own installation, never with the person's home
+  directory: a tool in `~/bin` brings that `bin` and nothing more.
 - **Descriptor**: `.cartridge/init.lua` lists the cartridges a project runs and
   `.cartridge/config.lua` configures them. Installed cartridges not listed
-  there are known but not started.
+  there are known but not started. Two ids that would share one node socket —
+  differing only in case, or only in characters the socket name folds to `_` —
+  are refused by name, so no cartridge unlinks another's live socket.
 - **Trust**: a project runs only after `cartridge trust` records a SHA-256
   for each of its `*.lua` files and `cartridge.json` manifests under
   `~/.cartridge/trust`. A changed or unrecorded file is refused by name, so
@@ -91,7 +95,9 @@ cartridge help [<address>]        # the documentation of the base and every cart
 (`{"<name>": {"repository": "<url>", "description": "…"}}`), links or clones
 the chosen ones under the root, writes `.cartridge/init.lua`, and sends each a
 `setup` event it declares so it can ask what this project must decide.
-`--with a,b` or `--yes` take cartridges without asking. Setup records trust for
+`--with a,b` or `--yes` take cartridges without asking. A cartridge's name is
+the folder it lands in, so a name carrying a separator, `..` or `.cartridge` is
+refused rather than placed. Setup records trust for
 the descriptor it writes and each cartridge it links or clones, because it starts
 them next. A folder or `config.lua` the tree already held stays untrusted until
 you review it and run `cartridge trust`.

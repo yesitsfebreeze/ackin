@@ -34,14 +34,17 @@ fn hex(bytes: &[u8]) -> String {
 pub fn home() -> Result<PathBuf> {
 	let home = match std::env::var_os("CARTRIDGE_HOME") {
 		Some(home) => PathBuf::from(home),
-		None => std::env::var_os("HOME")
-			.map_or_else(PathBuf::new, |home| PathBuf::from(home).join(".cartridge")),
+		// The person's own home is `crate::sandbox`'s to name: on Windows it
+		// is `%USERPROFILE%`, and `HOME` alone would leave the store, the
+		// global `config.lua` and the catalog unresolvable there.
+		None => crate::sandbox::home().map_or_else(PathBuf::new, |home| home.join(".cartridge")),
 	};
 	match home.is_absolute() {
 		true => Ok(home),
 		false => Err(Error::Descriptor(format!(
-			"the cartridge home `{}` is not an absolute path; set CARTRIDGE_HOME or HOME",
-			home.display()
+			"the cartridge home `{}` is not an absolute path; set CARTRIDGE_HOME or {}",
+			home.display(),
+			crate::sandbox::home_var_names()[0],
 		))),
 	}
 }
@@ -112,15 +115,18 @@ fn own(path: &Path, file: &Path) -> Result<bool> {
 	)
 }
 
-/// Refuse a file no trusted directory above it recorded with its current hash.
-/// Any ancestor's record authorises, so a nested record never shadows a fresher
+/// Refuse a file no trusted directory above it recorded with its current hash,
+/// and hand back the bytes checked — the same read, so a caller that goes on
+/// to use the file's contents never opens it a second, unchecked time. Any
+/// ancestor's record authorises, so a nested record never shadows a fresher
 /// outer one.
-pub fn verify(path: &Path) -> Result<()> {
+pub fn verify(path: &Path) -> Result<Vec<u8>> {
+	let bytes = std::fs::read(path).map_err(|e| Error::file(path, e))?;
 	let file = path.canonicalize().map_err(|e| Error::file(path, e))?;
-	if own(path, &file)? {
-		return Ok(());
+	if !own(path, &file)? {
+		checked(&file, &digest_bytes(&bytes))?;
 	}
-	checked(&file, &digest(&file)?)
+	Ok(bytes)
 }
 
 /// Whether the file sits under a directory the walk never records, between the
@@ -147,8 +153,14 @@ fn checked(file: &Path, digest: &str) -> Result<()> {
 		let Ok(text) = std::fs::read_to_string(&at) else {
 			continue;
 		};
-		let record: Record = serde_json::from_str(&text)
-			.map_err(|e| Error::Settings(format!("{}: {e}", at.display())))?;
+		// A record cut short mid-write is a refusal with a remedy, not an
+		// opaque JSON error. It only becomes the answer if nothing else
+		// authorises, so the walk goes on: a corrupt nested record must not
+		// shadow a valid outer one.
+		let Ok(record) = serde_json::from_str::<Record>(&text) else {
+			refusal.get_or_insert((dir.to_path_buf(), "has an unreadable trust record"));
+			continue;
+		};
 		let why = match record.files.get(file) {
 			Some(known) if known == digest => return Ok(()),
 			Some(_) => "has changed since it was trusted",
@@ -175,12 +187,7 @@ fn checked(file: &Path, digest: &str) -> Result<()> {
 
 /// A file's text, once it is trusted — hashed once, for the bytes it returns.
 pub fn read(path: &Path) -> Result<String> {
-	let bytes = std::fs::read(path).map_err(|e| Error::file(path, e))?;
-	let file = path.canonicalize().map_err(|e| Error::file(path, e))?;
-	if !own(path, &file)? {
-		checked(&file, &digest_bytes(&bytes))?;
-	}
-	String::from_utf8(bytes).map_err(|e| Error::file(path, std::io::Error::other(e)))
+	String::from_utf8(verify(path)?).map_err(|e| Error::file(path, std::io::Error::other(e)))
 }
 
 /// Every file the trust set names, lexically: nothing is evaluated, no link is
@@ -262,6 +269,25 @@ pub fn pending(dir: &Path) -> Result<Vec<PathBuf>> {
 	Ok(found)
 }
 
+/// A path made absolute lexically and cleaned of `.` and `..`, so two
+/// spellings of one directory compare equal without touching the disk. The
+/// one implementation of this cleaning: `setup::absolute` (a binary, which
+/// may call into this lib) calls it rather than keeping its own copy.
+pub fn absolute_clean(path: &Path) -> PathBuf {
+	let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+	let mut out = PathBuf::new();
+	for part in abs.components() {
+		match part {
+			std::path::Component::CurDir => {}
+			std::path::Component::ParentDir => {
+				out.pop();
+			}
+			other => out.push(other),
+		}
+	}
+	out
+}
+
 /// The canonical spelling of a path that may no longer exist: the deepest
 /// existing ancestor resolved, the rest joined on, so a deleted `/var/…`
 /// still matches the record `/private/var/…`.
@@ -269,8 +295,15 @@ fn resolved(dir: &Path) -> Result<PathBuf> {
 	if let Ok(canonical) = dir.canonicalize() {
 		return Ok(canonical);
 	}
+	// Absolute, then lexically cleaned of `.` and `..`: a bare relative name
+	// (`old-proj`, deleted, run from its parent) would otherwise pop straight
+	// to an empty path, and `absolute` alone leaves a literal `..` in place
+	// (it normalises only `.`) — a path ending in `..` has no `file_name`, so
+	// the walk below would end on itself before reaching an existing
+	// ancestor to canonicalise.
+	let cleaned = absolute_clean(dir);
 	let mut rest = Vec::new();
-	let mut existing = dir.to_path_buf();
+	let mut existing = cleaned.clone();
 	while let Some(name) = existing.file_name() {
 		match existing.canonicalize() {
 			Ok(canonical) => {
@@ -286,36 +319,62 @@ fn resolved(dir: &Path) -> Result<PathBuf> {
 			}
 		}
 	}
-	std::path::absolute(dir).map_err(|e| Error::file(dir, e))
+	Ok(cleaned)
 }
 
 /// Forget a directory and every record beneath it, without needing the
 /// directory on disk — a deleted project is untrusted by its absolute
 /// spelling. Zero when nothing matched.
+///
+/// Matched on [`project_of`] rather than on a whole [`Record`], so a record
+/// too stale to parse is still removed instead of being left behind.
 pub fn revoke(dir: &Path) -> Result<usize> {
 	let want = resolved(dir)?;
 	let mut gone = 0;
-	for record in list()? {
-		if record.project == want || record.project.starts_with(&want) {
-			std::fs::remove_file(record_path(&record.project)?)
-				.map_err(|e| Error::file(&record.project, e))?;
+	for (path, text) in stored()? {
+		if project_of(&text).is_some_and(|project| project.starts_with(&want)) {
+			std::fs::remove_file(&path).map_err(|e| Error::file(&path, e))?;
 			gone += 1;
 		}
 	}
 	Ok(gone)
 }
 
-/// Every directory this machine trusts, by path.
-pub fn list() -> Result<Vec<Record>> {
+/// Every record in the store, as its file and its text. A store nothing has
+/// written yet holds none; a file that cannot be read is not a record.
+fn stored() -> Result<Vec<(PathBuf, String)>> {
 	let store = store()?;
 	let entries = match std::fs::read_dir(&store) {
 		Ok(entries) => entries,
 		Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
 		Err(e) => return Err(Error::file(&store, e)),
 	};
-	let mut records: Vec<Record> = entries
-		.filter_map(|entry| std::fs::read_to_string(entry.ok()?.path()).ok())
-		.filter_map(|text| serde_json::from_str(&text).ok())
+	let mut records = Vec::new();
+	for entry in entries {
+		let path = entry.map_err(|e| Error::file(&store, e))?.path();
+		if let Ok(text) = std::fs::read_to_string(&path) {
+			records.push((path, text));
+		}
+	}
+	Ok(records)
+}
+
+/// Whose record this is, even when the rest of it no longer parses: a stale
+/// shape or a bad digest still names its project, and a record `list` cannot
+/// show is still one `revoke` must remove.
+fn project_of(text: &str) -> Option<PathBuf> {
+	serde_json::from_str::<serde_json::Value>(text)
+		.ok()?
+		.get("project")?
+		.as_str()
+		.map(PathBuf::from)
+}
+
+/// Every directory this machine trusts, by path.
+pub fn list() -> Result<Vec<Record>> {
+	let mut records: Vec<Record> = stored()?
+		.iter()
+		.filter_map(|(_, text)| serde_json::from_str(text).ok())
 		.collect();
 	records.sort_by(|a, b| a.project.cmp(&b.project));
 	Ok(records)

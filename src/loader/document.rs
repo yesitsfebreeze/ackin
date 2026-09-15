@@ -122,16 +122,17 @@ impl Cartridge {
 	/// at are in place.
 	pub fn document(manifest: &Path) -> Result<Cartridge> {
 		let source = std::fs::read_to_string(manifest).map_err(|e| Error::file(manifest, e))?;
+		Self::parse(manifest, &source)
+	}
+
+	/// [`Cartridge::document`]'s checks, over text a caller already has —
+	/// [`Cartridge::read`] hands in the bytes `trust::verify` checked, rather
+	/// than reading the manifest a second, unchecked time.
+	fn parse(manifest: &Path, source: &str) -> Result<Cartridge> {
 		let cartridge: Cartridge =
-			serde_json::from_str(&source).map_err(|e| Error::document(manifest, e.to_string()))?;
+			serde_json::from_str(source).map_err(|e| Error::document(manifest, e.to_string()))?;
 		if let Some(binary) = &cartridge.binary {
-			if binary.is_empty()
-				|| binary.contains('\0')
-				|| Path::new(binary).components().count() != 1
-				|| !matches!(
-					Path::new(binary).components().next(),
-					Some(std::path::Component::Normal(_))
-				) {
+			if !is_bare_name(binary) {
 				return Err(Error::document(
 					manifest,
 					"binary must be an executable basename",
@@ -159,9 +160,19 @@ impl Cartridge {
 	/// error from here may be a fact about the tree rather than about the
 	/// document — which is why [`Cartridge::document`] exists beside it.
 	pub fn read(manifest: &Path) -> Result<(Cartridge, PathBuf)> {
+		let (cartridge, entry, _) = Self::read_verified(manifest)?;
+		Ok((cartridge, entry))
+	}
+
+	/// [`Cartridge::read`], plus the entry's own verified bytes: [`resolve`]
+	/// needs the digest of exactly what was checked here, not a fresh,
+	/// unverified read of the entry taken after the fact.
+	fn read_verified(manifest: &Path) -> Result<(Cartridge, PathBuf, Vec<u8>)> {
 		// The grant and the entry take effect from here; listing a document does not.
-		crate::trust::verify(manifest)?;
-		let cartridge = Self::document(manifest)?;
+		let source = crate::trust::verify(manifest)?;
+		let source = String::from_utf8(source)
+			.map_err(|e| Error::file(manifest, std::io::Error::other(e)))?;
+		let cartridge = Self::parse(manifest, &source)?;
 		let entry = Path::new(&cartridge.entry);
 		let root = manifest
 			.parent()
@@ -178,8 +189,8 @@ impl Cartridge {
 				"cartridge entry escapes its folder",
 			));
 		}
-		crate::trust::verify(&entry)?;
-		Ok((cartridge, entry))
+		let entry_bytes = crate::trust::verify(&entry)?;
+		Ok((cartridge, entry, entry_bytes))
 	}
 
 	/// Every declaration this document carries, checked without reading anything
@@ -313,6 +324,17 @@ pub(crate) struct Declared {
 	pub(crate) grant: Grant,
 }
 
+/// Whether a name is one plain path segment: a manifest's `binary` and a
+/// cartridge's own name are both names the host joins to a directory, so a
+/// separator, `..` or a NUL in one would steer where it lands.
+pub fn is_bare_name(name: &str) -> bool {
+	let mut parts = Path::new(name).components();
+	!name.is_empty()
+		&& !name.contains('\0')
+		&& matches!(parts.next(), Some(std::path::Component::Normal(_)))
+		&& parts.next().is_none()
+}
+
 /// The grant a descriptor entry's document declares, without resolving its files.
 pub(crate) fn document(path: &Path) -> Result<Grant> {
 	let path = normalize(&classify(path));
@@ -325,7 +347,7 @@ pub(crate) fn document(path: &Path) -> Result<Grant> {
 pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 	let path = normalize(&classify(path));
 	if path.extension().is_some_and(|ext| ext == "lua") {
-		crate::trust::verify(&path)?;
+		let bytes = crate::trust::verify(&path)?;
 		let name = path
 			.file_stem()
 			.unwrap_or_default()
@@ -333,7 +355,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 			.into_owned();
 		return Ok(Declared {
 			entry: path.clone(),
-			entry_sha256: crate::trust::digest(&path)?,
+			entry_sha256: crate::trust::digest_bytes(&bytes),
 			name,
 			sources: vec![path],
 			events: Default::default(),
@@ -344,10 +366,10 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 			grant: Grant::default(),
 		});
 	}
-	let (manifest, entry) = Cartridge::read(&path)?;
+	let (manifest, entry, entry_bytes) = Cartridge::read_verified(&path)?;
 	let sources = vec![path.clone(), entry.clone()];
 	Ok(Declared {
-		entry_sha256: crate::trust::digest(&entry)?,
+		entry_sha256: crate::trust::digest_bytes(&entry_bytes),
 		entry,
 		name: manifest.name,
 		sources,

@@ -39,11 +39,8 @@ const PASSTHROUGH: &[&str] = &[
 	"LOGNAME",
 	"SHELL",
 	"XDG_RUNTIME_DIR",
-	// The proxy's own credential, not a shell secret: `launch` mints it in
-	// this process and `just proxy` names one, and the proxy node reads it
-	// after the config that binds its listener has already travelled from
-	// here — the one env-borne thing a node needs that the base, not the
-	// shell, may hold.
+	// An optional key for the proxy's listener; without it the loopback
+	// listener takes every caller, the way a local model server does.
 	"CARTRIDGE_PROXY_KEY",
 ];
 
@@ -109,7 +106,9 @@ pub(super) async fn start(
 		.insert(plan.id.clone(), token.clone());
 	let socket = host.socket(&plan.id);
 	let _ = std::fs::remove_file(&socket);
-	let sockets = socket.parent().map(std::path::Path::to_path_buf);
+	// The node reaches `host.sock` and its own socket: the project's socket
+	// directory, which holds both.
+	let sockets = Some(host.sockets.clone());
 	// A confined node on Windows may not create the pipe it is meant to serve:
 	// an AppContainer is denied the pipe namespace outright. So the base makes
 	// every instance now, grants the node's container SID on them, and hands

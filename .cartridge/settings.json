@@ -51,13 +51,6 @@
       "max": 1048576,
       "doc": "Replies the MCP server may have in flight on this terminal's stdio."
     },
-    "proxy_key_bytes": {
-      "type": "integer",
-      "default": 32,
-      "min": 16,
-      "max": 4096,
-      "doc": "Entropy in a minted proxy key, in bytes."
-    },
     "sandbox_error_chars": {
       "type": "integer",
       "default": 512,

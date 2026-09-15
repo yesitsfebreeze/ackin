@@ -161,7 +161,10 @@ fn an_interpreter_reaches_its_own_installation() {
 }
 
 /// The prefix stops at a system directory: `/usr/bin/env` shares `/usr`, it
-/// does not make the whole of it one program's installation.
+/// does not make the whole of it one program's installation. Nor does the
+/// user's home: a `~/bin` helper does not make the whole home directory one
+/// program's installation either, and the guard fires off whichever of
+/// `HOME`/`USERPROFILE` is set, not just the first.
 #[test]
 fn the_prefix_stops_at_a_system_directory() {
 	let shared = profile(&Grant::default(), &root(), Path::new("/usr/bin/env"), None);
@@ -176,6 +179,20 @@ fn the_prefix_stops_at_a_system_directory() {
 		None,
 	);
 	assert!(own.contains("(subpath \"/opt/x\")"), "{own}");
+
+	let fixture = tempfile::tempdir().unwrap();
+	let home = fixture.path().canonicalize().unwrap();
+	let previous = std::env::var_os("HOME");
+	std::env::set_var("HOME", &home);
+	let text = profile(&Grant::default(), &root(), &home.join("bin/tool"), None);
+	match previous {
+		Some(value) => std::env::set_var("HOME", value),
+		None => std::env::remove_var("HOME"),
+	}
+	assert!(
+		!text.contains(&format!("(subpath \"{}\")", home.display())),
+		"the user's home is not one program's installation: {text}"
+	);
 }
 
 /// The runtime is named canonically: `/etc` and `/var` are symlinks, and a

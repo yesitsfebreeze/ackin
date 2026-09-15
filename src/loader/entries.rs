@@ -38,20 +38,28 @@ impl Host {
 	/// `~/.cartridge/config.lua` and the project's `config.lua` laid over each
 	/// entry's config.
 	pub fn entries(self: &Arc<Self>) -> Result<Vec<Entry>> {
-		if let Some(solo) = self.solo.lock().clone() {
-			return Ok(solo);
-		}
-		let mut entries = self.derived();
-		let descriptor = self.descriptor.join("init.lua");
-		let overrides: Vec<Entry> = if descriptor.is_file() {
-			crate::lua::evaluate(&descriptor)?
-		} else {
-			Vec::new()
+		let solo = self.solo.lock().clone();
+		let is_solo = solo.is_some();
+		let mut entries = match solo {
+			Some(entries) => entries,
+			None => {
+				let mut entries = self.derived();
+				let descriptor = self.descriptor.join("init.lua");
+				let overrides: Vec<Entry> = if descriptor.is_file() {
+					crate::lua::evaluate(&descriptor)?
+				} else {
+					Vec::new()
+				};
+				let named: Vec<PathBuf> = overrides.iter().map(|e| e.file(&self.dir)).collect();
+				entries.retain(|e| !named.contains(&e.file(&self.dir)));
+				entries.extend(overrides);
+				entries
+			}
 		};
-		let named: Vec<PathBuf> = overrides.iter().map(|e| e.file(&self.dir)).collect();
-		entries.retain(|e| !named.contains(&e.file(&self.dir)));
-		entries.extend(overrides);
+		// The checks below cover the solo list too: `Host::verify_one` builds
+		// those ids from ledger paths, which collide the same way.
 		let mut ids = std::collections::HashSet::new();
+		let mut sockets = std::collections::HashMap::new();
 		for entry in &entries {
 			validate(entry)?;
 			if !ids.insert(&entry.id) {
@@ -60,6 +68,21 @@ impl Host {
 					entry.id
 				)));
 			}
+			// An id must be unique as a socket file name too: two that differ
+			// only in the characters `file_name` folds to `_`, or only in case
+			// (a case-insensitive filesystem and a pipe name fold it), share
+			// one socket, and the second node to start would rebind the first
+			// node's live one.
+			let socket = crate::host::socket::file_name(&entry.id);
+			if let Some(other) = sockets.insert(socket.to_ascii_lowercase(), &entry.id) {
+				return Err(Error::Descriptor(format!(
+					"entry ids `{other}` and `{}` share the socket name `{socket}`",
+					entry.id
+				)));
+			}
+		}
+		if is_solo {
+			return Ok(entries);
 		}
 		let mut overrides = serde_json::Map::new();
 		for file in crate::settings::global_path()

@@ -409,6 +409,13 @@ pub struct NamedPipeAdapter {
 #[cfg(windows)]
 enum NamedPipeInner {
 	Server(tokio::net::windows::named_pipe::NamedPipeServer),
+	// A handed instance: on connection end this goes back to the listener's
+	// pool instead of being destroyed, since a confined node cannot make
+	// another to replace it (see `PIPE_INSTANCES`).
+	HandedServer(
+		tokio::net::windows::named_pipe::NamedPipeServer,
+		mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>,
+	),
 	Client(tokio::net::windows::named_pipe::NamedPipeClient),
 }
 
@@ -417,6 +424,17 @@ impl NamedPipeAdapter {
 	pub fn from_server(server: tokio::net::windows::named_pipe::NamedPipeServer) -> Self {
 		Self {
 			inner: NamedPipeInner::Server(server),
+		}
+	}
+	/// From an instance the listener handed out of its pool: `split` arranges
+	/// for the instance to be disconnected and sent back on `returned` once
+	/// both halves of the connection are gone.
+	pub fn from_handed_server(
+		server: tokio::net::windows::named_pipe::NamedPipeServer,
+		returned: mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>,
+	) -> Self {
+		Self {
+			inner: NamedPipeInner::HandedServer(server, returned),
 		}
 	}
 	pub async fn connect(pipe_name: &str) -> Result<Self, AdapterError> {
@@ -435,12 +453,160 @@ impl Adapter for NamedPipeAdapter {
 				let (r, w) = tokio::io::split(s);
 				(Box::new(r), Box::new(w))
 			}
+			NamedPipeInner::HandedServer(s, tx) => {
+				let (r, w) = tokio::io::split(s);
+				let shared = std::sync::Arc::new(std::sync::Mutex::new(None));
+				(
+					Box::new(HandedRead {
+						half: Some(r),
+						shared: shared.clone(),
+						returned: Some(tx.clone()),
+					}),
+					Box::new(HandedWrite {
+						half: Some(w),
+						shared,
+						returned: Some(tx),
+					}),
+				)
+			}
 			NamedPipeInner::Client(c) => {
 				let (r, w) = tokio::io::split(c);
 				(Box::new(r), Box::new(w))
 			}
 		}
 	}
+}
+
+/// The two split halves of a handed instance drop independently (they may
+/// run on different tasks — see `Channel::into_split`), so whichever drops
+/// second is the one that reunites them and hands the instance back.
+#[cfg(windows)]
+enum HandedHalf {
+	Read(tokio::io::ReadHalf<tokio::net::windows::named_pipe::NamedPipeServer>),
+	Write(tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeServer>),
+}
+
+#[cfg(windows)]
+type HandedSlot = std::sync::Arc<std::sync::Mutex<Option<HandedHalf>>>;
+
+#[cfg(windows)]
+struct HandedRead {
+	half: Option<tokio::io::ReadHalf<tokio::net::windows::named_pipe::NamedPipeServer>>,
+	shared: HandedSlot,
+	returned: Option<mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>>,
+}
+
+#[cfg(windows)]
+impl AsyncRead for HandedRead {
+	fn poll_read(
+		self: Pin<&mut Self>,
+		cx: &mut TaskContext<'_>,
+		buf: &mut ReadBuf<'_>,
+	) -> Poll<std::io::Result<()>> {
+		let this = self.get_mut();
+		Pin::new(this.half.as_mut().expect("polled after drop")).poll_read(cx, buf)
+	}
+}
+
+#[cfg(windows)]
+impl Drop for HandedRead {
+	fn drop(&mut self) {
+		if let (Some(read), Some(tx)) = (self.half.take(), self.returned.take()) {
+			reunite(HandedHalf::Read(read), &self.shared, &tx);
+		}
+	}
+}
+
+#[cfg(windows)]
+struct HandedWrite {
+	half: Option<tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeServer>>,
+	shared: HandedSlot,
+	returned: Option<mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>>,
+}
+
+#[cfg(windows)]
+impl AsyncWrite for HandedWrite {
+	fn poll_write(
+		self: Pin<&mut Self>,
+		cx: &mut TaskContext<'_>,
+		buf: &[u8],
+	) -> Poll<std::io::Result<usize>> {
+		let this = self.get_mut();
+		Pin::new(this.half.as_mut().expect("polled after drop")).poll_write(cx, buf)
+	}
+	fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+		let this = self.get_mut();
+		Pin::new(this.half.as_mut().expect("polled after drop")).poll_flush(cx)
+	}
+	fn poll_shutdown(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+		let this = self.get_mut();
+		Pin::new(this.half.as_mut().expect("polled after drop")).poll_shutdown(cx)
+	}
+}
+
+#[cfg(windows)]
+impl Drop for HandedWrite {
+	fn drop(&mut self) {
+		if let (Some(write), Some(tx)) = (self.half.take(), self.returned.take()) {
+			reunite(HandedHalf::Write(write), &self.shared, &tx);
+		}
+	}
+}
+
+/// Park this half in the shared slot, or, if the other half is already
+/// parked there, put the instance back together and hand it to the listener.
+#[cfg(windows)]
+fn reunite(
+	mine: HandedHalf,
+	shared: &HandedSlot,
+	tx: &mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>,
+) {
+	let mut slot = shared.lock().unwrap();
+	match (slot.take(), mine) {
+		(Some(HandedHalf::Write(write)), HandedHalf::Read(read))
+		| (Some(HandedHalf::Read(read)), HandedHalf::Write(write)) => {
+			drop(slot);
+			return_handed_instance(read.unsplit(write), tx);
+		}
+		(None, mine) => *slot = Some(mine),
+		(Some(_), _) => unreachable!("one of each half per instance"),
+	}
+}
+
+/// `disconnect()` discards whatever the client has not read yet, including a
+/// final reply it was sent (an auth refusal, a stop acknowledgment), so
+/// `FlushFileBuffers` waits for that read first. The wait is unbounded, hence
+/// an OS thread: inline it would stall the task dropping the last half, and on
+/// `spawn_blocking` it would hold up a runtime that is itself dropping.
+#[cfg(windows)]
+fn return_handed_instance(
+	server: tokio::net::windows::named_pipe::NamedPipeServer,
+	tx: &mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>,
+) {
+	let tx = tx.clone();
+	std::thread::spawn(move || {
+		use std::os::windows::io::AsRawHandle;
+		use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
+		// SAFETY: `server` is a live, open pipe handle for the duration of this call.
+		unsafe {
+			FlushFileBuffers(server.as_raw_handle() as _);
+		}
+		// mio maps ConnectNamedPipe's ERROR_PIPE_CONNECTED and ERROR_NO_DATA
+		// to "already connected, Ok", so a disconnect failure would hand
+		// back an instance that still looks connected: `accept` would pick
+		// it instantly, find no real peer, and busy-loop. Losing one of
+		// sixteen instances beats poisoning the pool with one like that,
+		// but it is worth knowing about: a confined node cannot make
+		// another to replace it.
+		if let Err(e) = server.disconnect() {
+			tracing::warn!(
+				target: "cartridge",
+				"dropping a pipe instance: disconnect failed: {e}"
+			);
+			return;
+		}
+		let _ = tx.send(server);
+	});
 }
 
 pub enum LocalAdapter {
@@ -476,7 +642,20 @@ fn require_owned_by_caller(path: &Path) -> Result<(), AdapterError> {
 			untrusted(&format!("cannot stat: {e}"))
 		}
 	})?;
-	let target = std::fs::metadata(path).map_err(|e| untrusted(&format!("cannot resolve: {e}")))?;
+	let target = std::fs::metadata(path).map_err(|e| {
+		// A path that is not itself a symlink resolves to the exact file
+		// `link` above just lstat'd; if it is gone by the time this stat
+		// runs, that file was unlinked between the two calls (a restart
+		// racing this check), the same honest absence `symlink_metadata`
+		// special-cases, not a substitution. A path that *is* a symlink
+		// is different: its target missing is exactly what
+		// `a_dangling_symlink_is_refused` means to catch, race or not.
+		if e.kind() == std::io::ErrorKind::NotFound && !link.file_type().is_symlink() {
+			AdapterError::Io(e)
+		} else {
+			untrusted(&format!("cannot resolve: {e}"))
+		}
+	})?;
 	if link.uid() != euid {
 		return Err(untrusted(&format!(
 			"owned by uid {}, not {euid}",
@@ -534,10 +713,50 @@ pub async fn connect(endpoint: &Endpoint) -> Result<LocalAdapter, AdapterError> 
 			Ok(LocalAdapter::Unix(adapter))
 		}
 		#[cfg(windows)]
-		Endpoint::NamedPipe(name) => Ok(LocalAdapter::NamedPipe(
-			NamedPipeAdapter::connect(name).await?,
-		)),
+		Endpoint::NamedPipe(name) => {
+			let adapter = NamedPipeAdapter::connect(name).await?;
+			require_pipe_served_by_caller(&adapter, name)?;
+			Ok(LocalAdapter::NamedPipe(adapter))
+		}
 	}
+}
+
+// The pipe namespace is global: an unclaimed name is anyone local's to
+// create, so a client that opened it before checking would send the first
+// frame — the auth token — to whoever got there first. Checked the way
+// `require_peer_is_caller` checks a socket's peer, just later, because a
+// named pipe (unlike a socket) has no credential to read until it is open.
+#[cfg(windows)]
+fn require_pipe_served_by_caller(
+	adapter: &NamedPipeAdapter,
+	name: &str,
+) -> Result<(), AdapterError> {
+	use std::os::windows::io::AsRawHandle;
+	use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
+
+	let untrusted = |what: &str| AdapterError::UntrustedEndpoint(format!("{name}: {what}"));
+	let NamedPipeInner::Client(client) = &adapter.inner else {
+		unreachable!("NamedPipeAdapter::connect always makes a Client");
+	};
+	let mut pid: u32 = 0;
+	// SAFETY: `client` is a live, open handle for the duration of this call.
+	let ok = unsafe { GetNamedPipeServerProcessId(client.as_raw_handle(), &mut pid) };
+	if ok == 0 {
+		return Err(untrusted(&format!(
+			"cannot read who serves it: {}",
+			std::io::Error::last_os_error()
+		)));
+	}
+	let server_sid = owner_only::user_sid_of_process(pid)
+		.map_err(|e| untrusted(&format!("cannot read the server's identity: {e}")))?;
+	let our_sid = owner_only::current_user_sid()
+		.map_err(|e| untrusted(&format!("cannot read our own identity: {e}")))?;
+	if server_sid != our_sid {
+		return Err(untrusted(&format!(
+			"served by a different user ({server_sid})"
+		)));
+	}
+	Ok(())
 }
 
 // Test seam: connect expecting a uid that is not the server's.
@@ -614,7 +833,9 @@ mod owner_only {
 		GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
 		TOKEN_USER,
 	};
-	use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+	use windows_sys::Win32::System::Threading::{
+		GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+	};
 
 	/// An owner-only security descriptor, freed on drop.
 	pub struct OwnerOnlySd(PSECURITY_DESCRIPTOR);
@@ -683,11 +904,36 @@ mod owner_only {
 		}
 	}
 
-	fn current_user_sid() -> io::Result<String> {
+	pub(super) fn current_user_sid() -> io::Result<String> {
 		let mut token: HANDLE = std::ptr::null_mut();
 		// SAFETY: the pseudo-handle from GetCurrentProcess needs no close; `token`
 		// receives a real handle closed below.
 		if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+			return Err(io::Error::last_os_error());
+		}
+		let out = token_user_sid(token);
+		// SAFETY: `token` was opened here and is not used after this.
+		unsafe { CloseHandle(token) };
+		out
+	}
+
+	/// The SID of the user running process `pid`, read through its token.
+	/// Used to check who actually answers a claimed pipe name before the
+	/// first frame goes out: the pipe namespace is global, so the name alone
+	/// proves nothing about who is on the other end.
+	pub(super) fn user_sid_of_process(pid: u32) -> io::Result<String> {
+		// SAFETY: `pid` is whatever the caller read off the connection; a
+		// bad value just fails the call below, nothing unsafe about it.
+		let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+		if process.is_null() {
+			return Err(io::Error::last_os_error());
+		}
+		let mut token: HANDLE = std::ptr::null_mut();
+		// SAFETY: `process` was just opened above and closed below either way.
+		let opened = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
+		// SAFETY: `process` is not used again after this.
+		unsafe { CloseHandle(process) };
+		if opened == 0 {
 			return Err(io::Error::last_os_error());
 		}
 		let out = token_user_sid(token);
@@ -886,12 +1132,17 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 			// Fail closed: no descriptor, no pipe.
 			let security = owner_only::OwnerOnlySd::new()?;
 			match create_pipe_instance(name, &security, true) {
-				Ok(server) => Ok(BindOutcome::Bound(LocalListener {
-					pipe_name: name.clone(),
-					security: Some(security),
-					current: Some(server),
-					handed: Vec::new(),
-				})),
+				Ok(server) => {
+					let (handed_tx, handed_rx) = mpsc::unbounded_channel();
+					Ok(BindOutcome::Bound(LocalListener {
+						pipe_name: name.clone(),
+						security: Some(security),
+						current: Some(server),
+						handed: Vec::new(),
+						handed_tx,
+						handed_rx,
+					}))
+				}
 				// Every instance is busy, so a first instance cannot be made:
 				// something is already serving the name.
 				Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
@@ -959,11 +1210,14 @@ fn adopt_handed(name: &str) -> Result<Option<LocalListener>, BindError> {
 	}
 	// Every instance goes in the pool `accept` waits on; one held back in
 	// `current` would be an instance a client can reach and nobody serves.
+	let (handed_tx, handed_rx) = mpsc::unbounded_channel();
 	Ok(Some(LocalListener {
 		pipe_name: name.to_owned(),
 		security: None,
 		current: None,
 		handed: servers,
+		handed_tx,
+		handed_rx,
 	}))
 }
 
@@ -1001,6 +1255,14 @@ pub struct LocalListener {
 	/// process that makes its own.
 	#[cfg(windows)]
 	handed: Vec<tokio::net::windows::named_pipe::NamedPipeServer>,
+	/// Where a handed instance comes back to once its connection ends, so
+	/// the pool tracks instances concurrently in use rather than shrinking
+	/// for ever. Unused (nothing ever sends on it) when this listener makes
+	/// its own instances instead of serving handed ones.
+	#[cfg(windows)]
+	handed_tx: mpsc::UnboundedSender<tokio::net::windows::named_pipe::NamedPipeServer>,
+	#[cfg(windows)]
+	handed_rx: mpsc::UnboundedReceiver<tokio::net::windows::named_pipe::NamedPipeServer>,
 }
 
 #[cfg(unix)]
@@ -1058,36 +1320,50 @@ impl LocalListener {
 					server,
 				)));
 			}
-			// A node's instances were all made before it started and are all
-			// listening at once, so a client lands on whichever the kernel
-			// picks. Waiting on one of them would be waiting for a client to
-			// guess it: every idle instance is waited on together, and the one
-			// that a client actually reached is the one that answers.
-			let index = {
+			// A node's instances were all made before it started, so a
+			// finished connection goes back on `handed_rx` (see `split` on
+			// `NamedPipeInner::HandedServer`) instead of being destroyed —
+			// this node cannot make another to replace it.
+			loop {
+				while let Ok(server) = self.handed_rx.try_recv() {
+					self.handed.push(server);
+				}
+				if self.handed.is_empty() {
+					// Every instance is checked out. A node's own peer count
+					// is bounded, so this clears once one of them finishes;
+					// blocking here (rather than erroring) keeps `serve`
+					// from tearing the node's live connections down over a
+					// queue that is about to drain. The channel cannot close
+					// while this runs: `self.handed_tx` is a live sender
+					// this same listener holds, plus a clone in every
+					// outstanding `HandedServer` adapter.
+					let server = self
+						.handed_rx
+						.recv()
+						.await
+						.expect("the listener holds a sender, so the channel cannot close");
+					self.handed.push(server);
+					continue;
+				}
+				// Idle instances are all listening at once, so a client
+				// lands on whichever the kernel picks. Waiting on one of
+				// them would be waiting for a client to guess it: every
+				// idle instance is waited on together, and the one that a
+				// client actually reached is the one that answers.
 				let pending: Vec<_> = self
 					.handed
 					.iter()
 					.map(|server| Box::pin(server.connect()))
 					.collect();
-				if pending.is_empty() {
-					return Err(std::io::Error::new(
-						std::io::ErrorKind::OutOfMemory,
-						format!(
-							"{}: every pipe instance this node was handed is in use; \
-							 it cannot make more",
-							self.pipe_name
-						),
-					));
-				}
 				let (connected, index, rest) = futures::future::select_all(pending).await;
 				// The rest borrow `handed`, and it is about to be taken from.
 				drop(rest);
 				connected?;
-				index
-			};
-			Ok(LocalAdapter::NamedPipe(NamedPipeAdapter::from_server(
-				self.handed.remove(index),
-			)))
+				let server = self.handed.remove(index);
+				return Ok(LocalAdapter::NamedPipe(
+					NamedPipeAdapter::from_handed_server(server, self.handed_tx.clone()),
+				));
+			}
 		}
 	}
 }

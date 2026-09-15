@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::transport::rpc::{self, Incoming, Peer, Request};
-use crate::transport::typed::{BindOutcome, Endpoint, LocalAdapter, LocalListener};
+use crate::transport::typed::{AdapterError, BindOutcome, Endpoint, LocalAdapter, LocalListener};
 
 pub const SOCKET_ENV: &str = "CARTRIDGE_SOCKET";
 pub const NODE_TOKEN_ENV: &str = "CARTRIDGE_NODE_TOKEN";
@@ -577,14 +577,48 @@ impl Ctx {
 			}
 		});
 		let last = Arc::new(AtomicU64::new(since.unwrap_or(0)));
+		let key = (address.cartridge.clone(), channel.to_owned());
+		// The watcher goes in before the call: `join` sends the replay on the
+		// connection before its reply, so an envelope arriving without a
+		// watcher is lost rather than deferred. Undone on failure, so a
+		// refused cartridge leaves nothing behind.
 		self.state.watchers.lock().expect("watchers lock").insert(
-			(address.cartridge.clone(), channel.to_owned()),
-			Watcher { tx, last },
+			key.clone(),
+			Watcher {
+				tx,
+				last: last.clone(),
+			},
 		);
-		let peer = self.client(&address).await?;
-		peer.call("subscribe", json!({ "channel": channel, "since": since }))
-			.await?;
-		Ok(())
+		let subscribed: Result<Value> = async {
+			let peer = self.client(&address).await?;
+			peer.call("subscribe", json!({ "channel": channel, "since": since }))
+				.await
+				.map_err(|error| error.to_string())
+		}
+		.await;
+		match subscribed {
+			Ok(reply) => {
+				// Where the caller joined, so a reconnect resumes from here
+				// rather than from 0. Only without a replay: `since` queues
+				// envelopes `pump` has not drained when the call returns, and
+				// seeding from the reply would resume past them — and `last`
+				// already holds `since` anyway.
+				if since.is_none() {
+					if let Some(seq) = reply["seq"].as_u64() {
+						last.fetch_max(seq, Ordering::SeqCst);
+					}
+				}
+				Ok(())
+			}
+			Err(error) => {
+				self.state
+					.watchers
+					.lock()
+					.expect("watchers lock")
+					.remove(&key);
+				Err(error)
+			}
+		}
 	}
 
 	pub async fn unsubscribe(&self, cartridge: &str, channel: &str) -> Result<()> {
@@ -747,7 +781,14 @@ async fn connect(
 ) -> std::result::Result<(Peer, mpsc::Receiver<Incoming>), Refused> {
 	let adapter = crate::transport::typed::connect(&Endpoint::local(&address.socket))
 		.await
-		.map_err(|e| Refused::Unreachable(e.to_string()))?;
+		.map_err(|e| match e {
+			// The caller refused this endpoint itself; retrying it unchanged
+			// for the whole connect timeout would only repeat the refusal.
+			AdapterError::UntrustedEndpoint(_) | AdapterError::Unauthenticated(_) => {
+				Refused::Unauthorized(rpc::Error::new(rpc::UNAUTHORIZED, e.to_string()))
+			}
+			e => Refused::Unreachable(e.to_string()),
+		})?;
 	let (peer, incoming) = Peer::spawn(adapter, None);
 	match peer.call("auth", json!({ "token": address.token })).await {
 		Ok(_) => Ok((peer, incoming)),
@@ -757,17 +798,26 @@ async fn connect(
 }
 
 /// Serve `ctx` on `listener` until it is disposed or stopped. `apply` runs when
-/// the host calls `apply`; its error is the apply's error.
-pub async fn serve(mut listener: LocalListener, ctx: Ctx, apply: Apply) {
+/// the host calls `apply`; its error is the apply's error. An `Err` return
+/// means the listener itself failed (e.g. the fd table is exhausted), not a
+/// disposal or stop: those still return `Ok`.
+pub async fn serve(mut listener: LocalListener, ctx: Ctx, apply: Apply) -> Result<()> {
 	let apply = Arc::new(Mutex::new(Some(apply)));
 	let mut connections = tokio::task::JoinSet::new();
+	let mut result = Ok(());
 	loop {
 		tokio::select! {
 			accepted = listener.accept() => match accepted {
 				Ok(adapter) => {
 					connections.spawn(connection(ctx.clone(), adapter, apply.clone()));
 				}
-				Err(_) => break,
+				// A real accept(2) failure (fd table exhausted, listener fd
+				// gone): accept_from never returns an error for a stranger
+				// connection, so this is not a routine disconnect.
+				Err(error) => {
+					result = Err(error.to_string());
+					break;
+				}
 			},
 			_ = ctx.state.stop.cancelled() => break,
 		}
@@ -781,15 +831,19 @@ pub async fn serve(mut listener: LocalListener, ctx: Ctx, apply: Apply) {
 		while connections.join_next().await.is_some() {}
 	})
 	.await;
+	result
 }
 
 async fn connection(ctx: Ctx, adapter: LocalAdapter, apply: Arc<Mutex<Option<Apply>>>) {
 	let (peer, mut incoming) = Peer::spawn(adapter, Some(MAX_FRAME));
-	ctx.state
-		.connections
-		.lock()
-		.expect("connections lock")
-		.push(peer.clone());
+	{
+		// Prune dead entries on every accept, instead of only at shutdown, so a
+		// long-running node does not keep every connection it ever accepted
+		// pinned here after its socket is gone.
+		let mut connections = ctx.state.connections.lock().expect("connections lock");
+		connections.retain(|peer| !peer.is_closed());
+		connections.push(peer.clone());
+	}
 	let access = loop {
 		match incoming.recv().await {
 			None => return,

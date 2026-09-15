@@ -110,8 +110,11 @@ pub(super) fn command(
 			}
 		}
 	}
-	let mut installations: Vec<PathBuf> =
-		exec.iter().filter_map(|p| super::installation(p)).collect();
+	let homes = super::homes();
+	let mut installations: Vec<PathBuf> = exec
+		.iter()
+		.filter_map(|p| super::installation_outside(p, &homes))
+		.collect();
 	installations.sort();
 	installations.dedup();
 	exec.extend(installations.iter().cloned());

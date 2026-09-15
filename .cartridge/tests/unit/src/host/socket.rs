@@ -58,3 +58,33 @@ fn a_run_directory_is_owner_only() {
 		"a run's sockets sit in a directory only this user can enter"
 	);
 }
+
+#[cfg(unix)]
+#[test]
+fn each_run_owns_its_node_directory_and_a_dead_run_is_swept() {
+	let tmp = tempfile::tempdir().unwrap();
+	let run = run_dir(tmp.path()).unwrap();
+	let mut gone = std::process::Command::new("true").spawn().unwrap();
+	let dead = gone.id();
+	gone.wait().unwrap();
+	let stale = run.join(dead.to_string());
+	std::fs::create_dir_all(&stale).unwrap();
+	let live = run.join("host.sock");
+	std::fs::write(&live, b"").unwrap();
+	let mine = host_dir(tmp.path()).unwrap();
+	let outcome = (mine, stale.exists(), live.exists());
+	let _ = std::fs::remove_dir_all(&run);
+	assert_eq!(
+		outcome.0,
+		run.join(std::process::id().to_string()),
+		"a run's nodes live in a directory named by its pid"
+	);
+	assert!(
+		!outcome.1,
+		"the directory of a run whose process is gone is removed"
+	);
+	assert!(
+		outcome.2,
+		"the base's own socket in the shared directory is left alone"
+	);
+}

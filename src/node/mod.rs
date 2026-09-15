@@ -145,7 +145,9 @@ pub async fn main() -> Result<ExitCode> {
 	});
 	let apply =
 		Box::new(move |ctx: Ctx, config: Value| apply(lua, ctx, entry, expected, config).boxed());
-	cartridge::serve(listener, ctx, apply).await;
+	cartridge::serve(listener, ctx, apply)
+		.await
+		.map_err(|e| Error::process(socket.display().to_string(), e))?;
 	Ok(ExitCode::SUCCESS)
 }
 
@@ -380,16 +382,21 @@ fn install(
 	lua.globals().set("cartridge", global)
 }
 
-/// Load `lib<name>.dylib` or `<name>.so` from the cartridge folder (or its
-/// `target/{release,debug}` while developing) and run its `luaopen_<name>`.
+/// Load `lib<name>.dylib`/`<name>.so` (or `<name>.dll`/`lib<name>.dll` on
+/// Windows) from the cartridge folder (or its `target/{release,debug}` while
+/// developing) and run its `luaopen_<name>`.
 fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> {
 	let symbol = name.replace(['-', '.'], "_");
-	let files = [
-		format!("lib{symbol}.dylib"),
-		format!("{symbol}.dylib"),
-		format!("lib{symbol}.so"),
-		format!("{symbol}.so"),
-	];
+	let files: Vec<String> = if cfg!(windows) {
+		vec![format!("{symbol}.dll"), format!("lib{symbol}.dll")]
+	} else {
+		vec![
+			format!("lib{symbol}.dylib"),
+			format!("{symbol}.dylib"),
+			format!("lib{symbol}.so"),
+			format!("{symbol}.so"),
+		]
+	};
 	let dirs = [
 		root.to_path_buf(),
 		root.join("target/release"),
@@ -420,11 +427,15 @@ fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> 
 async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'static) -> bool {
 	let name = |key: &str| value[key].as_str().map(str::to_owned);
 	if let Some(name) = name("emit") {
-		let _ = ctx.emit(&name, value["data"].clone());
+		if let Err(error) = ctx.emit(&name, value["data"].clone()) {
+			tracing::warn!(target: "cartridge", "emit `{name}` refused: {error}");
+		}
 		return true;
 	}
 	if let Some(name) = name("notify") {
-		let _ = ctx.notify(&name, value["data"].clone());
+		if let Err(error) = ctx.notify(&name, value["data"].clone()) {
+			tracing::warn!(target: "cartridge", "notify `{name}` refused: {error}");
+		}
 		return true;
 	}
 	if let Some(channel) = name("publish") {
@@ -529,6 +540,14 @@ fn pipe(
 			std::io::Error::last_os_error()
 		)));
 	}
+	// A clean dispose unlinks the FIFO, so a reload doesn't leave it behind;
+	// the base's monitor still has to sweep the crash path beside the socket.
+	{
+		let unlink = path.clone();
+		ctx.on_dispose(move || async move {
+			let _ = std::fs::remove_file(&unlink);
+		});
+	}
 	// Held open by the node itself before init.lua goes on, so a writer's open
 	// never waits for a reader and readers never see EOF between writers.
 	let keep = std::fs::OpenOptions::new()
@@ -602,7 +621,9 @@ fn pipe(
 /// A helper program: lines of JSON in and out. `request` matches a reply by `id`;
 /// every other line reaches the `on_line` handler.
 struct Spawned {
-	stdin: tokio::sync::Mutex<tokio::process::ChildStdin>,
+	/// `None` once a write timed out: a half-written line nobody can finish,
+	/// so the handle is gone the way the killed `child` is.
+	stdin: tokio::sync::Mutex<Option<tokio::process::ChildStdin>>,
 	pending: Mutex<HashMap<u64, oneshot::Sender<Value>>>,
 	on_line: Mutex<Option<Function>>,
 	next: AtomicU64,
@@ -661,7 +682,7 @@ fn spawn(
 	let stdin = child.stdin.take().expect("piped stdin");
 	let stdout = child.stdout.take().expect("piped stdout");
 	let spawned = Arc::new(Spawned {
-		stdin: tokio::sync::Mutex::new(stdin),
+		stdin: tokio::sync::Mutex::new(Some(stdin)),
 		pending: Mutex::default(),
 		on_line: Mutex::default(),
 		next: AtomicU64::new(1),
@@ -702,6 +723,10 @@ fn spawn(
 				}
 			}
 		}
+		// The helper exited without answering these; drop their senders so
+		// every waiting `rx` resolves to `RecvError` instead of hanging for
+		// the full timeout.
+		reader.pending.lock().expect("pending lock").clear();
 	});
 	lua.create_userdata(Handle(spawned))
 }
@@ -712,9 +737,37 @@ impl Spawned {
 	async fn write(&self, value: &Value) -> std::io::Result<()> {
 		let mut line = value.to_string();
 		line.push('\n');
-		let mut stdin = self.stdin.lock().await;
-		stdin.write_all(line.as_bytes()).await?;
-		stdin.flush().await
+		// Bounded, so a helper that stops reading its stdin cannot park every
+		// later send behind the filled pipe forever. The lock is taken outside
+		// the timed block and held across it: on timeout the write is dropped
+		// mid-line, and no writer parked behind may resume that line, so the
+		// handle is taken away and the helper killed before the lock is let go.
+		let mut held = self.stdin.lock().await;
+		let Some(stdin) = held.as_mut() else {
+			return Err(std::io::Error::new(
+				std::io::ErrorKind::BrokenPipe,
+				"the program's input is closed",
+			));
+		};
+		let written = tokio::time::timeout(self.timeout, async {
+			stdin.write_all(line.as_bytes()).await?;
+			stdin.flush().await
+		})
+		.await;
+		match written {
+			Ok(written) => written,
+			Err(_) => {
+				held.take();
+				drop(held);
+				if let Some(mut child) = self.child.lock().expect("child lock").take() {
+					let _ = child.start_kill();
+				}
+				Err(std::io::Error::new(
+					std::io::ErrorKind::TimedOut,
+					"the program did not read its input in time",
+				))
+			}
+		}
 	}
 }
 
@@ -741,14 +794,27 @@ impl UserData for Handle {
 				value["id"] = json!(id);
 				let (tx, rx) = oneshot::channel();
 				spawned.pending.lock().expect("pending lock").insert(id, tx);
+				// The write is bounded by `timeout` too, so a stalled helper
+				// can make one `:request` wait twice it: once writing, once
+				// for the reply.
 				let written = spawned.write(&value).await;
-				let reply = match written {
+				let reply = match &written {
 					Ok(()) => Some(tokio::time::timeout(spawned.timeout, rx).await),
 					Err(_) => None,
 				};
 				spawned.pending.lock().expect("pending lock").remove(&id);
 				match reply {
-					None => Err(external("the program's input is closed".into())),
+					// The write's own error says what went wrong: a stalled
+					// helper did not answer, it did not close its input.
+					None => Err(external(match written.unwrap_err() {
+						e if e.kind() == std::io::ErrorKind::TimedOut => {
+							"the program did not answer in time".to_string()
+						}
+						e if e.kind() == std::io::ErrorKind::BrokenPipe => {
+							"the program's input is closed".to_string()
+						}
+						e => e.to_string(),
+					})),
 					Some(Ok(Ok(reply))) => lua.to_value(&reply),
 					Some(Ok(Err(_))) => Err(external("the program exited".into())),
 					Some(Err(_)) => Err(external("the program did not answer in time".into())),

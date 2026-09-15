@@ -93,12 +93,6 @@ fn dispatch() -> ExitCode {
 				std::env::set_var(cartridge::settings::YOLO_ENV, "1");
 			}
 			let project = project::locate(cli.dir)?;
-			// Still single threaded: a runtime's workers would race this `setenv`.
-			if matches!(command, Command::Launch { .. }) {
-				if let Some(key) = host::minted_proxy_key()? {
-					std::env::set_var(host::PROXY_KEY_ENV, key);
-				}
-			}
 			let runtime = tokio::runtime::Runtime::new()?;
 			let outcome = runtime.block_on(run(command, &project));
 			// Nodes are stopped by now; `mcp`'s read of stdin would hold a
