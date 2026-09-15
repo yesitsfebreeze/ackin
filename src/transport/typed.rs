@@ -764,6 +764,12 @@ async fn bind_unix(path: &Path, expected_peer: u32) -> Result<BindOutcome, BindE
 	}))
 }
 
+/// `CreateNamedPipeW` answers these two often enough to be worth naming.
+#[cfg(windows)]
+const ERROR_ACCESS_DENIED: i32 = 5;
+#[cfg(windows)]
+const ERROR_PIPE_BUSY: i32 = 231;
+
 pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 	match endpoint {
 		#[cfg(unix)]
@@ -776,21 +782,44 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 			// Fail closed: no descriptor, no pipe.
 			let security = owner_only::OwnerOnlySd::new()?;
 			match create_pipe_instance(name, &security, true) {
-                Ok(server) => Ok(BindOutcome::Bound(LocalListener {
-                    pipe_name: name.clone(),
-                    security,
-                    current: Some(server),
-                })),
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::PermissionDenied
-                        || e.raw_os_error() == Some(5)    // ERROR_ACCESS_DENIED
-                        || e.raw_os_error() == Some(231)  // ERROR_PIPE_BUSY
-                =>
-                {
-                    Ok(BindOutcome::AlreadyRunning)
-                }
-                Err(e) => Err(e.into()),
-            }
+				Ok(server) => Ok(BindOutcome::Bound(LocalListener {
+					pipe_name: name.clone(),
+					security,
+					current: Some(server),
+				})),
+				// Every instance is busy, so a first instance cannot be made:
+				// something is already serving the name.
+				Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+					Ok(BindOutcome::AlreadyRunning)
+				}
+				// `FILE_FLAG_FIRST_PIPE_INSTANCE` answers ACCESS_DENIED for two
+				// different facts: the name is already served, and this process
+				// may not create pipes at all — which is what a confined node
+				// gets, since an AppContainer has its own object namespace.
+				// Reading the first meaning into both is what made a permission
+				// failure read as contention, so the name is asked whether
+				// anything is actually there.
+				Err(e)
+					if e.raw_os_error() == Some(ERROR_ACCESS_DENIED)
+						|| e.kind() == std::io::ErrorKind::PermissionDenied =>
+				{
+					match tokio::net::windows::named_pipe::ClientOptions::new().open(name) {
+						// Answered, or answered that every instance is busy:
+						// either way a server holds the name.
+						Ok(_) => Ok(BindOutcome::AlreadyRunning),
+						Err(busy) if busy.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+							Ok(BindOutcome::AlreadyRunning)
+						}
+						// Nothing holds it, so the refusal was about this
+						// process and says so rather than blaming a neighbour.
+						Err(_) => Err(BindError::Untrusted(format!(
+							"{name}: {e}, and nothing serves that name — this \
+							 process may not create it"
+						))),
+					}
+				}
+				Err(e) => Err(e.into()),
+			}
 		}
 	}
 }
