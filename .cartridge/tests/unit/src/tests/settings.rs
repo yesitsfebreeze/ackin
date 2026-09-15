@@ -30,13 +30,20 @@ fn yolo_overrides_the_configured_value_only_where_the_cartridge_declares_it() {
 		"dir": {"type": "string", "default": "."},
 	}))
 	.unwrap();
+	// The caller's environment is not under test: a yolo-mode shell exports
+	// CARTRIDGE_YOLO=1, which would flip the very first assertion.
+	let ambient = std::env::var_os(crate::settings::YOLO_ENV);
+	std::env::remove_var(crate::settings::YOLO_ENV);
 	assert_eq!(
 		apply(&automatic, json!({"yolo": false}), "agent").unwrap()["yolo"],
 		json!(false)
 	);
 	std::env::set_var(crate::settings::YOLO_ENV, "1");
 	let settled = apply(&automatic, json!({"yolo": false}), "agent").unwrap();
-	std::env::remove_var(crate::settings::YOLO_ENV);
+	match ambient {
+		Some(value) => std::env::set_var(crate::settings::YOLO_ENV, value),
+		None => std::env::remove_var(crate::settings::YOLO_ENV),
+	}
 	assert_eq!(settled["yolo"], json!(true));
 	assert_eq!(settled["dir"], json!("."));
 	assert!(apply(&specs(), json!({}), "memory")

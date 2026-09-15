@@ -2,7 +2,11 @@ use super::*;
 
 pub(crate) fn trust_home() -> std::sync::MutexGuard<'static, ()> {
 	static TURNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
-	TURNS.lock().unwrap()
+	// A panicking test leaves the lock poisoned; the next test's turn still
+	// runs — the serialized section guards CARTRIDGE_HOME, nothing else.
+	TURNS
+		.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn cartridge(under: &Path, name: &str, description: &str, more: Value, lua: &str) {

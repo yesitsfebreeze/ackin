@@ -1,8 +1,10 @@
 build *args:
     cargo build --workspace {{args}}
 
+# One test per process: the unit tests mutate CARTRIDGE_HOME and other
+# process-global state, which nextest isolates per test.
 test *args:
-    cargo test --workspace {{args}}
+    cargo nextest run --workspace {{args}}
 
 check:
     cargo fmt --all --check
