@@ -103,6 +103,9 @@ fn an_exec_grant_that_resolves_builds_a_literal_and_one_that_does_not_builds_not
 	assert!(!text.contains("no-such-program-xyz"), "{text}");
 }
 
+/// `profile` compiles the macOS seatbelt profile; there is nothing to read
+/// out of it on a platform that does not use one.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_script_names_its_interpreter() {
 	let dir = tempfile::tempdir().unwrap();
