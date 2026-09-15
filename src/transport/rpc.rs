@@ -18,7 +18,6 @@ pub const INTERNAL_ERROR: i64 = -32603;
 pub const APPLICATION_ERROR: i64 = -32000;
 pub const UNAUTHORIZED: i64 = -32001;
 pub const NOT_PROVIDED: i64 = -32002;
-/// Local only, never on the wire: the connection is gone.
 pub const CLOSED: i64 = -32003;
 
 pub const QUEUE: usize = 1024;
@@ -131,7 +130,6 @@ impl Drop for Request {
 }
 
 impl Inner {
-	/// A full queue means the other side stopped reading, and the connection is closed.
 	fn push(&self, frame: Value) -> bool {
 		match self.out.try_send(frame) {
 			Ok(()) => true,
@@ -152,8 +150,6 @@ fn response(id: &Value, result: Result<Value, Error>) -> Value {
 }
 
 impl Peer {
-	/// Frames longer than `max_frame` bytes, when given, close it: the limit is what
-	/// a server that reads a token from an unauthenticated peer needs.
 	pub fn spawn<A: Adapter>(
 		adapter: A,
 		max_frame: Option<usize>,
@@ -189,8 +185,6 @@ impl Peer {
 						None => break,
 					},
 					_ = stopped.cancelled() => {
-						// Flush what is already queued, such as the reply to the
-						// request that asked for the close.
 						while let Ok(frame) = outgoing.try_recv() {
 							if writer.send(frame).await.is_err() {
 								break;
@@ -290,8 +284,6 @@ impl Peer {
 	}
 }
 
-/// A call's registration belongs to the waiting future: a caller that gives up
-/// takes its entry out of the table.
 struct Waiting<'a> {
 	peer: &'a Peer,
 	id: u64,
@@ -334,7 +326,6 @@ async fn dispatch(inner: &Arc<Inner>, incoming: &mpsc::Sender<Incoming>, frame: 
 					id,
 					connection: Some(inner.clone()),
 				};
-				// A receiver that is gone drops the request, which answers it.
 				let _ = incoming.send(Incoming::Request(request)).await;
 			}
 			None => {

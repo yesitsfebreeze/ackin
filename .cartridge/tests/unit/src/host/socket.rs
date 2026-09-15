@@ -1,8 +1,6 @@
 #[cfg(unix)]
 use super::*;
 
-/// Mode and owner are POSIX facts; Windows guarantees the same directory
-/// only through its profile ACL, not through this assertion.
 #[cfg(unix)]
 #[test]
 fn an_owner_only_directory_is_created_and_repaired() {
@@ -11,7 +9,6 @@ fn an_owner_only_directory_is_created_and_repaired() {
 	let dir = tmp.path().join("sockets");
 	owner_only_dir(&dir).unwrap();
 	let meta = std::fs::metadata(&dir).unwrap();
-	// SAFETY: `getuid` cannot fail and touches no memory.
 	assert_eq!(meta.uid(), unsafe { libc::getuid() });
 	assert_eq!(
 		meta.permissions().mode() & 0o777,

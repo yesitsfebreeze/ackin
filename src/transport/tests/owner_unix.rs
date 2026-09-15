@@ -1,8 +1,6 @@
 use super::*;
 
-// A path owned by another uid; None when running as root.
 pub(super) fn foreign_path() -> Option<PathBuf> {
-	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
 	if unsafe { libc::geteuid() } == 0 {
 		return None;
 	}
@@ -102,7 +100,6 @@ async fn the_peer_check_reads_the_server_uid_and_decides_both_ways() {
 		.await
 		.expect("our own listener accepts");
 
-	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
 	let euid = unsafe { libc::geteuid() };
 	assert!(
 		require_peer_uid(&adapter, &path, euid).is_ok(),
@@ -152,7 +149,6 @@ async fn connect_refuses_when_the_peer_uid_differs() {
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("test.sock");
 	let _listener = tokio::net::UnixListener::bind(&path).unwrap();
-	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
 	let euid = unsafe { libc::geteuid() };
 	let err = connect_with_peer(&Endpoint::Unix(path), euid.wrapping_add(1))
 		.await

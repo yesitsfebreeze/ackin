@@ -16,7 +16,6 @@ pub enum Error {
 	Lua(#[from] mlua::Error),
 	#[error(transparent)]
 	Watch(#[from] notify::Error),
-	/// The path names the document, not the tree around it.
 	#[error("{path}: {reason}")]
 	Document { path: PathBuf, reason: String },
 	#[error("{0}")]
@@ -77,8 +76,6 @@ impl Error {
 		Self::Remote(text.into())
 	}
 
-	/// A test or a log matcher asks of an error it reads as text; a caller
-	/// that wants the kind matches the variant instead.
 	pub fn contains(&self, needle: &str) -> bool {
 		self.to_string().contains(needle)
 	}

@@ -152,7 +152,6 @@ impl Host {
 		&self.host_token
 	}
 
-	/// Never actually empty: a token is written before the node is.
 	pub(crate) fn node_token(&self, id: &str) -> String {
 		self.node_tokens.lock().get(id).cloned().unwrap_or_default()
 	}
@@ -344,8 +343,6 @@ impl Host {
 			updates
 		};
 		for (peer, directory) in updates {
-			// A wedged node must not stall every reload, stop and status; an
-			// unanswered directory is picked up next round instead.
 			let _ = tokio::time::timeout(
 				Duration::from_millis(500),
 				peer.call("directory", json!({ "directory": directory })),
@@ -501,8 +498,6 @@ impl Host {
 				.expect("slot of a known entry");
 			match &plan {
 				Ok(plan) => {
-					// Rewired whenever the slot was inactive before, or the
-					// wiring (schema included) changed — cheap when it didn't.
 					let rewire = !was_active
 						|| slot
 							.plan
@@ -569,8 +564,6 @@ impl Host {
 		self.unpublish();
 	}
 
-	// Synchronous: the listener's own deferred drop must not decide whether a
-	// successor can bind the name this host served.
 	fn unpublish(&self) {
 		let _ = std::fs::remove_file(self.socket_path());
 		let _ = std::fs::remove_dir_all(&self.nodes);
@@ -759,8 +752,6 @@ pub(crate) async fn connect(
 			.await
 			.map_err(|e| Error::Remote(format!("{}: {e}", socket.display())))?;
 	let (peer, incoming) = Peer::spawn(adapter, None);
-	// A node that bound its socket but never serves keeps `auth` waiting
-	// forever without this timeout.
 	let auth = async { peer.call("auth", json!({ "token": token })).await };
 	tokio::time::timeout(crate::settings::host().startup_timeout(), auth)
 		.await

@@ -140,7 +140,6 @@ pub(crate) fn catalog_path() -> Result<PathBuf> {
 	Ok(cartridge::trust::home()?.join("catalog.json"))
 }
 
-/// A missing catalog is empty, not an error.
 pub(crate) fn read_catalog(path: &Path) -> Result<Vec<Candidate>> {
 	if !path.is_file() {
 		return Ok(Vec::new());
@@ -165,7 +164,6 @@ pub(crate) fn read_catalog(path: &Path) -> Result<Vec<Candidate>> {
 	Ok(out)
 }
 
-/// Nested cartridges belong to their parent and are not offered on their own.
 pub(crate) fn candidates(from: &[PathBuf], catalog: Vec<Candidate>) -> Vec<Candidate> {
 	let mut found: Vec<Candidate> = Vec::new();
 	for dir in from {
@@ -227,8 +225,6 @@ fn choose(prompt: &mut Prompt, candidates: &[Candidate]) -> Result<Vec<Candidate
 	}
 }
 
-/// Every character of the query, in order, somewhere in the name or the
-/// description, ignoring case. `agt` finds `agent`; `mod` finds `model`.
 pub(crate) fn matches(candidate: &Candidate, query: &str) -> bool {
 	let hay = format!("{} {}", candidate.name, candidate.description).to_lowercase();
 	let mut chars = hay.chars();
@@ -255,7 +251,6 @@ fn select_named(candidates: &[Candidate], wanted: &[String]) -> Result<Vec<Candi
 	Ok(chosen)
 }
 
-/// Anything else is an error the prompt turns into a narrowing.
 pub(crate) fn select(
 	candidates: &[Candidate],
 	shown: &[usize],
@@ -286,8 +281,6 @@ pub(crate) fn install(dir: &Path, chosen: &[Candidate]) -> Result<Vec<(String, P
 	std::fs::create_dir_all(dir).map_err(|e| Error::file(dir, e))?;
 	let mut installed = Vec::new();
 	for c in chosen {
-		// `.cartridge` is the descriptor's own folder, so a cartridge may not
-		// be installed as it.
 		if !cartridge::loader::is_bare_name(&c.name) || c.name == ".cartridge" {
 			return Err(Error::Argument(format!(
 				"{}: not a valid cartridge name",
@@ -347,9 +340,6 @@ pub(crate) fn install(dir: &Path, chosen: &[Candidate]) -> Result<Vec<(String, P
 	Ok(installed)
 }
 
-/// Never falls back to a junction or a copy on Windows: a junction is not
-/// relative and a copy stops tracking the cartridge, so a missing symlink
-/// privilege is a refusal, not a silent substitute.
 fn link(original: &Path, place: &Path, target: &Path) -> Result<()> {
 	#[cfg(unix)]
 	{
@@ -394,7 +384,6 @@ pub(crate) fn write(
 	}
 	init.push_str("}\n");
 	put(&descriptor.join(INIT), &init, &mut done)?;
-	// A pre-existing config.lua is kept but not trusted here.
 	let kept_config = descriptor.join(CONFIG).exists();
 	if !kept_config {
 		put(
@@ -411,7 +400,6 @@ pub(crate) fn write(
 			&mut done,
 		)?;
 	}
-	// Trust only what setup itself wrote or installed, nothing else the tree holds.
 	let mut wrote = vec![descriptor.join(INIT)];
 	if !kept_config {
 		wrote.push(descriptor.join(CONFIG));
@@ -423,7 +411,6 @@ pub(crate) fn write(
 	Ok(done)
 }
 
-/// Keeps the WRITTEN_BY_SETUP header so a later setup knows it may rewrite this file.
 fn render_config(config: &Map<String, Value>) -> String {
 	let mut out = format!(
 		"{WRITTEN_BY_SETUP} what each cartridge's setup answered, one table per\n\
@@ -550,8 +537,6 @@ async fn run_setups(
 	Ok(report)
 }
 
-/// A write-granted cartridge could have rewritten another manifest during
-/// the exchange; recording trust afterward would silently approve it.
 fn strayed(root: &Path, spare: &Path) -> Result<()> {
 	if let Some(file) = cartridge::trust::pending(root)?
 		.iter()
@@ -573,7 +558,6 @@ where
 {
 	let body = async {
 		host.reconcile().await?;
-		// No timeout here: a still-starting cartridge answers with its own error.
 		host.settled(cartridge::settings::host().verify_timeout())
 			.await;
 		ask().await
@@ -685,8 +669,6 @@ fn names(candidates: &[&Candidate]) -> String {
 	}
 }
 
-/// Lexical, not `fs::canonicalize`: two spellings of one directory must
-/// compare equal without touching the disk.
 fn absolute(path: &Path) -> PathBuf {
 	cartridge::trust::absolute_clean(path)
 }

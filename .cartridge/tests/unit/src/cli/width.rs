@@ -1,7 +1,5 @@
 use super::*;
 
-/// `fit` cuts every line the help picker draws; by `char` a CJK line is twice
-/// the terminal's width and scrolls the alternate screen.
 #[test]
 fn fit_and_pad_count_display_cells() {
 	let cjk = "設定設定設定設定設定設定";

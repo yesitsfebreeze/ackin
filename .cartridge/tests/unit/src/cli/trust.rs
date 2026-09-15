@@ -1,7 +1,5 @@
 use super::*;
 
-/// A folder that is neither a project nor a cartridge is trusted by an
-/// explicit path — what a bare-Lua refusal suggests trying.
 #[test]
 fn an_explicit_path_trusts_a_folder_that_is_neither() {
 	let _turn = crate::cli::setup::tests::trust_home();

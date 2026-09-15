@@ -91,7 +91,6 @@ fn every_spelling_of_a_directory_is_one_record() {
 #[test]
 fn a_digest_is_the_files_own_sha_256() {
 	let dir = project(&[("x.lua", "return {}\n")]);
-	// `printf 'return {}\n' | shasum -a 256`
 	assert_eq!(
 		digest(&dir.path().join("x.lua")).unwrap(),
 		"1232d8379de77e154ca533689af2e42629dd7574bda5a0a390799849f07607c3"
@@ -144,8 +143,6 @@ fn a_nested_record_does_not_shadow_a_fresh_outer_one() {
 	verify(&dir.path().join("cart/init.lua")).unwrap();
 }
 
-// An empty or relative CARTRIDGE_HOME (or an empty HOME) must refuse, not
-// silently turn trust off by making the project "the person's own".
 #[test]
 fn a_relative_or_empty_home_is_refused_rather_than_trust_disabling() {
 	let bin = crate::tests::built(&["--bin", "cartridge"]);
@@ -173,7 +170,6 @@ fn a_relative_or_empty_home_is_refused_rather_than_trust_disabling() {
 	}
 }
 
-// `read` hashes the bytes it returns, not a second read of the disk.
 #[test]
 fn read_refuses_a_file_that_changed_after_it_was_trusted() {
 	let dir = project(&[("x.lua", "return {}\n")]);
@@ -186,9 +182,6 @@ fn read_refuses_a_file_that_changed_after_it_was_trusted() {
 	);
 }
 
-// A dotfiles setup symlinks the global config outside the home; the home
-// exemption must accept the file as the base spells it, not as the kernel
-// resolves it.
 #[cfg(unix)]
 #[test]
 fn a_global_config_symlinked_out_of_the_home_still_passes() {
@@ -223,8 +216,6 @@ fn a_deleted_project_can_still_be_untrusted() {
 		.all(|record| record.project != canonical));
 }
 
-// Also untrusted by a path relative to the shell's own working directory,
-// not only by its absolute spelling.
 #[test]
 fn a_deleted_project_is_untrusted_by_a_relative_path() {
 	let dir = project(&[(".cartridge/init.lua", "return {}")]);

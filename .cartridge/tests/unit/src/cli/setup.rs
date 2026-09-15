@@ -1,7 +1,5 @@
 use super::*;
 
-/// `$CARTRIDGE_HOME` is process-global: the tests that point it somewhere
-/// take turns, so one test's store is never another's mid-run.
 pub(crate) fn trust_home() -> std::sync::MutexGuard<'static, ()> {
 	static TURNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 	TURNS.lock().unwrap()
@@ -16,7 +14,6 @@ fn cartridge(under: &Path, name: &str, description: &str, more: Value, lua: &str
 	std::fs::write(dir.join("init.lua"), lua).unwrap();
 }
 
-/// The test binary is not the base; nodes run the built `cartridge`.
 fn node_binary() {
 	let output = std::process::Command::new(env!("CARGO"))
 		.args(["build", "--bin", "cartridge", "--message-format=json"])
@@ -43,7 +40,6 @@ fn setup_offers_what_it_finds_and_the_catalog_and_filters_by_subsequence() {
 	let checkouts = tmp.path().join("checkouts");
 	cartridge(&checkouts, "alpha", "First.", json!({}), "");
 	cartridge(&checkouts, "beta", "Second.", json!({}), "");
-	// A nested cartridge belongs to its parent and is not offered on its own.
 	cartridge(
 		&checkouts.join("beta.ctg"),
 		"inner",
@@ -151,8 +147,6 @@ fn setup_links_the_chosen_writes_a_descriptor_the_host_reads_and_lets_a_cartridg
 	);
 	drop(host);
 
-	// Without a terminal the question takes its default and the answer lands
-	// in config.lua under the entry id.
 	node_binary();
 	let rt = tokio::runtime::Runtime::new().unwrap();
 	let report = rt
@@ -196,8 +190,6 @@ fn a_setup_or_doctor_event_the_cartridge_does_not_listen_to_is_refused() {
 	}
 }
 
-/// The record approves nothing a running cartridge may have written: a file
-/// changed while the exchange ran is not trusted after the fact.
 #[test]
 fn a_file_changed_by_the_exchange_is_not_recorded() {
 	let _turn = trust_home();
@@ -224,8 +216,6 @@ fn a_file_changed_by_the_exchange_is_not_recorded() {
 	);
 }
 
-/// Choosing is the approval: a folder the tree already held stays untrusted,
-/// and so does a config.lua setup did not write.
 #[test]
 fn setup_trusts_what_it_chose_not_what_the_tree_holds() {
 	let _turn = trust_home();

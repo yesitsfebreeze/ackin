@@ -1,35 +1,3 @@
-//! A cartridge's `grant` is compiled into an operating-system policy and the
-//! child is spawned inside it, so a cartridge reaching outside what it
-//! declared is stopped by the OS rather than by review. A child that cannot
-//! be confined on the running platform is refused, never spawned unconfined —
-//! and a kernel that enforces less than the policy asks for says so on the
-//! child's stderr.
-//!
-//! **What is implicit.** A child cannot exist without reading its own binary,
-//! its interpreter, that interpreter's installation and the machine's runtime,
-//! so every profile allows exactly that: the executed binary, the interpreter
-//! its shebang names and the launcher variants the platform execs behind them,
-//! the prefix each was installed under, the cartridge folder, the directories
-//! on the way to it and to the working directory, and the system runtime —
-//! loader, system libraries, ICU, timezone database — in both spellings,
-//! written and canonical. That is the machine's own plumbing, not a
-//! capability. Everything else — writes, network, other programs — is allowed
-//! only where the grant names it.
-//!
-//! **What it does not cover.** An interpreter linked against other
-//! installations — a Homebrew python reaching `/opt/homebrew/opt` — is the user's
-//! package tree, granted only where `grant.read` names it.
-//!
-//! **The empty grant is the tightest policy.** A cartridge that declares
-//! nothing can run, serve and reach sockets in its host's socket directory,
-//! and reach nothing else.
-//!
-//! **What the OS on this platform cannot express.** `grant.net` names hosts,
-//! and `sandbox-exec` accepts only `*` and `localhost` in a remote filter, so
-//! a grant naming specific hosts cannot be confined host by host: a nonempty
-//! `net` allows outbound network and an empty one allows none. On Linux the
-//! same all-or-nothing rule is a seccomp filter on the socket call's domain.
-
 use std::path::{Path, PathBuf};
 
 use crate::loader::Grant;
@@ -61,8 +29,6 @@ fn granted_paths(path: &str, root: &Path) -> Vec<PathBuf> {
 		}
 	}
 	let mut forms = vec![clean.clone()];
-	// The deepest existing ancestor resolved, the rest appended: the file a
-	// cartridge creates is still `/private/...`.
 	let mut suffix = Vec::new();
 	let mut walk = clean.as_path();
 	let resolved = loop {
@@ -89,8 +55,6 @@ fn granted_paths(path: &str, root: &Path) -> Vec<PathBuf> {
 
 fn interpreter(binary: &Path) -> Option<PathBuf> {
 	use std::io::Read;
-	// Only the shebang matters, so only the first `sandbox_error_chars` bytes
-	// are read: the whole binary is tens of megabytes on every node start.
 	let limit = crate::settings::host().sandbox_error_chars as u64;
 	let mut first = Vec::new();
 	std::fs::File::open(binary)
@@ -113,7 +77,6 @@ fn interpreter(binary: &Path) -> Option<PathBuf> {
 	path.canonicalize().ok()
 }
 
-/// `/bin/sh` on macOS is a launcher for `/bin/bash` or `/bin/zsh`.
 fn with_variants(program: PathBuf) -> Vec<PathBuf> {
 	let mut all = vec![program.clone()];
 	if program == Path::new("/bin/sh") {
@@ -131,9 +94,6 @@ fn interpreters(binary: &Path) -> Vec<PathBuf> {
 	interpreter(binary).map(with_variants).unwrap_or_default()
 }
 
-/// `%USERPROFILE%` leads on Windows: the `PASSTHROUGH` list in `host::process`
-/// does not carry `HOME` to a node at all, and a shell like Git Bash sets it
-/// to an MSYS path naming somewhere else.
 pub(crate) fn home_var_names() -> &'static [&'static str] {
 	if cfg!(target_os = "windows") {
 		&["USERPROFILE", "HOME"]
@@ -142,8 +102,6 @@ pub(crate) fn home_var_names() -> &'static [&'static str] {
 	}
 }
 
-/// The one resolver every caller shares. Not `crate::trust::home()`, which is
-/// `$CARTRIDGE_HOME` — a store under this directory, not this directory.
 pub(crate) fn home() -> Option<PathBuf> {
 	home_var_names()
 		.iter()
@@ -151,9 +109,6 @@ pub(crate) fn home() -> Option<PathBuf> {
 		.map(PathBuf::from)
 }
 
-/// Every home that is set is tested, since a Windows shell can set `HOME`
-/// beside the `USERPROFILE` it ignores, and both sides are canonical so a
-/// verbatim `\\?\` spelling still compares equal to a plain one.
 pub(crate) fn homes() -> Vec<PathBuf> {
 	home_var_names()
 		.iter()
@@ -169,8 +124,6 @@ pub(crate) fn installation_outside(program: &Path, homes: &[PathBuf]) -> Option<
 		return None;
 	}
 	let prefix = dir.parent()?;
-	// A prefix directly under the root (`/bin/sh` → `/`, `/usr/bin/env` →
-	// `/usr`) is shared, not one program's.
 	if prefix.components().count() <= 2 {
 		return None;
 	}
@@ -188,7 +141,6 @@ pub(crate) fn installation_outside(program: &Path, homes: &[PathBuf]) -> Option<
 const RUNTIME: [&str; 7] = [
 	"/usr/lib",
 	"/System/Library",
-	// The dyld shared cache lives in the OS cryptex on macOS 13 and later.
 	"/System/Volumes/Preboot/Cryptexes",
 	"/usr/share/icu",
 	"/var/db/timezone",
@@ -196,8 +148,6 @@ const RUNTIME: [&str; 7] = [
 	"/etc",
 ];
 
-/// Resolved the way the host resolves a cartridge's own binary. Unresolvable
-/// entries build no line — the OS denies what was never allowed.
 fn granted_exec(program: &str, root: &Path) -> Option<PathBuf> {
 	let path = Path::new(program);
 	let candidates: Vec<PathBuf> = if path.components().count() > 1 || path.is_absolute() {
@@ -228,11 +178,6 @@ fn granted_exec(program: &str, root: &Path) -> Option<PathBuf> {
 		.and_then(|p| p.canonicalize().ok())
 }
 
-/// The extensions a bare program name may be spelled with on Windows, where
-/// `git` on PATH is the file `git.exe` and `is_file()` on the bare name is
-/// false. `PATHEXT` is only guaranteed for a process started from cmd or
-/// PowerShell, and the host is normally launched by an MCP client, so an unset
-/// one falls back to Windows's own defaults rather than skipping the probe.
 fn pathext() -> Vec<String> {
 	if !cfg!(target_os = "windows") {
 		return Vec::new();
@@ -269,16 +214,10 @@ fn spellings(candidate: PathBuf, extensions: &[String]) -> Vec<PathBuf> {
 	spellings
 }
 
-/// Compared path component by path component rather than as a string prefix:
-/// `/devices` and `/development` start with the four characters `/dev` but are
-/// not under it, and a grant naming them must not pick up device access
-/// nothing asked for.
 fn is_dev(path: &str) -> bool {
 	Path::new(path).starts_with("/dev")
 }
 
-/// A path is data here, and a quote or backslash inside a declared name must
-/// not end the string the profile reads.
 fn literal(path: &Path) -> String {
 	format!(
 		"\"{}\"",
@@ -289,12 +228,8 @@ fn literal(path: &Path) -> String {
 	)
 }
 
-/// Every line the grant does not ask for is absent, and `deny default` is
-/// what remains.
 pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>) -> String {
 	let mut profile = String::from("(version 1)\n(deny default)\n");
-	// Paths the OS resolves through symlinks must be named canonically: a
-	// grant written through `/tmp` would never match the file it names.
 	let binary = binary
 		.canonicalize()
 		.unwrap_or_else(|_| binary.to_path_buf());
@@ -308,7 +243,6 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	}
 	exec.sort();
 	exec.dedup();
-	// A program's own installation is plumbing, not a capability.
 	let homes = homes();
 	let mut installations: Vec<PathBuf> = exec
 		.iter()
@@ -316,7 +250,6 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 		.collect();
 	installations.sort();
 	installations.dedup();
-	// `*` is every program: a shell or a version-control client runs what it is told.
 	if grant.exec.iter().any(|program| program == "*") {
 		profile.push_str("(allow process-exec)\n");
 	} else if !exec.is_empty() {
@@ -331,9 +264,8 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 		);
 		profile.push_str(&format!("(allow process-exec {})\n", lines.join(" ")));
 	}
-	// A write is also a read. The root itself is a literal, not a subpath:
-	// dyld reads the root directory on the way up, and a subpath of `/`
-	// would be everything.
+	// The root is a literal, not a subpath: dyld reads `/` on the way up, and a
+	// subpath of `/` would be everything.
 	let mut read: Vec<PathBuf> = RUNTIME
 		.iter()
 		.flat_map(|path| granted_paths(path, &root))
@@ -348,8 +280,6 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	read.sort();
 	read.dedup();
 	let mut lines = vec![format!("(literal {})", literal(Path::new("/")))];
-	// A runtime resolves its working directory by reading every directory on
-	// the way up; a literal names the directory, never its contents.
 	let cwd = std::env::current_dir().unwrap_or_else(|_| root.to_path_buf());
 	let mut walked: Vec<PathBuf> = root.ancestors().skip(1).map(Path::to_path_buf).collect();
 	walked.extend(cwd.ancestors().map(Path::to_path_buf));
@@ -358,9 +288,6 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	lines.extend(walked.iter().map(|p| format!("(literal {})", literal(p))));
 	lines.extend(read.iter().map(|p| format!("(subpath {})", literal(p))));
 	profile.push_str(&format!("(allow file-read* {})\n", lines.join(" ")));
-	// `/dev/null` is plumbing, not a capability: git, shells and runtimes
-	// discard output to it without any grant naming it, so a program allowed
-	// to run at all may open it.
 	let writes: Vec<String> =
 		std::iter::once(format!("(literal {})", literal(Path::new("/dev/null"))))
 			.chain(
@@ -372,13 +299,9 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 			)
 			.collect();
 	profile.push_str(&format!("(allow file-write* {})\n", writes.join(" ")));
-	// Terminals: a cartridge that may write devices may open and drive a pseudo-terminal.
 	if grant.write.iter().any(|path| path == "/" || is_dev(path)) {
 		profile.push_str("(allow pseudo-tty)\n(allow file-ioctl)\n");
 	}
-	// Network is all or nothing on this platform: a nonempty `net` allows
-	// outbound connections, an empty one allows none. The hosts named in a
-	// nonempty grant are not expressible in a remote filter.
 	if !grant.net.is_empty() {
 		profile.push_str("(allow network*)\n(allow system-socket)\n");
 	}
@@ -398,7 +321,6 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 			.map(|path| format!("(subpath {})", literal(path)))
 			.collect();
 		let within = within.join(" ");
-		// Socket filters only match the canonical spelling; a symlinked one voids the rule.
 		let canonical = format!(
 			"(subpath {})",
 			literal(spellings.last().expect("a spelling"))
@@ -408,8 +330,6 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 			ancestors.join(" ")
 		));
 	}
-	// Metadata of any path, so creating a granted directory can walk its parents;
-	// POSIX and System V semaphores, which embedded stores (LMDB) use for their locks.
 	profile.push_str("(allow file-read-metadata)\n(allow ipc-posix-sem)\n(allow ipc-sysv-sem)\n(allow sysctl-read)\n(allow mach-lookup)\n(allow process-fork)\n(allow signal (target children))\n");
 	profile
 }
@@ -419,7 +339,6 @@ pub fn container_sid_for(root: &Path) -> crate::Result<String> {
 	windows::container_sid_for(root)
 }
 
-/// Confines before any cartridge code executes, including discovery.
 pub fn command(
 	cmd: &[String],
 	grant: &Grant,
@@ -433,9 +352,6 @@ pub fn command(
 	{
 		let binary = Path::new(binary);
 		let text = profile(grant, root, binary, sockets);
-		// The profile travels on the command line, so no file is written and no
-		// file has to outlive the spawn. `ps` shows the policy; that is a
-		// property of `sandbox-exec`, not a leak of what the cartridge declared.
 		let mut command = std::process::Command::new(SBIN);
 		command.arg("-p").arg(&text).args(cmd);
 		Ok(command)

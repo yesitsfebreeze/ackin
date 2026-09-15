@@ -33,14 +33,11 @@ async fn a_socket_is_owner_only_even_under_a_permissive_umask() {
 	use std::os::unix::fs::PermissionsExt;
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("test.sock");
-	// Under the same lock as `bind_owner_only`, so the restore cannot interleave.
-	// SAFETY: `umask` cannot fail and touches no memory.
 	let previous = unsafe {
 		let _guard = UMASK.lock();
 		libc::umask(0)
 	};
 	let bound = bind(&Endpoint::Unix(path.clone())).await;
-	// SAFETY: restoring the value `umask` returned above.
 	unsafe {
 		let _guard = UMASK.lock();
 		libc::umask(previous);
@@ -101,10 +98,7 @@ async fn a_symlink_to_a_foreign_target_refuses_the_bind() {
 async fn a_live_endpoint_served_by_another_uid_refuses_the_bind() {
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("test.sock");
-	// Bound, listening and answering — the shape a squatter presents. Only the
-	// uid the arm compares against is a fiction.
 	let _squatter = tokio::net::UnixListener::bind(&path).unwrap();
-	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
 	let euid = unsafe { libc::geteuid() };
 	let Err(err) = bind_unix(&path, euid.wrapping_add(1)).await else {
 		panic!(
@@ -176,9 +170,7 @@ async fn a_caller_of_another_uid_is_refused_and_the_listener_keeps_serving() {
 	else {
 		panic!("first bind should own the socket")
 	};
-	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
 	let euid = unsafe { libc::geteuid() };
-	// A knock the listener must refuse; only the uid it compares against is a fiction.
 	let _stranger = UnixStreamAdapter::connect(&path).await.unwrap();
 	let refused = tokio::time::timeout(
 		Duration::from_millis(250),

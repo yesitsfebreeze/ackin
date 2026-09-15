@@ -13,8 +13,6 @@ pub(crate) fn write(dir: &Path, name: &str, body: &str) {
 	std::fs::write(path, body).unwrap();
 }
 
-/// This test binary's `$CARTRIDGE_HOME`, set once: every test records trust
-/// here, never in the developer's, and no test switches it under another.
 pub(crate) fn home() -> &'static Path {
 	static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
 	HOME.get_or_init(|| {

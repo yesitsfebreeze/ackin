@@ -101,8 +101,6 @@ impl Outcome {
 #[derive(Clone)]
 enum Access {
 	Host,
-	/// What it may send is looked up per request, so a new directory takes
-	/// effect on open connections.
 	Peer(String),
 }
 
@@ -281,9 +279,6 @@ impl Ctx {
 
 	fn prepare(&self, name: &str, data: &Value) -> Result<Prepared> {
 		self.validate(name, data)?;
-		// One read off the same directory: another request may swap it
-		// between locks, and indexing a name the sends check just passed
-		// would then panic.
 		let directory = self.state.directory.read().expect("directory lock");
 		let entry = match directory.events.get(name) {
 			Some(entry) => entry.clone(),
@@ -470,8 +465,6 @@ impl Ctx {
 		if entry.history.len() > HISTORY {
 			entry.history.pop_front();
 		}
-		// A subscriber too slow to take this is disconnected by the notify; it
-		// resubscribes from its last sequence number and reads the replay.
 		entry
 			.subscribers
 			.retain(|(_, peer)| peer.notify("channel", envelope.clone()).is_ok());
@@ -652,8 +645,6 @@ impl Ctx {
 							watcher.last.fetch_max(seq, Ordering::SeqCst);
 						}
 					}
-					// The callback fell behind: drop the connection and resume
-					// from the last envelope it took.
 					Err(mpsc::error::TrySendError::Full(_)) => peer.close(),
 					Err(mpsc::error::TrySendError::Closed(_)) => {}
 				}
@@ -729,8 +720,6 @@ async fn connect(
 	let adapter = crate::transport::typed::connect(&Endpoint::local(&address.socket))
 		.await
 		.map_err(|e| match e {
-			// The caller refused this endpoint itself; retrying it unchanged
-			// for the whole connect timeout would only repeat the refusal.
 			AdapterError::UntrustedEndpoint(_) | AdapterError::Unauthenticated(_) => {
 				Refused::Unauthorized(rpc::Error::new(rpc::UNAUTHORIZED, e.to_string()))
 			}
@@ -754,9 +743,6 @@ pub async fn serve(mut listener: LocalListener, ctx: Ctx, apply: Apply) -> Resul
 				Ok(adapter) => {
 					connections.spawn(connection(ctx.clone(), adapter, apply.clone()));
 				}
-				// A real accept(2) failure (fd table exhausted, listener fd
-				// gone): accept_from never returns an error for a stranger
-				// connection, so this is not a routine disconnect.
 				Err(error) => {
 					result = Err(error.to_string());
 					break;
@@ -847,7 +833,6 @@ async fn connection(ctx: Ctx, adapter: LocalAdapter, apply: Arc<Mutex<Option<App
 				request.reply(Ok(json!({})));
 			}
 			_ => {
-				// Waiting here stops this connection's reader, which slows its sender.
 				let Ok(permit) = in_flight.clone().acquire_owned().await else {
 					break;
 				};
@@ -933,7 +918,6 @@ async fn handle(ctx: Ctx, access: Access, request: Request, apply: Arc<Mutex<Opt
 				request.reply(Ok(Value::Null));
 				return;
 			};
-			// The sender checked too; this node does not rely on it.
 			if let Err(error) = ctx.validate(&name, &params["data"]) {
 				return request.reply(Err(rpc::Error::new(rpc::INVALID_PARAMS, error)));
 			}

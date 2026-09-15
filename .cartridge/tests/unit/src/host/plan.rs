@@ -68,7 +68,6 @@ fn a_cartridge_gets_listeners_only_for_what_it_defines_or_needs() {
 	assert!(dirs["d"].sends.is_empty());
 	assert!(tokens(&dirs["d"]).is_empty(), "d may send nothing");
 	assert!(dirs["c"].events["a.ask"].listeners.is_empty());
-	// The catalogue itself is still described to everyone.
 	assert_eq!(dirs["d"].events["a.ask"].owner, "a");
 }
 

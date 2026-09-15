@@ -38,8 +38,6 @@ pub(crate) fn settings(
 	})
 }
 
-/// A parse failure here logs a warning and falls back to declared defaults;
-/// it never propagates.
 fn host_settled(descriptor: &Path) -> Value {
 	let configured = settings::layers(descriptor)
 		.unwrap_or_else(|e| {
@@ -63,7 +61,6 @@ struct Row {
 	doc: String,
 }
 
-/// Counts cartridges with keys they never declared.
 fn table(descriptor: &Path, entries: &[loader::SettingsInfo], what: Option<&str>) -> usize {
 	let wanted = |section: &str, key: &str| match what {
 		None => true,
@@ -104,7 +101,6 @@ fn table(descriptor: &Path, entries: &[loader::SettingsInfo], what: Option<&str>
 				.unwrap_or(Value::Null);
 			push(&entry.id, key, Some(spec), &value);
 		}
-		// Undeclared keys are working configuration, not noise: list them too.
 		for key in &entry.undeclared {
 			let value = settings::get(&entry.settled, key)
 				.cloned()
@@ -113,8 +109,6 @@ fn table(descriptor: &Path, entries: &[loader::SettingsInfo], what: Option<&str>
 		}
 	}
 	print_rows(&rows);
-	// Must reapply `wanted`: counting all of entry.undeclared here would flag
-	// a cartridge the caller never asked about.
 	entries
 		.iter()
 		.filter(|e| e.undeclared.iter().any(|key| wanted(&e.id, key)))
@@ -202,8 +196,6 @@ fn print_template(descriptor: &Path, entries: &[loader::SettingsInfo]) {
 	println!("}}");
 }
 
-/// A literal `ship.remote` key configures nothing: dotted names must nest
-/// as `ship = { remote = ... }`.
 fn section(id: &str, specs: &Specs, settled: &Value) {
 	println!("\t{} = {{", lua_key(id));
 	nested(settled, specs, "", 2);
@@ -223,8 +215,6 @@ fn nested(value: &Value, specs: &Specs, prefix: &str, depth: usize) {
 		if let Some(doc) = specs.get(&dotted).and_then(|s| s.doc.as_deref()) {
 			println!("{pad}-- {doc}");
 		}
-		// An object outside the declared shape is written inline, not
-		// recursed into: its structure is the user's, unknown to us.
 		let inside = specs.keys().any(|k| k.starts_with(&format!("{dotted}.")));
 		match value.is_object() && inside {
 			true => {

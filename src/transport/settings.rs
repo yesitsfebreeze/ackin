@@ -121,7 +121,6 @@ fn describe(value: &Json) -> &'static str {
 	}
 }
 
-/// Ordered so two listings of the same cartridge read the same way.
 pub type Specs = BTreeMap<String, Spec>;
 
 pub fn merge(base: &mut Json, over: Json) {
@@ -178,7 +177,6 @@ fn enclosing(key: &str) -> impl Iterator<Item = &str> {
 
 fn absent(specs: &Specs, key: &str, settled: Option<&Json>) -> bool {
 	enclosing(key).any(|outer| match specs.get(outer) {
-		// Settling reads what the layers left; declaring has no layers yet.
 		Some(spec) if spec.optional => match settled {
 			Some(out) => get(out, outer).is_none_or(Json::is_null),
 			None => spec.default.is_null(),
@@ -213,7 +211,6 @@ pub fn apply(specs: &Specs, config: Json, at: &str) -> Result<Json, String> {
 		if absent(specs, key, Some(&out)) {
 			continue;
 		}
-		// `merge` reads a layer's `null` as "back to the default" and removes it.
 		if get(&out, key).is_none() {
 			set(&mut out, key, spec.default.clone());
 		}
@@ -236,8 +233,6 @@ pub fn undeclared(specs: &Specs, config: &Json) -> Vec<String> {
 			if specs.contains_key(&dotted) {
 				continue;
 			}
-			// A table may itself be inside a declared dotted key; descend before
-			// calling it undeclared.
 			let inside = specs.keys().any(|k| k.starts_with(&format!("{dotted}.")));
 			match value.is_object() && inside {
 				true => walk(value, &dotted, specs, out),

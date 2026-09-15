@@ -39,7 +39,6 @@ fn greeter(dir: &Path) {
 	);
 }
 
-/// The test binary is not the base; nodes run the built `cartridge`.
 fn node_binary() {
 	static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 	let bin = BIN.get_or_init(|| built(&["--bin", "cartridge"]));
@@ -62,8 +61,6 @@ fn status(host: &Host, id: &str) -> crate::host::Status {
 	host.status().into_iter().find(|s| s.id == id).unwrap()
 }
 
-/// A cartridge that did not come up carries why, so an assertion reading
-/// only `Failed` sends the reader off to find it.
 fn active(host: &Host, id: &str) -> crate::host::Status {
 	let status = status(host, id);
 	assert_eq!(
@@ -782,7 +779,6 @@ async fn a_pipe_wakes_the_node_from_outside() {
 async fn a_helper_asks_the_base_while_answering() {
 	let dir = tempfile::tempdir().unwrap();
 	greeter(dir.path());
-	// A helper in shell: for the request line it asks `greet`, then answers with what came back.
 	write(
 		dir.path(),
 		"asker/helper.sh",
@@ -810,8 +806,6 @@ done
 	host.stop().await;
 }
 
-// `grant.env` is the one way a secret from the base's environment reaches a
-// node: the composition chooses the name, nothing else comes with it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_granted_env_prefix_reaches_the_node_and_nothing_beside_it_does() {
 	let dir = tempfile::tempdir().unwrap();
@@ -861,9 +855,6 @@ async fn a_granted_env_prefix_reaches_the_node_and_nothing_beside_it_does() {
 	host.stop().await;
 }
 
-// Only `CARTRIDGE_BIN` and `CARTRIDGE_HOME` are deliberate passthroughs
-// (paths, no credential); every other `CARTRIDGE_*` — this node's own and any
-// the operator's shell held — must not reach a spawned helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_spawned_helper_sees_only_the_two_named_cartridge_variables_and_a_path() {
 	let dir = tempfile::tempdir().unwrap();
@@ -919,8 +910,6 @@ async fn a_spawned_helper_sees_only_the_two_named_cartridge_variables_and_a_path
 	host.stop().await;
 }
 
-// A node's own credential is worth its socket only: it does not authenticate
-// on the host socket.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_node_presenting_its_own_credential_is_refused_on_the_host_socket() {
 	let dir = tempfile::tempdir().unwrap();
@@ -972,8 +961,6 @@ async fn an_untrusted_descriptor_is_refused_where_it_is_enforced() {
 	assert!(refused.contains("cartridge trust"), "{refused}");
 }
 
-// `entries` runs the socket-name-clash check on the solo list too, not only
-// on the derived-plus-descriptor list.
 #[tokio::test(flavor = "multi_thread")]
 async fn solo_entries_sharing_a_socket_name_are_refused() {
 	let dir = tempfile::tempdir().unwrap();
@@ -996,7 +983,6 @@ async fn solo_entries_sharing_a_socket_name_are_refused() {
 	assert!(refused.contains("share the socket name"), "{refused}");
 }
 
-// No 60 s deadline, no wedged state: a spinning handler is refused directly.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_spinning_handler_is_refused_and_its_node_keeps_serving() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1024,8 +1010,6 @@ async fn a_spinning_handler_is_refused_and_its_node_keeps_serving() {
 	host.stop().await;
 }
 
-// Nothing inside Lua can stop a node that catches its own refusal and loops;
-// it ends itself with status 70.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_node_that_catches_its_own_refusal_exits() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1127,8 +1111,6 @@ async fn one_cartridge_cannot_see_anothers_globals() {
 	host.stop().await;
 }
 
-// Stopping a cartridge kills its whole process group (a job object on
-// Windows), so a spawned program does not outlive it.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_cartridge_takes_its_programs_along() {
@@ -1171,7 +1153,6 @@ cartridge.listen("pid", function() return pid end)"#,
 	assert!(gone, "a program's child outlived its cartridge");
 }
 
-// A stopped run returns `Stopped` rather than waiting out the event deadline.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stop_request_ends_a_foreground_run() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1230,7 +1211,6 @@ async fn a_terminated_mcp_exits_with_its_input_still_open() {
 		.await
 		.expect("mcp serves")
 		.unwrap();
-	// SAFETY: only signals the child this test spawned.
 	unsafe { libc::kill(mcp.id().unwrap() as libc::pid_t, libc::SIGTERM) };
 	let exited = tokio::time::timeout(Duration::from_secs(20), mcp.wait()).await;
 	drop(input);
@@ -1239,13 +1219,11 @@ async fn a_terminated_mcp_exits_with_its_input_still_open() {
 
 #[cfg(target_os = "macos")]
 fn alive(pid: u32) -> bool {
-	// SAFETY: signal 0 only checks that the process exists.
 	unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
 #[cfg(target_os = "macos")]
 fn kill_now(pid: u32) {
-	// SAFETY: the pid was reported by a child of this test.
 	unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
 }
 
@@ -1273,7 +1251,6 @@ fn alive(pid: u32) -> bool {
 fn kill_now(pid: u32) {
 	use windows_sys::Win32::Foundation::CloseHandle;
 	use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
-	// SAFETY: the pid was reported by a child of this test.
 	unsafe {
 		let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
 		if !handle.is_null() {

@@ -67,8 +67,6 @@ pub struct Grant {
 }
 
 impl Cartridge {
-	/// Never resolves the entry: a cartridge declares what it declares whether
-	/// or not the files it points at are in place.
 	pub fn document(manifest: &Path) -> Result<Cartridge> {
 		let source = std::fs::read_to_string(manifest).map_err(|e| Error::file(manifest, e))?;
 		Self::parse(manifest, &source)
@@ -114,7 +112,6 @@ impl Cartridge {
 	/// needs the digest of exactly what was checked here, not a fresh,
 	/// unverified read of the entry taken after the fact.
 	fn read_verified(manifest: &Path) -> Result<(Cartridge, PathBuf, Vec<u8>)> {
-		// The grant and the entry take effect from here; listing a document does not.
 		let source = crate::trust::verify(manifest)?;
 		let source = String::from_utf8(source)
 			.map_err(|e| Error::file(manifest, std::io::Error::other(e)))?;
@@ -202,8 +199,6 @@ impl Grant {
 		for (field, paths) in [("read", &self.read), ("write", &self.write)] {
 			for p in paths {
 				let path = Path::new(p);
-				// A path is blank on the same terms a key is: `trim()` on both, so
-				// `"   "` is refused in a grant exactly as it is in `listen`.
 				if p.trim().is_empty() || p.contains('\0') {
 					return Err(at(&format!(
 						"`grant.{field}` entry `{p}` must be a nonempty exact path"
@@ -249,8 +244,6 @@ pub(super) fn classify(path: &Path) -> PathBuf {
 #[derive(Debug)]
 pub(crate) struct Declared {
 	pub(crate) entry: PathBuf,
-	/// The entry's SHA-256 as the base verified it, hex — what the node
-	/// re-checks before it loads the bytes.
 	pub(crate) entry_sha256: String,
 	pub(crate) name: String,
 	pub(crate) sources: Vec<PathBuf>,
@@ -262,9 +255,6 @@ pub(crate) struct Declared {
 	pub(crate) grant: Grant,
 }
 
-/// Whether a name is one plain path segment: a manifest's `binary` and a
-/// cartridge's own name are both names the host joins to a directory, so a
-/// separator, `..` or a NUL in one would steer where it lands.
 pub fn is_bare_name(name: &str) -> bool {
 	let mut parts = Path::new(name).components();
 	!name.is_empty()

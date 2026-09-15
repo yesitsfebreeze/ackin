@@ -158,7 +158,6 @@ async fn an_undeclared_event_or_a_bad_payload_is_refused_before_sending() {
 	assert!(error.contains("defines or needs"), "{error}");
 }
 
-/// A raw connection to `a` with `b`'s token, bypassing every sender-side check.
 async fn as_b(dir: &std::path::Path) -> Peer {
 	let adapter = crate::transport::typed::connect(&Endpoint::local(&dir.join("a.sock")))
 		.await

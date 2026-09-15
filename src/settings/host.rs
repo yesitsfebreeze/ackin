@@ -8,8 +8,6 @@ use super::{apply, defaults, get, layers, Specs};
 
 const DOCUMENT: &str = include_str!("../../.cartridge/settings.json");
 
-/// [`Host`] below names the same keys DOCUMENT does to give them types; a
-/// mismatch is a deserialization error, not a silent divergence.
 pub fn host_specs() -> &'static Specs {
 	static SPECS: OnceLock<Specs> = OnceLock::new();
 	SPECS.get_or_init(|| {
@@ -58,8 +56,6 @@ impl Host {
 	}
 }
 
-/// `deny_unknown_fields` refuses a key no declaration names; the reason is
-/// gathered rather than propagated, so one typo does not end every command.
 fn typed(settled: serde_json::Value, refused: &mut Vec<String>) -> Host {
 	serde_json::from_value(settled).unwrap_or_else(|e| {
 		refused.push(format!("host: {e}"));

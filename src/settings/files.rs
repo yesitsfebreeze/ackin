@@ -13,8 +13,6 @@ pub fn project_path(descriptor: &Path) -> PathBuf {
 	descriptor.join("config.lua")
 }
 
-/// Its own Lua, not the host's: settings are read before a host exists — by
-/// the CLI listing them, and by a cartridge with no host at all.
 pub fn read(path: &Path) -> Result<Json> {
 	if !path.is_file() {
 		return Ok(json!({}));
@@ -25,8 +23,6 @@ pub fn read(path: &Path) -> Result<Json> {
 			"{}: must return a table",
 			path.display()
 		))),
-		// The chunk name carries the file for Lua errors; anything else — a
-		// trust refusal — keeps its own words.
 		Err(Error::Lua(e)) => Err(Error::Settings(format!("{}: {e}", path.display()))),
 		Err(other) => Err(other),
 	}
@@ -61,9 +57,6 @@ impl Sources {
 		) {
 			(true, _) => "project",
 			(false, true) => "global",
-			// Neither file names it, yet it is not what the declaration says:
-			// the descriptor entry set it in `init.lua`, which composes rather
-			// than configures and so has no line in either file to point at.
 			(false, false) if settled != declared => "descriptor",
 			(false, false) => "default",
 		}

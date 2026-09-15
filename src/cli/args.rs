@@ -7,7 +7,6 @@ use clap::{Parser, Subcommand};
 #[command(
 	name = "cartridge",
 	about = "a host for cartridges: programs wired together over local sockets",
-	// `help` is a subcommand of ours: the manual of what is composed, not clap's usage text.
 	disable_help_subcommand = true
 )]
 pub(crate) struct Cli {

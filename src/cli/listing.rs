@@ -65,8 +65,6 @@ fn sends(
 	}
 }
 
-/// Counts document read failures only, not entry failures: a cartridge with
-/// a missing Lua entry still made its declarations and is not counted here.
 fn lines(cartridges: &[CartridgeInfo]) -> usize {
 	for p in cartridges {
 		let mut line = format!("{}  {}", p.entry.id, p.entry.path);
@@ -91,7 +89,6 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 				}
 			}
 		}
-		// unread and error are never both set.
 		for note in [p.unread.as_deref(), p.error.as_deref()]
 			.into_iter()
 			.flatten()
@@ -108,7 +105,6 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 	cartridges.iter().filter(|p| p.unread.is_some()).count()
 }
 
-/// Counts unread entries plus clashed bindings, not just unread entries.
 fn ledger_lines(ledger: &cartridge::ledger::Ledger) -> usize {
 	for e in ledger.entries() {
 		let mut line = e.path.clone();

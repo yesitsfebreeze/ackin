@@ -1,8 +1,6 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-// Per-grapheme-cluster, not per-char: summing char widths measures a ZWJ
-// family emoji as nine cells where a terminal draws two.
 pub(crate) fn cells(text: &str) -> usize {
 	text.graphemes(true).map(UnicodeWidthStr::width).sum()
 }
@@ -22,7 +20,6 @@ pub(crate) fn fit(text: &str, width: usize) -> String {
 	out
 }
 
-/// `text` padded after to `width` cells; `{:width$}` pads by `char`.
 pub(crate) fn pad(text: &str, width: usize) -> String {
 	format!("{text}{}", " ".repeat(width.saturating_sub(cells(text))))
 }

@@ -1,5 +1,3 @@
-// ==== [error] ====
-
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -63,8 +61,6 @@ impl From<CodecError> for RpcError {
 #[cfg(test)]
 #[path = "tests/typed.rs"]
 mod typed_tests;
-
-// ==== [adapter] ====
 
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
@@ -177,8 +173,6 @@ impl AsyncWrite for InprocWriter {
 	}
 }
 
-// ==== [codec] ====
-
 use bytes::BytesMut;
 use serde_json::Value;
 use tokio_util::codec::{Decoder, Encoder};
@@ -248,8 +242,6 @@ impl Decoder for JsonEnvelopeCodec {
 	}
 }
 
-// ==== [channel] ====
-
 use futures::{SinkExt, StreamExt};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
@@ -304,8 +296,6 @@ fn adapter_err_from_codec(e: CodecError) -> AdapterError {
 	AdapterError::Codec(e)
 }
 
-// ==== [local] ====
-
 use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -331,7 +321,6 @@ impl Endpoint {
 	}
 }
 
-// FNV-1a over the canonical path: stable across processes, unlike DefaultHasher.
 fn canonical_or_parent(dir: &std::path::Path) -> std::path::PathBuf {
 	if let Ok(c) = dir.canonicalize() {
 		return c;
@@ -556,7 +545,6 @@ fn return_handed_instance(
 	std::thread::spawn(move || {
 		use std::os::windows::io::AsRawHandle;
 		use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
-		// SAFETY: `server` is a live, open pipe handle for the duration of this call.
 		unsafe {
 			FlushFileBuffers(server.as_raw_handle() as _);
 		}
@@ -598,7 +586,6 @@ fn require_owned_by_caller(path: &Path) -> Result<(), AdapterError> {
 	use std::os::unix::fs::{FileTypeExt, MetadataExt};
 	let untrusted =
 		|what: &str| AdapterError::UntrustedEndpoint(format!("{}: {what}", path.display()));
-	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
 	let euid = unsafe { libc::geteuid() };
 	let link = std::fs::symlink_metadata(path).map_err(|e| {
 		if e.kind() == std::io::ErrorKind::NotFound {
@@ -608,9 +595,6 @@ fn require_owned_by_caller(path: &Path) -> Result<(), AdapterError> {
 		}
 	})?;
 	let target = std::fs::metadata(path).map_err(|e| {
-		// A non-symlink path missing here just raced its own unlink (an honest
-		// restart, not a substitution); a symlink missing its target is exactly
-		// what `a_dangling_symlink_is_refused` catches.
 		if e.kind() == std::io::ErrorKind::NotFound && !link.file_type().is_symlink() {
 			AdapterError::Io(e)
 		} else {
@@ -635,10 +619,8 @@ fn require_owned_by_caller(path: &Path) -> Result<(), AdapterError> {
 	Ok(())
 }
 
-// SO_PEERCRED of this connection, which a swapped path cannot fake.
 #[cfg(unix)]
 fn require_peer_is_caller(adapter: &UnixStreamAdapter, path: &Path) -> Result<(), AdapterError> {
-	// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
 	require_peer_uid(adapter, path, unsafe { libc::geteuid() })
 }
 
@@ -697,7 +679,6 @@ fn require_pipe_served_by_caller(
 		unreachable!("NamedPipeAdapter::connect always makes a Client");
 	};
 	let mut pid: u32 = 0;
-	// SAFETY: `client` is a live, open handle for the duration of this call.
 	let ok = unsafe { GetNamedPipeServerProcessId(client.as_raw_handle(), &mut pid) };
 	if ok == 0 {
 		return Err(untrusted(&format!(
@@ -765,10 +746,8 @@ static UMASK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 #[cfg(unix)]
 fn bind_owner_only(path: &Path) -> std::io::Result<tokio::net::UnixListener> {
 	let _guard = UMASK.lock();
-	// SAFETY: `umask` cannot fail and touches no memory.
 	let previous = unsafe { libc::umask(0o077) };
 	let bound = tokio::net::UnixListener::bind(path);
-	// SAFETY: restoring the value `umask` just returned.
 	unsafe { libc::umask(previous) };
 	bound
 }
@@ -803,8 +782,6 @@ mod owner_only {
 			Self::from_sddl(&format!("D:P(A;;GA;;;{sid})"))
 		}
 
-		/// A node's AppContainer has its own SID; without it on the descriptor
-		/// too, the pipe its parent made for it is unreachable.
 		pub fn shared_with(container: &str) -> io::Result<Self> {
 			let user = current_user_sid()?;
 			Self::from_sddl(&format!("D:P(A;;GA;;;{user})(A;;GA;;;{container})"))
@@ -813,8 +790,6 @@ mod owner_only {
 		fn from_sddl(sddl: &str) -> io::Result<Self> {
 			let sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
 			let mut psd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-			// SAFETY: `sddl` is NUL-terminated and outlives the call; `psd` receives
-			// a LocalAlloc'd descriptor this value then owns.
 			let ok = unsafe {
 				ConvertStringSecurityDescriptorToSecurityDescriptorW(
 					sddl.as_ptr(),
@@ -848,76 +823,58 @@ mod owner_only {
 
 	impl Drop for OwnerOnlySd {
 		fn drop(&mut self) {
-			// SAFETY: allocated by ConvertStringSecurityDescriptorToSecurityDescriptorW
-			// (LocalAlloc) and freed nowhere else.
 			unsafe { LocalFree(self.0.cast()) };
 		}
 	}
 
 	pub(super) fn current_user_sid() -> io::Result<String> {
 		let mut token: HANDLE = std::ptr::null_mut();
-		// SAFETY: the pseudo-handle from GetCurrentProcess needs no close; `token`
-		// receives a real handle closed below.
 		if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
 			return Err(io::Error::last_os_error());
 		}
 		let out = token_user_sid(token);
-		// SAFETY: `token` was opened here and is not used after this.
 		unsafe { CloseHandle(token) };
 		out
 	}
 
 	pub(super) fn user_sid_of_process(pid: u32) -> io::Result<String> {
-		// SAFETY: `pid` is whatever the caller read off the connection; a
-		// bad value just fails the call below, nothing unsafe about it.
 		let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
 		if process.is_null() {
 			return Err(io::Error::last_os_error());
 		}
 		let mut token: HANDLE = std::ptr::null_mut();
-		// SAFETY: `process` was just opened above and closed below either way.
 		let opened = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
-		// SAFETY: `process` is not used again after this.
 		unsafe { CloseHandle(process) };
 		if opened == 0 {
 			return Err(io::Error::last_os_error());
 		}
 		let out = token_user_sid(token);
-		// SAFETY: `token` was opened here and is not used after this.
 		unsafe { CloseHandle(token) };
 		out
 	}
 
 	fn token_user_sid(token: HANDLE) -> io::Result<String> {
 		let mut len: u32 = 0;
-		// SAFETY: the sizing call is *expected* to fail; it only writes `len`.
 		unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len) };
 		if len == 0 {
 			return Err(io::Error::last_os_error());
 		}
 		let mut buf = vec![0u8; len as usize];
-		// SAFETY: `buf` is exactly the length the sizing call asked for.
 		if unsafe { GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) }
 			== 0
 		{
 			return Err(io::Error::last_os_error());
 		}
-		// SAFETY: the buffer now holds a TOKEN_USER whose `Sid` points inside it.
 		let sid = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
 		let mut raw: *mut u16 = std::ptr::null_mut();
-		// SAFETY: `sid` is valid for the lifetime of `buf`; `raw` receives a
-		// LocalAlloc'd NUL-terminated string freed below.
 		if unsafe { ConvertSidToStringSidW(sid, &mut raw) } == 0 || raw.is_null() {
 			return Err(io::Error::last_os_error());
 		}
 		let mut n = 0usize;
-		// SAFETY: walking a NUL-terminated buffer the call above guaranteed.
 		while unsafe { *raw.add(n) } != 0 {
 			n += 1;
 		}
-		// SAFETY: `raw[..n]` is the string body, exclusive of the terminator.
 		let s = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(raw, n) });
-		// SAFETY: `raw` came from ConvertSidToStringSidW and is dead after this.
 		unsafe { LocalFree(raw.cast()) };
 		Ok(s)
 	}
@@ -931,7 +888,6 @@ fn create_pipe_instance(
 ) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
 	use tokio::net::windows::named_pipe::ServerOptions;
 	let mut attrs = sd.attributes();
-	// SAFETY: `attrs` lives across the call and points at a descriptor `sd` owns.
 	unsafe {
 		ServerOptions::new()
 			.first_pipe_instance(first)
@@ -957,7 +913,6 @@ async fn bind_unix(path: &Path, expected_peer: u32) -> Result<BindOutcome, BindE
 						.map_err(|e| BindError::Untrusted(e.to_string()))?;
 					return Ok(BindOutcome::AlreadyRunning);
 				}
-				// Nothing answers a name we own: our own stale socket, ours to reclaim.
 				Err(_) => {
 					let _ = std::fs::remove_file(path);
 					bind_owner_only(path)?
@@ -987,9 +942,6 @@ pub const PIPE_HANDLES_ENV: &str = "CARTRIDGE_PIPE_HANDLES";
 #[cfg(windows)]
 const PIPE_BUFFER: u32 = 64 * 1024;
 
-/// A node's AppContainer is denied the pipe namespace outright (`Access is
-/// denied` on any create), so its unconfined parent creates every instance
-/// here and the node only ever inherits them.
 #[cfg(windows)]
 pub fn broker(endpoint: &Endpoint, container_sid: &str) -> Result<Vec<usize>, BindError> {
 	use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
@@ -1010,9 +962,6 @@ pub fn broker(endpoint: &Endpoint, container_sid: &str) -> Result<Vec<usize>, Bi
 		// creates to this process's completion port for good, and the node
 		// must bind its own — registering here first answered `The parameter
 		// is incorrect`.
-		//
-		// SAFETY: `wide` is NUL-terminated and `attrs` points at a descriptor
-		// `security` owns; both outlive the call.
 		let handle = unsafe {
 			CreateNamedPipeW(
 				wide.as_ptr(),
@@ -1045,16 +994,12 @@ pub fn broker(endpoint: &Endpoint, container_sid: &str) -> Result<Vec<usize>, Bi
 pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 	match endpoint {
 		#[cfg(unix)]
-		Endpoint::Unix(path) => {
-			// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
-			bind_unix(path, unsafe { libc::geteuid() }).await
-		}
+		Endpoint::Unix(path) => bind_unix(path, unsafe { libc::geteuid() }).await,
 		#[cfg(windows)]
 		Endpoint::NamedPipe(name) => {
 			if let Some(listener) = adopt_handed(name)? {
 				return Ok(BindOutcome::Bound(listener));
 			}
-			// Fail closed: no descriptor, no pipe.
 			let security = owner_only::OwnerOnlySd::new()?;
 			match create_pipe_instance(name, &security, true) {
 				Ok(server) => {
@@ -1085,8 +1030,6 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 						Err(busy) if busy.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
 							Ok(BindOutcome::AlreadyRunning)
 						}
-						// Nothing holds the name, so the refusal was about this
-						// process, not a neighbour.
 						Err(_) => Err(BindError::Untrusted(format!(
 							"{name}: {e}, and nothing serves that name — this \
 							 process may not create it"
@@ -1099,7 +1042,6 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 	}
 }
 
-/// Read once: a second reader would take instances that are not its own.
 #[cfg(windows)]
 fn adopt_handed(name: &str) -> Result<Option<LocalListener>, BindError> {
 	let Some(handed) = std::env::var_os(PIPE_HANDLES_ENV) else {
@@ -1125,8 +1067,6 @@ fn adopt_handed(name: &str) -> Result<Option<LocalListener>, BindError> {
 	if servers.is_empty() {
 		return Ok(None);
 	}
-	// Every instance goes in the pool `accept` waits on; one held back in
-	// `current` would be an instance a client can reach and nobody serves.
 	let (handed_tx, handed_rx) = mpsc::unbounded_channel();
 	Ok(Some(LocalListener {
 		pipe_name: name.to_owned(),
@@ -1169,9 +1109,6 @@ pub struct LocalListener {
 	socket_dev: Option<(u64, u64)>,
 	#[cfg(windows)]
 	pipe_name: String,
-	// `None` in a node: it was handed its instances and cannot make more, so
-	// there is nothing to create the next one with. Otherwise kept for the
-	// listener's life — `accept` uses it to create each next instance.
 	#[cfg(windows)]
 	security: Option<owner_only::OwnerOnlySd>,
 	#[cfg(windows)]
@@ -1199,7 +1136,7 @@ impl LocalListener {
 			let (stream, _peer) = self.inner.accept().await?;
 			match stream.peer_cred() {
 				Ok(cred) if cred.uid() == expected => {
-					return Ok(LocalAdapter::Unix(UnixStreamAdapter::new(stream)))
+					return Ok(LocalAdapter::Unix(UnixStreamAdapter::new(stream)));
 				}
 				// Logged and dropped, not returned: both accept loops end on an
 				// error, and a stranger must not stop a listener by knocking.
@@ -1221,7 +1158,6 @@ impl LocalListener {
 	pub async fn accept(&mut self) -> Result<LocalAdapter, std::io::Error> {
 		#[cfg(unix)]
 		{
-			// SAFETY: `geteuid` cannot fail and touches no memory the caller owns.
 			self.accept_from(unsafe { libc::geteuid() }).await
 		}
 		#[cfg(windows)]
@@ -1234,19 +1170,11 @@ impl LocalListener {
 					server,
 				)));
 			}
-			// A node cannot make another instance to replace one, so a finished
-			// connection goes back on `handed_rx` (see `split` on
-			// `NamedPipeInner::HandedServer`) instead of being destroyed.
 			loop {
 				while let Ok(server) = self.handed_rx.try_recv() {
 					self.handed.push(server);
 				}
 				if self.handed.is_empty() {
-					// Blocking here (rather than erroring) keeps `serve` from
-					// tearing live connections down over a queue about to
-					// drain. `self.handed_tx` is a live sender this listener
-					// holds, plus a clone in every outstanding `HandedServer`,
-					// so the channel cannot close while this waits.
 					let server = self
 						.handed_rx
 						.recv()
@@ -1255,16 +1183,12 @@ impl LocalListener {
 					self.handed.push(server);
 					continue;
 				}
-				// Idle instances all listen at once and the kernel picks which
-				// one a client lands on, so every idle instance is waited on
-				// together rather than one at a time.
 				let pending: Vec<_> = self
 					.handed
 					.iter()
 					.map(|server| Box::pin(server.connect()))
 					.collect();
 				let (connected, index, rest) = futures::future::select_all(pending).await;
-				// The rest borrow `handed`, and it is about to be taken from.
 				drop(rest);
 				connected?;
 				let server = self.handed.remove(index);

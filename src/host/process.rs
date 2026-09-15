@@ -13,9 +13,8 @@ use super::{Host, Plan, Running};
 
 pub const NODE_BIN_ENV: &str = "CARTRIDGE_NODE_BIN";
 
-/// Everything not named here — secrets the person's shell held — is dropped.
-/// Trim with care: dropping `HOME`/`CARTRIDGE_HOME` makes a node resolve a
-/// different machine's trust store and global `config.lua`.
+/// Trim with care: without `HOME`/`CARTRIDGE_HOME` a node reads another
+/// machine's trust store and global `config.lua`.
 #[cfg(unix)]
 const PASSTHROUGH: &[&str] = &[
 	"PATH",
@@ -29,7 +28,6 @@ const PASSTHROUGH: &[&str] = &[
 	"LOGNAME",
 	"SHELL",
 	"XDG_RUNTIME_DIR",
-	// Without this, the proxy's loopback listener takes every caller.
 	"CARTRIDGE_PROXY_KEY",
 ];
 
@@ -55,8 +53,6 @@ const PASSTHROUGH: &[&str] = &[
 	"PROCESSOR_ARCHITECTURE",
 ];
 
-/// A bare `*` grants nothing: refused already by the loader, and refused
-/// again here.
 fn granted_env(grant: &[String]) -> Vec<(String, std::ffi::OsString)> {
 	let allows = |name: &str| {
 		grant.iter().any(|pattern| match pattern.strip_suffix('*') {
@@ -80,8 +76,6 @@ pub(super) async fn start(
 	generation: u64,
 ) -> Result<Running> {
 	let settings = crate::settings::host();
-	// Minted per start, worth that node's socket only. `replace` starts the
-	// same id again and overwrites this, which is fine.
 	let token = crate::transport::token();
 	host.node_tokens
 		.lock()
@@ -94,9 +88,6 @@ pub(super) async fn start(
 	// over the person's actual choices.
 	let lua_memory = settings.lua_memory_bytes.to_string();
 	let lua_budget = settings.lua_instruction_budget.to_string();
-	// A confined node on Windows may not create the pipe it is meant to serve
-	// (an AppContainer is denied the pipe namespace), so the base creates it
-	// and hands it over for the node to inherit.
 	#[cfg(windows)]
 	let handed = {
 		let sid = crate::sandbox::container_sid_for(&plan.root)
@@ -137,8 +128,6 @@ pub(super) async fn start(
 		.env(crate::node::ENTRY_ENV, &plan.entry)
 		.env(crate::node::ENTRY_SHA256_ENV, &plan.entry_sha256)
 		.env(crate::node::ROOT_ENV, &plan.root)
-		// So a helper that re-enters the CLI execs the exe its exec grant
-		// resolved to, not a stale sibling build.
 		.env("CARTRIDGE_BIN", &exe)
 		.env(
 			crate::node::LISTEN_ENV,
@@ -148,8 +137,6 @@ pub(super) async fn start(
 		.stdout(Stdio::null())
 		.stderr(Stdio::piped())
 		.kill_on_drop(true);
-	// Windows has no such flag at spawn; the job object below does the same
-	// job there.
 	#[cfg(windows)]
 	spawner.env(crate::transport::typed::PIPE_HANDLES_ENV, &handed);
 	#[cfg(unix)]
@@ -190,8 +177,6 @@ pub(super) async fn start(
 				format!("exited before serving: {status}{}", said()),
 			));
 		}
-		// Not gated on the path existing: on Windows it never appears in the
-		// filesystem, and on Unix a connect to a missing path just fails.
 		if let Ok(connected) = super::connect(&socket, &token).await {
 			break connected;
 		}
@@ -260,8 +245,6 @@ pub(super) async fn start(
 	})
 }
 
-/// Dropped, kills every member; killing the node alone leaves its own
-/// programs running with the node's stderr open.
 #[cfg(unix)]
 struct Group(libc::pid_t);
 
@@ -307,8 +290,6 @@ impl Group {
 		let handle = child
 			.raw_handle()
 			.ok_or_else(|| std::io::Error::other("exited as it was spawned"))?;
-		// SAFETY: an unnamed job with default security; the handle is this
-		// process's to close.
 		let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
 		if job.is_null() {
 			return Err(std::io::Error::last_os_error());
@@ -316,7 +297,6 @@ impl Group {
 		let group = Group(job);
 		let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
 		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-		// SAFETY: `limits` matches the class named and outlives the call.
 		let set = unsafe {
 			SetInformationJobObject(
 				job,
@@ -328,8 +308,6 @@ impl Group {
 		if set == 0 {
 			return Err(std::io::Error::last_os_error());
 		}
-		// SAFETY: the child is alive — it was spawned above and is not reaped
-		// until the monitor task waits on it.
 		if unsafe { AssignProcessToJobObject(job, handle as _) } == 0 {
 			return Err(std::io::Error::last_os_error());
 		}

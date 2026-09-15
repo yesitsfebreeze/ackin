@@ -84,8 +84,6 @@ fn declared() -> crate::settings::Host {
 		.expect("the host's declared defaults match their type")
 }
 
-/// Deserialized straight from Lua: through JSON an empty table is a map, and
-/// `return {}` is a valid empty descriptor.
 pub fn evaluate<T: serde::de::DeserializeOwned>(path: &Path) -> crate::error::Result<T> {
 	let source = crate::trust::read(path)?;
 	let limits = declared();

@@ -65,8 +65,6 @@ pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool, ask: bool) -> R
 	Ok(ExitCode::SUCCESS)
 }
 
-/// Prompts on stderr, never stdout, so a command's stdout stays its answer.
-/// Without a terminal, nothing is asked and the answer is no.
 pub(crate) fn ask(dir: &Path) -> Result<bool> {
 	let pending = trust::pending(dir)?;
 	let terminal = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
@@ -95,7 +93,6 @@ pub(crate) fn ask(dir: &Path) -> Result<bool> {
 			}
 			let _ = writeln!(err);
 		}
-		// This one answer both records trust and unlocks yolo's bypass.
 		let _ = write!(
 			err,
 			"YOLO mode: trust {} and let every cartridge and tool run without further prompts? [Y/n] ",

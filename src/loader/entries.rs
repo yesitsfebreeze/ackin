@@ -49,8 +49,6 @@ impl Host {
 				entries
 			}
 		};
-		// Covers the solo list too: `Host::verify_one` builds those ids from
-		// ledger paths, which collide the same way.
 		let mut ids = std::collections::HashSet::new();
 		let mut sockets = std::collections::HashMap::new();
 		for entry in &entries {
@@ -131,7 +129,6 @@ impl Host {
 			.collect())
 	}
 
-	/// Disabled entries are read, never evaluated.
 	pub fn manifest(self: &Arc<Self>) -> Result<Vec<CartridgeInfo>> {
 		Ok(self
 			.entries()?

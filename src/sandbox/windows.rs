@@ -33,23 +33,17 @@ use windows_sys::Win32::System::Threading::{
 
 use crate::loader::Grant;
 
-/// On argv: nothing on disk, and unlike env it does not survive into the
-/// node's environment.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Policy {
 	read: Vec<PathBuf>,
 	write: Vec<PathBuf>,
 	exec: Vec<PathBuf>,
 	net: bool,
-	/// Derived from the cartridge root: the same cartridge always confines
-	/// into the same container.
 	container: String,
 }
 
-/// An AppContainer has no network at all without them.
 const NET_CAPABILITIES: [&str; 2] = ["internetClient", "privateNetworkClientServer"];
 
-/// As every `W` entry point wants it.
 fn wide(text: impl AsRef<OsStr>) -> Vec<u16> {
 	text.as_ref().encode_wide().chain(Some(0)).collect()
 }
@@ -62,8 +56,6 @@ pub(super) fn command(
 ) -> std::io::Result<std::process::Command> {
 	let binary = Path::new(&cmd[0]).canonicalize()?;
 	let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-	// There is no loader directory to add: the system image is already
-	// readable to every AppContainer through ALL APPLICATION PACKAGES.
 	let mut exec: Vec<PathBuf> = vec![binary.clone()];
 	exec.extend(super::interpreters(&binary));
 	for program in &grant.exec {
@@ -83,7 +75,6 @@ pub(super) fn command(
 	exec.extend(installations.iter().cloned());
 	exec.sort();
 	exec.dedup();
-	// A write is also a read.
 	let mut read: Vec<PathBuf> = vec![root.clone()];
 	for path in grant.read.iter().chain(grant.write.iter()) {
 		read.extend(super::granted_paths(path, &root));
@@ -113,8 +104,6 @@ pub(super) fn command(
 		container: container_name(&root),
 	};
 	let text = serde_json::to_string(&policy).map_err(std::io::Error::other)?;
-	// A command line is capped at 32767 characters; above it `CreateProcessW`
-	// would answer an opaque failure, so the refusal names the real reason.
 	if text.len() > 30_000 {
 		return Err(std::io::Error::new(
 			std::io::ErrorKind::InvalidInput,
@@ -126,24 +115,16 @@ pub(super) fn command(
 	Ok(command)
 }
 
-/// Stable across starts, so the ACEs a leaked trampoline left behind are
-/// re-granted rather than added to. An AppContainer name is capped at 64
-/// characters; this is 26.
 fn container_name(root: &Path) -> String {
 	format!("cartridge-{}", crate::transport::typed::path_tag(root))
 }
 
-/// The parent needs it before the node exists: a pipe the node will serve on
-/// has to name that SID, because only the parent can create one and only the
-/// container can use it.
 pub(crate) fn container_sid_for(root: &Path) -> crate::Result<String> {
 	use windows_sys::Win32::Foundation::{LocalFree, HLOCAL};
 	use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 	let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
 	let sid = container_sid(&container_name(&root))?;
 	let mut text: *mut u16 = std::ptr::null_mut();
-	// SAFETY: the SID is valid for the call, and `text` receives a LocalAlloc'd
-	// string this function frees.
 	let ok = unsafe { ConvertSidToStringSidW(sid.0, &mut text) };
 	if ok == 0 || text.is_null() {
 		return Err(crate::Error::process(
@@ -151,7 +132,6 @@ pub(crate) fn container_sid_for(root: &Path) -> crate::Result<String> {
 			std::io::Error::last_os_error(),
 		));
 	}
-	// SAFETY: NUL-terminated and this process's to read and free.
 	let out = unsafe {
 		let mut len = 0;
 		while *text.add(len) != 0 {
@@ -164,25 +144,19 @@ pub(crate) fn container_sid_for(root: &Path) -> crate::Result<String> {
 	Ok(out)
 }
 
-/// Both of the derive entry points hand back a SID the caller owns.
 struct Sid(PSID);
 
 impl Drop for Sid {
 	fn drop(&mut self) {
 		if !self.0.is_null() {
-			// SAFETY: the SID came from a derive call that transfers ownership,
-			// and nothing else frees it.
 			unsafe { FreeSid(self.0) };
 		}
 	}
 }
 
-/// An existing profile is not an error: the moniker is deliberately stable,
-/// so every start after the first lands here.
 fn container_sid(name: &str) -> crate::Result<Sid> {
 	let name = wide(name);
 	let mut psid: PSID = std::ptr::null_mut();
-	// SAFETY: `name` outlives the call and `psid` is a valid out parameter.
 	let created = unsafe {
 		CreateAppContainerProfile(
 			name.as_ptr(),
@@ -196,7 +170,6 @@ fn container_sid(name: &str) -> crate::Result<Sid> {
 	if created >= 0 {
 		return Ok(Sid(psid));
 	}
-	// SAFETY: same contract; the profile exists, so derive its SID instead.
 	let derived = unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &mut psid) };
 	if derived < 0 {
 		return Err(crate::Error::process(
@@ -207,16 +180,12 @@ fn container_sid(name: &str) -> crate::Result<Sid> {
 	Ok(Sid(psid))
 }
 
-/// `DeriveCapabilitySidsFromName` hands back two `LocalAlloc`ed arrays; only
-/// the capability SIDs are wanted, and both arrays and every SID in them
-/// belong to the caller.
 fn capability_sids(name: &str) -> Vec<PSID> {
 	let name = wide(name);
 	let mut group_sids: *mut PSID = std::ptr::null_mut();
 	let mut group_count: u32 = 0;
 	let mut cap_sids: *mut PSID = std::ptr::null_mut();
 	let mut cap_count: u32 = 0;
-	// SAFETY: every out parameter is a valid place and `name` outlives the call.
 	let ok = unsafe {
 		DeriveCapabilitySidsFromName(
 			name.as_ptr(),
@@ -229,11 +198,8 @@ fn capability_sids(name: &str) -> Vec<PSID> {
 	let mut out = Vec::new();
 	if ok != 0 {
 		for index in 0..cap_count as isize {
-			// SAFETY: the call reported `cap_count` entries in `cap_sids`.
 			out.push(unsafe { *cap_sids.offset(index) });
 		}
-		// The group array is not used here, so its SIDs and the array go back now.
-		// SAFETY: both arrays were `LocalAlloc`ed by the call above.
 		unsafe {
 			for index in 0..group_count as isize {
 				FreeSid(*group_sids.offset(index));
@@ -249,16 +215,10 @@ fn capability_sids(name: &str) -> Vec<PSID> {
 	out
 }
 
-/// Windows has no way to say "this path and nothing under it" for a directory
-/// a child must traverse, so a directory grant inherits: the ACE is written
-/// with `SUB_CONTAINERS_AND_OBJECTS_INHERIT`, which is the same shape as
-/// Landlock's path-beneath rule and the seatbelt's subpath clause.
 fn ace(path: &Path, sid: PSID, rights: u32, grant: bool) -> crate::Result<()> {
 	let name = wide(path);
 	let mut dacl: *mut ACL = std::ptr::null_mut();
 	let mut descriptor = std::ptr::null_mut();
-	// SAFETY: `name` outlives the call; the rest are valid out parameters. The
-	// descriptor is `LocalAlloc`ed and freed below.
 	let read = unsafe {
 		GetNamedSecurityInfoW(
 			name.as_ptr(),
@@ -290,18 +250,14 @@ fn ace(path: &Path, sid: PSID, rights: u32, grant: bool) -> crate::Result<()> {
 		},
 	};
 	let mut merged: *mut ACL = std::ptr::null_mut();
-	// SAFETY: one entry is described, the old DACL came from the read above,
-	// and `merged` is `LocalAlloc`ed for the caller to free.
 	let built = unsafe { SetEntriesInAclW(1, &entry, dacl, &mut merged) };
 	if built != 0 {
-		// SAFETY: the descriptor was allocated by `GetNamedSecurityInfoW`.
 		unsafe { LocalFree(descriptor as HLOCAL) };
 		return Err(crate::Error::file(
 			path,
 			std::io::Error::from_raw_os_error(built as i32),
 		));
 	}
-	// SAFETY: `merged` is a well-formed DACL and `name` outlives the call.
 	let written = unsafe {
 		SetNamedSecurityInfoW(
 			name.as_ptr(),
@@ -313,7 +269,6 @@ fn ace(path: &Path, sid: PSID, rights: u32, grant: bool) -> crate::Result<()> {
 			std::ptr::null_mut(),
 		)
 	};
-	// SAFETY: both blocks were `LocalAlloc`ed by the calls above.
 	unsafe {
 		LocalFree(merged as HLOCAL);
 		LocalFree(descriptor as HLOCAL);
@@ -327,9 +282,6 @@ fn ace(path: &Path, sid: PSID, rights: u32, grant: bool) -> crate::Result<()> {
 	Ok(())
 }
 
-/// Read carries no execute, so `grant.read` does not become `grant.exec`; a
-/// write is also a read, matching what the document promises and what the
-/// other two platforms do.
 fn grants(policy: &Policy) -> Vec<(&Path, u32)> {
 	let mut out = Vec::new();
 	for path in &policy.read {
@@ -344,14 +296,9 @@ fn grants(policy: &Policy) -> Vec<(&Path, u32)> {
 	out
 }
 
-/// Unlike the Linux trampoline this one returns only on failure *to start*:
-/// once the child is running it waits, takes its grants back and exits with
-/// the child's code.
 pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::convert::Infallible> {
 	let policy: Policy = serde_json::from_str(policy)?;
 	let sid = container_sid(&policy.container)?;
-	// A path a grant names must exist: an ACE cannot be written to something
-	// that is not there, and silently dropping the rule would be a hole.
 	let wanted = grants(&policy);
 	let mut granted: Vec<(&Path, u32)> = Vec::new();
 	let started = (|| -> crate::Result<PROCESS_INFORMATION> {
@@ -361,9 +308,6 @@ pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::conver
 		}
 		spawn(&policy, sid.0, cmd)
 	})();
-	// Whatever happened, the ACEs written above come back off. A path that was
-	// never granted is not revoked, so a failure part way through leaves the
-	// filesystem as it was found.
 	let process = match started {
 		Ok(process) => process,
 		Err(error) => {
@@ -371,24 +315,17 @@ pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::conver
 			return Err(error);
 		}
 	};
-	// SAFETY: the child started, so both handles are open; the thread handle
-	// is not used and goes back immediately.
 	unsafe { CloseHandle(process.hThread) };
-	// SAFETY: `hProcess` is open until closed below.
 	let waited = unsafe { WaitForSingleObject(process.hProcess, INFINITE) };
 	let mut code: u32 = 1;
 	if waited != WAIT_FAILED {
-		// SAFETY: the process has exited, so its code is final.
 		unsafe { GetExitCodeProcess(process.hProcess, &mut code) };
 	}
-	// SAFETY: nothing uses the handle after this.
 	unsafe { CloseHandle(process.hProcess) };
 	revoke(&granted, sid.0);
 	std::process::exit(code as i32)
 }
 
-/// A revoke that fails is reported and does not stop the others: one path
-/// left granted must not leave the rest granted too.
 fn revoke(granted: &[(&Path, u32)], sid: PSID) {
 	for (path, rights) in granted {
 		if let Err(error) = ace(path, sid, *rights, false) {
@@ -397,8 +334,6 @@ fn revoke(granted: &[(&Path, u32)], sid: PSID) {
 	}
 }
 
-/// The trampoline's own standard handles are the child's, so the host's pipes
-/// reach the node through this process without it reading a byte of them.
 fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_INFORMATION> {
 	let fail = |what: &str| {
 		crate::Error::process(
@@ -428,16 +363,13 @@ fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_IN
 		CapabilityCount: capabilities.len() as u32,
 		Reserved: 0,
 	};
-	// The attribute list is sized by asking, then allocated as bytes.
 	let mut size: usize = 0;
-	// SAFETY: the first call is documented to fail and report the size it needs.
 	unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut size) };
 	if size == 0 {
 		return Err(fail("cannot size the attribute list"));
 	}
 	let mut buffer = vec![0u8; size];
 	let list = buffer.as_mut_ptr() as LPPROC_THREAD_ATTRIBUTE_LIST;
-	// SAFETY: `buffer` is exactly the size the call above asked for.
 	if unsafe { InitializeProcThreadAttributeList(list, 1, 0, &mut size) } == 0 {
 		return Err(fail("cannot initialise the attribute list"));
 	}
@@ -455,7 +387,6 @@ fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_IN
 		)
 	};
 	if updated == 0 {
-		// SAFETY: the list was initialised above.
 		unsafe { DeleteProcThreadAttributeList(list) };
 		return Err(fail("cannot set the container on the attribute list"));
 	}
@@ -472,8 +403,6 @@ fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_IN
 	}
 	let mut line = wide(command_line(cmd));
 	let mut process = PROCESS_INFORMATION::default();
-	// SAFETY: `line` is mutable and nul-terminated as `CreateProcessW` requires,
-	// and every other pointer is either null or outlives the call.
 	let created = unsafe {
 		CreateProcessW(
 			std::ptr::null(),
@@ -488,10 +417,8 @@ fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_IN
 			&mut process,
 		)
 	};
-	// SAFETY: the list has done its work whether or not the child started.
 	unsafe { DeleteProcThreadAttributeList(list) };
 	for sid in owned {
-		// SAFETY: each came from `DeriveCapabilitySidsFromName`.
 		unsafe { FreeSid(sid) };
 	}
 	if created == 0 {
@@ -500,9 +427,6 @@ fn spawn(policy: &Policy, sid: PSID, cmd: &[String]) -> crate::Result<PROCESS_IN
 	Ok(process)
 }
 
-/// `CreateProcessW` takes a string, not a vector, so each argument is quoted
-/// the way the C runtime parses it back: backslashes double only where they
-/// run into the closing quote.
 fn command_line(cmd: &[String]) -> String {
 	let mut out = String::new();
 	for (index, argument) in cmd.iter().enumerate() {
@@ -522,7 +446,6 @@ fn command_line(cmd: &[String]) -> String {
 					out.push(c);
 				}
 				'"' => {
-					// The run before a quote is doubled, then the quote escaped.
 					out.extend(std::iter::repeat_n('\\', backslashes + 1));
 					backslashes = 0;
 					out.push('"');
@@ -533,7 +456,6 @@ fn command_line(cmd: &[String]) -> String {
 				}
 			}
 		}
-		// A run before the closing quote is doubled too, or it would escape it.
 		out.extend(std::iter::repeat_n('\\', backslashes));
 		out.push('"');
 	}
@@ -551,11 +473,8 @@ mod tests {
 			command_line(&["c:\\program files\\x.exe".into()]),
 			"\"c:\\program files\\x.exe\""
 		);
-		// A trailing backslash inside quotes doubles, or it escapes the quote.
 		assert_eq!(command_line(&["a b\\".into()]), "\"a b\\\\\"");
-		// An embedded quote is escaped, and the run before it doubled.
 		assert_eq!(command_line(&["a\"b".into()]), "\"a\\\"b\"");
-		// An empty argument still has to occupy a place on the line.
 		assert_eq!(command_line(&["a".into(), String::new()]), "a \"\"");
 	}
 
@@ -584,8 +503,6 @@ mod tests {
 				.map(|(_, rights)| *rights)
 				.expect("every policy path is granted")
 		};
-		// FILE_GENERIC_READ and FILE_GENERIC_EXECUTE share every standard right
-		// and differ only in FILE_EXECUTE, so that is what distinguishes them.
 		assert_eq!(
 			of("c:\\r") & FILE_EXECUTE,
 			0,

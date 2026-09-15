@@ -18,13 +18,10 @@ fn owner_only_dir(dir: &Path) -> Result<()> {
 		builder.mode(0o700);
 	}
 	builder.create(dir).map_err(|e| Error::file(dir, e))?;
-	// Never followed: a link standing in for the directory is a substitution,
-	// and what is asked of the name is asked of the name itself.
 	let meta = std::fs::symlink_metadata(dir).map_err(|e| Error::file(dir, e))?;
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::{MetadataExt, PermissionsExt};
-		// SAFETY: `getuid` cannot fail and touches no memory.
 		let uid = unsafe { libc::getuid() };
 		if !meta.is_dir() || meta.uid() != uid {
 			return Err(Error::Descriptor(format!(
@@ -37,8 +34,6 @@ fn owner_only_dir(dir: &Path) -> Result<()> {
 				.map_err(|e| Error::file(dir, e))?;
 		}
 	}
-	// Windows has no mode to narrow and no uid to compare, so only a name that
-	// is not a directory is refused there.
 	#[cfg(windows)]
 	if !meta.is_dir() {
 		return Err(Error::Descriptor(format!(
@@ -49,12 +44,9 @@ fn owner_only_dir(dir: &Path) -> Result<()> {
 	Ok(())
 }
 
-/// A unix socket's path is capped near 100 bytes by the address family, so
-/// `XDG_RUNTIME_DIR` is only taken when it is short too.
 pub fn base() -> Result<PathBuf> {
 	#[cfg(unix)]
 	let base = {
-		// SAFETY: `getuid` cannot fail and touches no memory.
 		let uid = unsafe { libc::getuid() };
 		std::env::var_os("XDG_RUNTIME_DIR")
 			.map(|dir| PathBuf::from(dir).join("cartridge"))
@@ -73,8 +65,6 @@ fn tag(descriptor: &Path) -> String {
 	crate::transport::typed::path_tag(descriptor)[..12].to_owned()
 }
 
-/// Derived, not published: the command line computes the same address from
-/// the same project.
 pub fn path(descriptor: &Path) -> Result<PathBuf> {
 	Ok(run_dir(descriptor)?.join("host.sock"))
 }
@@ -85,10 +75,6 @@ pub(crate) fn run_dir(descriptor: &Path) -> Result<PathBuf> {
 	Ok(dir)
 }
 
-/// Several bases of one project run at once and each unlinks its sockets when
-/// it stops, so they must not share one directory or the second to start
-/// takes the first's node sockets away. Named by pid, so a dead run's
-/// directory is recognised and removed by the next one to start.
 pub(crate) fn host_dir(descriptor: &Path) -> Result<PathBuf> {
 	let run = run_dir(descriptor)?;
 	sweep(&run);
@@ -97,9 +83,6 @@ pub(crate) fn host_dir(descriptor: &Path) -> Result<PathBuf> {
 	Ok(dir)
 }
 
-/// `host.sock` is always spared here; reclaiming it is the bind path's own
-/// stale-sock probe. A loose socket that still answers a connect belongs to a
-/// live base and stays.
 fn sweep(run: &Path) {
 	let Ok(entries) = std::fs::read_dir(run) else {
 		return;
@@ -134,7 +117,6 @@ fn served(_path: &Path) -> bool {
 
 #[cfg(unix)]
 fn alive(pid: u32) -> bool {
-	// SAFETY: signal 0 delivers nothing; it only asks whether `pid` exists.
 	let exists = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
 	exists || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
@@ -185,9 +167,6 @@ pub(crate) async fn accept(
 					let stop = host.stop_signal();
 					tokio::spawn(connection(host.clone(), adapter, stop));
 				}
-				// Transient (fd table exhausted, say): ending the loop here
-				// would leave the base running with a socket nobody can
-				// reach, so log and go on.
 				Err(error) => tracing::warn!(
 					target: "cartridge",
 					"accept failed, continuing: {error}"
@@ -207,8 +186,6 @@ pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
 	let _ = std::fs::remove_file(path);
 	let mut options = std::fs::OpenOptions::new();
 	options.write(true).create_new(true);
-	// Windows has no mode to open with; the socket directory's own privacy
-	// covers it there.
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::OpenOptionsExt;
@@ -238,10 +215,8 @@ async fn connection(
 	let caller = match incoming.recv().await {
 		Some(Incoming::Request(request)) if request.method == "auth" => {
 			let token = request.params["token"].as_str().unwrap_or_default();
-			// The socket is owner-only, so whoever reaches it is the user: no
-			// token means the command line.
-			// ponytail: a node that omits its token passes as the command line;
-			// bind the node role to the peer instead if nodes ever run untrusted.
+			// ponytail: a node that omits its token passes as the command line; bind
+			// the node role to the peer instead if nodes ever run untrusted.
 			let caller = match token {
 				"" => Some(Caller::Host),
 				token if token == host.host_token() => Some(Caller::Host),
@@ -373,8 +348,6 @@ async fn follow(host: &Arc<Host>, peer: &Peer, channel: &str, since: Option<u64>
 		.map_err(|e| Error::Remote(e.message))?;
 	let (peer, full) = (peer.clone(), channel.to_owned());
 	tokio::spawn(async move {
-		// This connection is this task's alone; leaving either side open past
-		// the other is a leak that only the next publish would surface.
 		loop {
 			tokio::select! {
 				_ = peer.closed() => break,
@@ -394,9 +367,6 @@ async fn follow(host: &Arc<Host>, peer: &Peer, channel: &str, since: Option<u64>
 	Ok(())
 }
 
-/// A subscriber the broadcast outruns is disconnected: these frames carry no
-/// `seq` to resume from, and a connection that silently hears nothing more is
-/// worse than a closed one.
 pub(crate) async fn forward(mut events: broadcast::Receiver<Value>, peer: Peer) {
 	while let Ok(event) = events.recv().await {
 		if peer

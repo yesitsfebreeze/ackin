@@ -15,8 +15,6 @@ pub struct Plan {
 	pub name: String,
 	pub root: PathBuf,
 	pub entry: PathBuf,
-	/// The entry's SHA-256 as the base verified it, hex — handed to the node,
-	/// which refuses bytes that no longer match.
 	pub entry_sha256: String,
 	pub events: BTreeMap<String, Event>,
 	pub needs: Vec<String>,
@@ -176,8 +174,6 @@ impl Host {
 					})?;
 				return Ok(project.join(value).to_string_lossy().into_owned());
 			}
-			// An unset home must not root `$HOME/...` at the cartridge root or
-			// at `/`, the way an `unwrap_or_default` would.
 			if let Some(rest) = path.strip_prefix("$HOME") {
 				if rest.is_empty() || rest.starts_with('/') {
 					let home = crate::sandbox::home().filter(|home| home.is_absolute());
@@ -211,8 +207,6 @@ impl Host {
 			Ok(path.clone())
 		};
 		let all = |paths: &[String]| paths.iter().map(expand).collect::<Result<Vec<_>>>();
-		// A bare `*` would hand over every secret the operator's shell held,
-		// so it is refused here rather than at use.
 		let env = configured(grant.env.clone(), config)?;
 		if env.iter().any(|name| name == "*") {
 			return Err(Error::Descriptor(
@@ -361,8 +355,6 @@ pub(crate) fn host_directory(
 		let listeners = active
 			.iter()
 			.filter(|p| p.listen.iter().any(|n| n == name))
-			// Unlike `directory`, presents the listener's own node token: the
-			// base answers bail/gather as that listener's sender.
 			.map(|listener| Address {
 				cartridge: listener.id.clone(),
 				socket: host.socket(&listener.id),

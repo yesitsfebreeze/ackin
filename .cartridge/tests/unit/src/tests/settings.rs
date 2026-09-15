@@ -10,8 +10,6 @@ fn specs() -> Specs {
 	.unwrap()
 }
 
-// Filling the keys declared *inside* an absent optional table would build
-// the table its absence is the whole point of.
 #[test]
 fn keys_inside_an_absent_optional_table_stay_absent() {
 	assert_eq!(defaults(&specs())["owner"], json!(null));
@@ -25,8 +23,6 @@ fn naming_the_table_fills_the_keys_inside_it() {
 	assert_eq!(settled["owner"], json!({"timeout_ms": 30000}));
 }
 
-// `--yolo` wins over a file that turned it off, but only where a cartridge
-// declares the key; one that does not is left as its layers settled it.
 #[test]
 fn yolo_overrides_the_configured_value_only_where_the_cartridge_declares_it() {
 	let automatic: Specs = serde_json::from_value(json!({
@@ -73,8 +69,6 @@ fn a_configuration_file_that_never_returns_is_refused() {
 	assert!(refused.contains("config.lua"), "{refused}");
 }
 
-// A refused setting warns while the host settings are still being settled;
-// with diagnostics on, that warning must not re-enter the settling.
 #[test]
 fn refused_settings_do_not_wedge_the_process_when_diagnostics_are_on() {
 	let bin = super::built(&["--bin", "cartridge"]);
@@ -114,8 +108,6 @@ fn refused_settings_do_not_wedge_the_process_when_diagnostics_are_on() {
 		.spawn()
 		.unwrap();
 	assert!(clean(child), "`cartridge socket` never returned");
-	// The writer is a thread of its own; the exit flush is what carries the
-	// refusal the subprocess earned into the file it enabled.
 	let written = std::fs::read_to_string(dir.path().join("diagnostics.jsonl")).unwrap_or_default();
 	assert!(
 		written.contains("using declared defaults"),

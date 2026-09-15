@@ -35,8 +35,6 @@ fn code_of(error: &Error) -> u8 {
 
 pub fn main() -> ExitCode {
 	let code = dispatch();
-	// Without this, buffered diagnostics are lost when the writer thread
-	// dies with this process.
 	cartridge::trace::flush();
 	code
 }
@@ -61,8 +59,6 @@ fn dispatch() -> ExitCode {
 	}
 	let yolo = cli.yolo;
 	let outcome = cli.check().and_then(|()| match cli.command {
-		// Runs in cwd, not project::locate's ascended project: Setup makes
-		// the project, it doesn't presuppose one.
 		Command::Setup {
 			from,
 			with,

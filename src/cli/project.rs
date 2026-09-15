@@ -8,8 +8,6 @@ pub(crate) struct Project {
 	pub(crate) descriptor: PathBuf,
 }
 
-/// `dir` must be made absolute before the chdir below, or a relative
-/// `--dir` resolves against the wrong directory.
 pub(crate) fn locate(dir: Option<PathBuf>) -> Result<Project> {
 	let dir = dir.map(|dir| absolute(&dir));
 	let root = loader::root();
@@ -31,8 +29,6 @@ pub(crate) fn locate(dir: Option<PathBuf>) -> Result<Project> {
 	Ok(Project { dir, descriptor })
 }
 
-/// Lexical, not `fs::canonicalize`: must resolve a directory that doesn't
-/// exist yet, and must not change once the cwd moves to the project root.
 fn absolute(path: &Path) -> PathBuf {
 	std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }

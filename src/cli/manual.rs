@@ -67,8 +67,6 @@ pub(crate) fn help(project: &Project, what: &str, as_json: bool) -> Result<ExitC
 	})
 }
 
-// ── the tree ────────────────────────────────────────────────────────────────
-
 struct Section {
 	title: String,
 	slug: String,
@@ -163,8 +161,6 @@ impl Manual {
 		Self { modules }
 	}
 
-	/// An id may itself contain a slash, so the longest id the address starts
-	/// with wins.
 	fn find(&self, address: &str) -> Option<Node<'_>> {
 		if address.is_empty() {
 			return Some(Node::Root);
@@ -297,8 +293,6 @@ impl Manual {
 		}
 	}
 
-	// ── printed ─────────────────────────────────────────────────────────────
-
 	fn print(&self, node: Node<'_>) -> usize {
 		match node {
 			Node::Root => return self.print_overview(),
@@ -424,8 +418,6 @@ impl Doc {
 	}
 }
 
-/// `skip` leaves out one subtree: the cartridge root, whose cartridges are
-/// modules of their own.
 fn documents(dir: &Path, skip: Option<&Path>) -> Vec<Doc> {
 	let listed = std::process::Command::new("git")
 		.arg("-C")
@@ -505,7 +497,6 @@ fn rank(path: &Path) -> u8 {
 }
 
 fn declarations(c: &CartridgeInfo, document: &Result<loader::Cartridge>, dir: &Path) -> String {
-	// Not a heading: the declarations are one leaf, addressed by the file alone.
 	let mut out = format!(
 		"{}  ({} -> {}){}\n\n",
 		c.entry.id,
@@ -560,8 +551,6 @@ fn declarations(c: &CartridgeInfo, document: &Result<loader::Cartridge>, dir: &P
 	out
 }
 
-/// Markdown `#` headings outside fences and front matter; in a `.txt` guide,
-/// also an unindented all-caps line after a blank one.
 fn sections(path: &str, text: &str) -> Vec<Section> {
 	let prose = path.ends_with(".txt");
 	let mut out: Vec<Section> = Vec::new();
@@ -659,8 +648,6 @@ fn about(text: &str) -> String {
 		.take(100)
 		.collect()
 }
-
-// ── the picker ──────────────────────────────────────────────────────────────
 
 struct Screen;
 
@@ -827,8 +814,6 @@ fn is_branch(node: Option<Node<'_>>) -> bool {
 	}
 }
 
-/// A document path holds slashes of its own, so the step is taken on the
-/// tree, not the string.
 fn up(manual: &Manual, address: &str) -> String {
 	let above = match manual.find(address) {
 		Some(Node::Section(m, d, _)) => format!("{}/{}", m.id, d.path),
@@ -900,7 +885,6 @@ fn draw_list(level: &Level, rows: &[Row]) -> std::io::Result<()> {
 	out.flush()
 }
 
-/// Answers false when the reader quit the whole picker rather than stepping back.
 fn view(manual: &Manual, address: &str, line: Option<usize>) -> std::io::Result<bool> {
 	use crossterm::style::{Attribute, Print, SetAttribute};
 	use crossterm::{cursor::MoveTo, queue, terminal};

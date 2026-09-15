@@ -49,8 +49,6 @@ fn root() -> PathBuf {
 fn an_empty_grant_builds_no_allowance_beyond_the_runtime() {
 	let text = profile(&Grant::default(), &root(), Path::new("/bin/tool"), None);
 	assert!(text.contains("(deny default)"), "{text}");
-	// The discard sink is plumbing, not a grant: every program a cartridge
-	// may run opens `/dev/null` without any grant naming it.
 	assert!(text.contains("file-write*"), "{text}");
 	assert!(
 		text.contains("(allow file-write* (literal \"/dev/null\"))"),
@@ -122,8 +120,6 @@ fn a_script_names_its_interpreter() {
 	);
 }
 
-// `@executable_path/..` is plumbing, not a capability: the empty grant still
-// reaches it.
 #[cfg(target_os = "macos")]
 #[test]
 fn an_interpreter_reaches_its_own_installation() {
@@ -135,7 +131,6 @@ fn an_interpreter_reaches_its_own_installation() {
 	std::fs::create_dir_all(prefix.join("lib")).unwrap();
 	std::fs::write(prefix.join("lib/data.txt"), "runtime\n").unwrap();
 	let tool = prefix.join("bin/tool");
-	// Shell builtins only: the empty grant cannot exec cat or dirname.
 	std::fs::write(
 		&tool,
 		"#!/bin/sh\nread -r line < \"${0%/bin/tool}/lib/data.txt\" && echo \"$line\"\n",
@@ -157,8 +152,6 @@ fn an_interpreter_reaches_its_own_installation() {
 	assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "runtime");
 }
 
-// A shared directory (`/usr`, or the home a `~/bin` helper sits under) must
-// not become one program's installation prefix.
 #[test]
 fn the_prefix_stops_at_a_system_directory() {
 	let shared = profile(&Grant::default(), &root(), Path::new("/usr/bin/env"), None);
@@ -189,8 +182,6 @@ fn the_prefix_stops_at_a_system_directory() {
 	);
 }
 
-// `/etc` and `/var` are symlinks: a clause written through them would match
-// nothing.
 #[cfg(target_os = "macos")]
 #[test]
 fn the_runtime_is_named_canonically() {

@@ -13,8 +13,6 @@ pub fn current() -> Option<Arc<str>> {
 	TURN.try_with(Arc::clone).ok()
 }
 
-/// Unique for the life of this process and unlikely to collide with another
-/// cartridge's.
 pub fn mint() -> Arc<str> {
 	static NEXT: AtomicU64 = AtomicU64::new(1);
 	static ORIGIN: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
@@ -35,8 +33,6 @@ pub fn of(m: &Json) -> Arc<str> {
 	m["trace"].as_str().map(Arc::from).unwrap_or_else(mint)
 }
 
-/// A frame sent outside any trace is left alone, so the wire never grows a
-/// field that names nothing.
 pub fn stamp(m: &mut Json) {
 	if let Some(id) = current() {
 		m["trace"] = Json::String(id.to_string());
@@ -47,8 +43,6 @@ pub async fn scope<F: Future>(id: Arc<str>, f: F) -> F::Output {
 	TURN.scope(id, f).await
 }
 
-/// Continue the current trace inside a future that a `tokio::spawn` will run in
-/// a task of its own, where the task-local would otherwise be lost.
 pub fn carry<F: Future>(f: F) -> impl Future<Output = F::Output> {
 	let id = current();
 	async move {
@@ -59,8 +53,6 @@ pub fn carry<F: Future>(f: F) -> impl Future<Output = F::Output> {
 	}
 }
 
-/// Matched as a substring of the lowercased name, so `api_key`, `Authorization`
-/// and `messages` are all caught.
 const OMIT: &[&str] = &[
 	"key",
 	"token",
@@ -94,8 +86,6 @@ fn redact(v: &mut Json, omitted: &mut Vec<String>) {
 	}
 	let Json::Object(o) = v else { return };
 	for (k, value) in o.iter_mut() {
-		// This typed observation fact contains no completion body. Strings under
-		// the same spelling still receive the ordinary redaction.
 		if k == "completion_known" && (value.is_boolean() || value.is_null()) {
 			continue;
 		}
@@ -108,8 +98,6 @@ fn redact(v: &mut Json, omitted: &mut Vec<String>) {
 	}
 }
 
-/// Nothing is truncated at startup — a file is opened for append and counts
-/// what is already there.
 struct Sink {
 	out: Out,
 	cap: u64,
@@ -137,9 +125,6 @@ impl Sink {
 	}
 
 	fn from_env() -> Self {
-		// The cap is a setting (`host.diagnostics_max_bytes`); the environment
-		// still wins, because turning diagnostics up for one invocation is what
-		// the variable is for and editing a file to do it is not.
 		let cap = std::env::var("CARTRIDGE_DIAGNOSTICS_MAX_BYTES")
 			.ok()
 			.and_then(|v| v.parse().ok())
@@ -168,8 +153,6 @@ impl Sink {
 	}
 
 	fn write(&mut self, line: &str) {
-		// Never split encoded JSON or a multibyte character. An oversized
-		// record is replaced by a small valid record naming the omission.
 		let replacement;
 		let line = if line.len() as u64 > self.cap {
 			replacement = format!(
@@ -181,7 +164,6 @@ impl Sink {
 			} else if self.cap >= 17 {
 				"{\"omitted\":true}\n"
 			} else {
-				// A cap smaller than the minimal marker admits no record.
 				return;
 			}
 		} else {
@@ -211,8 +193,6 @@ impl Sink {
 					.and_then(|()| file.seek(SeekFrom::End(0)).map(|_| ()))
 					.is_err()
 				{
-					// Roll back a partial JSON record. If storage cannot be
-					// repaired, stop this sink rather than append corrupt JSON.
 					self.out = Out::Disabled;
 				}
 			}
@@ -255,9 +235,6 @@ fn drain(sink: &mut Sink, notes: &std::sync::mpsc::Receiver<Note>, dropped: &Ato
 	}
 }
 
-/// The sink is built on the first caller's thread, so it reads the environment
-/// and working directory it reads today; the blocking write happens on the
-/// writer thread.
 fn out() -> &'static std::sync::mpsc::SyncSender<Note> {
 	// Settle before entering the cell, not inside it: the initializer reads
 	// `settings::host()`, and settling warns through `tracing::warn!` for each
@@ -276,7 +253,6 @@ fn out() -> &'static std::sync::mpsc::SyncSender<Note> {
 			.spawn(move || drain(&mut sink, &notes, &DROPPED))
 			.is_err()
 		{
-			// Visibly off, not quietly lossy.
 			eprintln!("cartridge: no thread for the diagnostic stream; diagnostics are off");
 		}
 		lines
@@ -290,7 +266,6 @@ fn now_ms() -> u64 {
 		.unwrap_or_default()
 }
 
-/// The writer dies with the process, and the next command may read this one's lines.
 pub fn flush() {
 	let Some(lines) = OUT.get() else { return };
 	let (ack, done) = std::sync::mpsc::sync_channel::<()>(1);
@@ -315,8 +290,6 @@ pub fn flush() {
 	let _ = done.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()));
 }
 
-/// `fields` may carry its own `trace`, which wins over the ambient one — that
-/// is how a line a cartridge wrote in its own trace keeps it.
 pub fn diagnostic(src: &str, msg: impl std::fmt::Display, fields: Json) {
 	if !diagnostics_enabled() {
 		return;
@@ -361,9 +334,6 @@ pub fn diagnostic_line(src: &str, line: &str) {
 	}
 	match serde_json::from_str::<Json>(line) {
 		Ok(Json::Object(mut o)) => {
-			// A cartridge wrote this msg, so a non-string one clears the same
-			// redaction as the rest of the line: the OMIT list above must not
-			// be bypassed by nesting a field under it.
 			let msg = o
 				.remove("msg")
 				.or_else(|| o.remove("message"))
@@ -382,14 +352,8 @@ pub fn diagnostic_line(src: &str, line: &str) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// tracing
-// ---------------------------------------------------------------------------
-
 type Deliver = Arc<dyn Fn(&str, &str, Json) + Send + Sync>;
 
-/// Only events from this crate are taken (targets under `cartridge`); a
-/// dependency's chatter stays on stderr where the level filter governs it.
 pub struct Layer {
 	deliver: Deliver,
 }
@@ -481,8 +445,6 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
 	}
 }
 
-/// Idempotent — a second call, or a call after the embedding program installed
-/// a subscriber of its own, changes nothing.
 pub fn subscribe() {
 	use tracing_subscriber::layer::SubscriberExt;
 	use tracing_subscriber::util::SubscriberInitExt;

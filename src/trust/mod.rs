@@ -16,9 +16,6 @@ fn hex(bytes: &[u8]) -> String {
 	bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Refuses a home that is not absolute: a relative one would resolve against
-/// the project, making the project "the person's own" and putting the store
-/// inside it.
 pub fn home() -> Result<PathBuf> {
 	let home = match std::env::var_os("CARTRIDGE_HOME") {
 		Some(home) => PathBuf::from(home),
@@ -48,8 +45,6 @@ fn ensure_store() -> Result<PathBuf> {
 		builder.mode(0o700);
 	}
 	builder.create(&store).map_err(|e| Error::file(&store, e))?;
-	// `DirBuilder` leaves an existing, wider store as it is. Windows has no
-	// mode to narrow it.
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
@@ -83,9 +78,6 @@ fn nearest_project(file: &Path) -> PathBuf {
 		.to_path_buf()
 }
 
-/// Checked as-written, not just resolved: a dotfiles setup symlinks its
-/// config elsewhere, and a file under the home only in its resolved form
-/// would wrongly skip the trust check.
 fn own(path: &Path, file: &Path) -> Result<bool> {
 	let home = home()?;
 	Ok(
@@ -154,13 +146,10 @@ fn checked(file: &Path, digest: &str) -> Result<()> {
 	})
 }
 
-/// Hashed once, for the bytes it returns.
 pub fn read(path: &Path) -> Result<String> {
 	String::from_utf8(verify(path)?).map_err(|e| Error::file(path, std::io::Error::other(e)))
 }
 
-/// No link is followed: a symlink into a directory outside the project must
-/// not pull untrusted files into it as project source.
 fn collect(dir: &Path, into: &mut Vec<PathBuf>) -> Result<()> {
 	for entry in std::fs::read_dir(dir).map_err(|e| Error::file(dir, e))? {
 		let entry = entry.map_err(|e| Error::file(dir, e))?;
@@ -191,8 +180,6 @@ pub fn record(dir: &Path) -> Result<Record> {
 	record_files(dir, &found)
 }
 
-/// A missing file is an error, not a skip: silently trusting less than the
-/// caller approved would be worse than failing loud.
 pub fn record_files(dir: &Path, files: &[PathBuf]) -> Result<Record> {
 	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
 	let files = files
@@ -234,8 +221,6 @@ pub fn pending(dir: &Path) -> Result<Vec<PathBuf>> {
 	Ok(found)
 }
 
-/// The one implementation of this cleaning: `setup::absolute` calls it rather
-/// than keeping its own copy.
 pub fn absolute_clean(path: &Path) -> PathBuf {
 	let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
 	let mut out = PathBuf::new();
@@ -251,15 +236,10 @@ pub fn absolute_clean(path: &Path) -> PathBuf {
 	out
 }
 
-/// The deepest existing ancestor resolved, the rest joined on: a deleted
-/// `/var/…` must still match a record stored as `/private/var/…`.
 fn resolved(dir: &Path) -> Result<PathBuf> {
 	if let Ok(canonical) = dir.canonicalize() {
 		return Ok(canonical);
 	}
-	// Lexically cleaned of `.` and `..`: `absolute` alone normalises only
-	// `.`, and a path ending in a literal `..` has no `file_name`, so the walk
-	// below would stop before reaching an existing ancestor.
 	let cleaned = absolute_clean(dir);
 	let mut rest = Vec::new();
 	let mut existing = cleaned.clone();
@@ -281,8 +261,6 @@ fn resolved(dir: &Path) -> Result<PathBuf> {
 	Ok(cleaned)
 }
 
-/// Matched on [`project_of`] rather than on a whole [`Record`], so a record
-/// too stale to parse is still removed instead of being left behind.
 pub fn revoke(dir: &Path) -> Result<usize> {
 	let want = resolved(dir)?;
 	let mut gone = 0;
@@ -295,7 +273,6 @@ pub fn revoke(dir: &Path) -> Result<usize> {
 	Ok(gone)
 }
 
-/// A file that cannot be read is not a record.
 fn stored() -> Result<Vec<(PathBuf, String)>> {
 	let store = store()?;
 	let entries = match std::fs::read_dir(&store) {
@@ -313,9 +290,6 @@ fn stored() -> Result<Vec<(PathBuf, String)>> {
 	Ok(records)
 }
 
-/// Whose record this is, even when the rest of it no longer parses: a stale
-/// shape or a bad digest still names its project, and a record `list` cannot
-/// show is still one `revoke` must remove.
 fn project_of(text: &str) -> Option<PathBuf> {
 	serde_json::from_str::<serde_json::Value>(text)
 		.ok()?

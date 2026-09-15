@@ -42,8 +42,6 @@ fn an_entry_is_its_path_from_the_root() {
 	assert_eq!(ledger.get("left/nested").unwrap().name, "same");
 }
 
-// Two entries offering one key clash and name both, instead of the first in
-// path order winning silently.
 #[test]
 fn two_entries_of_one_scope_offering_one_key_is_a_clash() {
 	let dir = tempfile::tempdir().unwrap();

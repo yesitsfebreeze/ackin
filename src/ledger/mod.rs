@@ -4,13 +4,9 @@ use std::path::{Path, PathBuf};
 use crate::loader::{Cartridge, MANIFEST};
 
 pub struct Installed {
-	/// The identity: never the bare `name`, which is not unique across the tree.
 	pub path: String,
 	pub dir: PathBuf,
-	/// Empty when the document would not read.
 	pub name: String,
-	/// Seen by every lookup made from inside its parent's subtree, and by
-	/// nothing outside the parent unless the parent passes it on.
 	pub listen: Vec<String>,
 	pub needs: Vec<String>,
 	pub unread: Option<String>,
@@ -51,15 +47,12 @@ pub struct Ledger {
 }
 
 impl Ledger {
-	/// A root that does not exist is an empty ledger, not an error: nothing
-	/// installed is a state the host runs in.
 	pub fn scan(root: &Path) -> Self {
 		let mut entries = BTreeMap::new();
 		descend(root, "", &mut entries);
 		Self { entries }
 	}
 
-	/// In path order, not filesystem order: backed by a `BTreeMap`.
 	pub fn entries(&self) -> impl Iterator<Item = &Installed> {
 		self.entries.values()
 	}
@@ -76,7 +69,6 @@ impl Ledger {
 		self.entries.is_empty()
 	}
 
-	/// Excludes `from` itself.
 	pub fn resolve(&self, from: &str, key: &str) -> Bound<'_> {
 		let offered: Vec<&Installed> = self
 			.entries()
@@ -100,9 +92,6 @@ impl Ledger {
 	}
 }
 
-/// A directory holding no document is not descended into: a nested cartridge
-/// it hid would be reachable by nobody, but that subtree was never a
-/// cartridge's to expose.
 fn descend(dir: &Path, scope: &str, into: &mut BTreeMap<String, Installed>) {
 	let Ok(read) = std::fs::read_dir(dir) else {
 		return;
@@ -127,8 +116,6 @@ fn descend(dir: &Path, scope: &str, into: &mut BTreeMap<String, Installed>) {
 	}
 }
 
-/// Declarations are recorded from the manifest whether or not the Lua entry
-/// it names actually exists.
 fn read_entry(folder: &Path, path: String) -> Installed {
 	let manifest = folder.join(MANIFEST);
 	match Cartridge::document(&manifest) {

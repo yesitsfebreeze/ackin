@@ -12,8 +12,6 @@ use seccompiler::{
 
 use crate::loader::Grant;
 
-/// On argv: nothing on disk, and unlike env it does not survive into the
-/// node's `environ`.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct Policy {
 	read: Vec<PathBuf>,
@@ -22,8 +20,6 @@ pub(super) struct Policy {
 	net: bool,
 }
 
-/// Executable only where the loader lives — `/usr/bin` is absent, so an
-/// ungranted program still cannot run.
 const RUNTIME_READ: [&str; 6] = [
 	"/lib",
 	"/lib64",
@@ -41,8 +37,6 @@ pub(super) fn command(
 	sockets: Option<&Path>,
 ) -> std::io::Result<std::process::Command> {
 	let binary = Path::new(&cmd[0]).canonicalize()?;
-	// `*` is every program, and on Linux that also means reading every program:
-	// Landlock needs read access to execute. The refusal names the honest grant.
 	let every = grant.exec.iter().any(|program| program == "*");
 	if every && !grant.read.iter().any(|path| path == "/") {
 		return Err(std::io::Error::new(
@@ -61,7 +55,6 @@ pub(super) fn command(
 			}
 		}
 	}
-	// A program's own installation is plumbing, not a capability.
 	let homes = super::homes();
 	let mut installations: Vec<PathBuf> = exec
 		.iter()
@@ -73,8 +66,6 @@ pub(super) fn command(
 	exec.extend(
 		RUNTIME_EXEC
 			.iter()
-			// Runtime entries this distribution lacks are skipped; a grant entry
-			// is never skipped, so an unopenable one refuses.
 			.filter(|path| Path::new(*path).exists())
 			.map(PathBuf::from),
 	);
@@ -83,7 +74,6 @@ pub(super) fn command(
 	}
 	exec.sort();
 	exec.dedup();
-	// A write is also a read.
 	let mut read: Vec<PathBuf> = RUNTIME_READ
 		.iter()
 		.filter(|path| Path::new(*path).exists())
@@ -96,7 +86,6 @@ pub(super) fn command(
 		read.extend(super::granted_paths(path, &root));
 	}
 	read.extend(installations);
-	// A process cannot exist without the devices added below.
 	let mut write: Vec<PathBuf> = grant
 		.write
 		.iter()
@@ -114,7 +103,6 @@ pub(super) fn command(
 		.into_iter()
 		.map(PathBuf::from),
 	);
-	// Terminals: a cartridge that may write devices may drive a pseudo-terminal.
 	if grant
 		.write
 		.iter()
@@ -141,17 +129,12 @@ pub(super) fn command(
 		net: !grant.net.is_empty(),
 	};
 	let text = serde_json::to_string(&policy).map_err(std::io::Error::other)?;
-	// `MAX_ARG_STRLEN` is 128 KiB; above this the kernel would answer an
-	// opaque `E2BIG`, so the refusal names the real reason.
 	if text.len() > 120_000 {
 		return Err(std::io::Error::new(
 			std::io::ErrorKind::InvalidInput,
 			"the compiled policy does not fit on the command line; split the grant",
 		));
 	}
-	// The trampoline is the base binary itself: it restricts and `execve`s, and
-	// `cmd[0]` — not `current_exe()` — is the one caller's binary even under
-	// the test harness.
 	let mut command = std::process::Command::new(&cmd[0]);
 	command.arg("__confine").arg(&text).arg("--").args(cmd);
 	Ok(command)
@@ -178,7 +161,6 @@ fn rules(policy: &Policy) -> crate::Result<Vec<PathBeneath<PathFd>>> {
 			&policy.write,
 			AccessFs::from_all(ABI::V9) & !AccessFs::Execute,
 		),
-		// Execute alone gets EACCES: the program and the loader must be readable.
 		(&policy.exec, AccessFs::Execute | AccessFs::ReadFile),
 	] {
 		for path in paths {
@@ -190,16 +172,12 @@ fn rules(policy: &Policy) -> crate::Result<Vec<PathBeneath<PathFd>>> {
 	Ok(rules)
 }
 
-/// Network is all or nothing, as on macOS: `grant.net` names hosts and no kernel
-/// policy filters by host. The socket domain decides; every other domain is
-/// `EPERM`.
 fn filter(net: bool) -> crate::Result<BpfProgram> {
 	let seccomp = |error: &dyn std::fmt::Display| crate::Error::process("seccomp", error);
 	let arch = match std::env::consts::ARCH {
 		"x86_64" => TargetArch::x86_64,
 		"aarch64" => TargetArch::aarch64,
 		"riscv64" => TargetArch::riscv64,
-		// No filter would be a silent hole.
 		other => {
 			return Err(crate::Error::process(
 				"seccomp",
@@ -211,7 +189,6 @@ fn filter(net: bool) -> crate::Result<BpfProgram> {
 		false => &[libc::AF_UNIX],
 		true => &[libc::AF_UNIX, libc::AF_INET, libc::AF_INET6],
 	};
-	// Conditions in one rule are ANDed: "none of the allowed domains".
 	let conditions = allowed
 		.iter()
 		.map(|domain| {
@@ -227,7 +204,7 @@ fn filter(net: bool) -> crate::Result<BpfProgram> {
 		]
 		.into_iter()
 		.collect(),
-		SeccompAction::Allow, // everything else is Landlock's job
+		SeccompAction::Allow,
 		SeccompAction::Errno(libc::EPERM as u32),
 		arch,
 	)
@@ -237,12 +214,9 @@ fn filter(net: bool) -> crate::Result<BpfProgram> {
 		.map_err(|error| seccomp(&format!("{error:?}")))
 }
 
-/// A partial policy is never a silent fallback.
 pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::convert::Infallible> {
 	let policy: Policy = serde_json::from_str(policy)?;
 	let landlock = |error: landlock::RulesetError| crate::Error::process("landlock", error);
-	// The floor is ABI V1 as a hard requirement; everything above it is best
-	// effort, and what the kernel actually enforced is reported below.
 	let mut created = Ruleset::default()
 		.set_compatibility(CompatLevel::HardRequirement)
 		.handle_access(AccessFs::from_all(ABI::V1))
@@ -264,8 +238,6 @@ pub(super) fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::conver
 			"not enforced on this kernel: refusing to start the cartridge unconfined",
 		));
 	}
-	// The host pumps the child's stderr to diagnostics, so the ABI a node
-	// actually runs under is on record at every start below V9.
 	if let LandlockStatus::Available { effective_abi, .. } = status.landlock {
 		if effective_abi < ABI::V9 {
 			eprintln!(

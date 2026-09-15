@@ -25,7 +25,6 @@ pub const LUA_BUDGET_ENV: &str = "CARTRIDGE_LUA_INSTRUCTION_BUDGET";
 
 static RUNTIME: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
 
-/// Holds the Lua state until the future returns.
 fn wait<F: std::future::Future>(future: F) -> F::Output {
 	let handle = RUNTIME.get().expect("the node runtime").clone();
 	match tokio::runtime::Handle::try_current() {
@@ -40,8 +39,6 @@ fn external(error: String) -> mlua::Error {
 
 const ENCODE: &str = "cartridge.encode";
 
-/// One call holds the state for the whole conversion, so a table another
-/// coroutine mutates meanwhile still encodes consistently.
 fn json(lua: &Lua, value: mlua::Value) -> mlua::Result<Value> {
 	let encode: Function = lua.named_registry_value(ENCODE)?;
 	let text: String = encode.call(value)?;
@@ -54,9 +51,6 @@ return function(...)
 	return blocking(...)
 end"#;
 
-/// Yields where Lua can (a handler, a subscriber, init.lua), so the node
-/// serves other events meanwhile; blocks where it cannot (inside a native
-/// module's function, or from its own thread).
 fn either<A, R, F, Fut>(lua: &Lua, f: F) -> mlua::Result<Function>
 where
 	A: FromLuaMulti + 'static,
@@ -90,8 +84,6 @@ fn env(name: &str) -> Result<String> {
 
 pub async fn main() -> Result<ExitCode> {
 	let socket = PathBuf::from(env(SOCKET_ENV)?);
-	// The node's own credential: what its socket grants as `Host`, naming
-	// authority over this node only.
 	let host_token = env(NODE_TOKEN_ENV)?;
 	let entry = PathBuf::from(env(ENTRY_ENV)?);
 	let expected = env(ENTRY_SHA256_ENV)?;
@@ -103,11 +95,8 @@ pub async fn main() -> Result<ExitCode> {
 		.map(Duration::from_secs)
 		.unwrap_or(Duration::from_secs(30));
 	let _ = RUNTIME.set(tokio::runtime::Handle::current());
-	// The seven variables named this node; no helper or Lua library spawned
-	// from here needs them. `ponytail:` env is process-global, so a helper
-	// racing a remove_var could still read its own variable — the token is
-	// per-node and the socket answers before any helper exists, so the
-	// exposure is one node's own credential to itself.
+	// ponytail: env is process-global, so a helper racing `remove_var` could
+	// still read its own variable; the exposure is one node's own credential.
 	for key in [
 		SOCKET_ENV,
 		NODE_TOKEN_ENV,
@@ -123,9 +112,6 @@ pub async fn main() -> Result<ExitCode> {
 		.await
 		.map_err(|e| Error::process(entry.display().to_string(), e))?;
 	let ctx = Ctx::new(host_token, timeout);
-	// The base settled these against the person's config.lua layers; the
-	// sandbox hides both files, so take the carried values unset at our own
-	// risk — a node that cannot find them runs on the declarations.
 	let memory = std::env::var(LUA_MEMORY_ENV)
 		.ok()
 		.and_then(|v| v.parse().ok())
@@ -150,8 +136,6 @@ pub async fn main() -> Result<ExitCode> {
 	Ok(ExitCode::SUCCESS)
 }
 
-/// The entry's bytes, re-checked against the SHA-256 the base verified when it
-/// planned the cartridge: a file edited since is refused, not loaded.
 pub(crate) fn entry_bytes(entry: &Path, expected: &str) -> mlua::Result<String> {
 	let bytes = std::fs::read(entry).map_err(mlua::Error::external)?;
 	if crate::trust::digest_bytes(&bytes) != expected {
@@ -163,7 +147,6 @@ pub(crate) fn entry_bytes(entry: &Path, expected: &str) -> mlua::Result<String> 
 	String::from_utf8(bytes).map_err(mlua::Error::external)
 }
 
-/// Run as a coroutine, so init.lua's top level may send events too.
 async fn apply(
 	lua: Lua,
 	ctx: Ctx,
@@ -220,7 +203,6 @@ fn install(
 	)?;
 	let global = lua.create_table()?;
 	global.set("root", root.to_string_lossy().into_owned())?;
-	// A native module's own mlua does not know this marker; it tags arrays with it.
 	global.set("array_metatable", lua.array_metatable())?;
 	global.set(
 		"trace",
@@ -412,8 +394,6 @@ fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> 
 	open.call::<mlua::Value>(name)
 }
 
-/// Served in Rust without touching Lua, so it still works while a Lua handler
-/// is busy. Anything not protocol goes to the Lua handler.
 async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'static) -> bool {
 	let name = |key: &str| value[key].as_str().map(str::to_owned);
 	if let Some(name) = name("emit") {
@@ -455,7 +435,6 @@ async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'st
 	} else {
 		return false;
 	};
-	// Answered out of line: the asker may have more to say while it waits.
 	tokio::spawn(async move {
 		answer(match asked.await {
 			Ok(result) => json!({ "ask": ask, "result": result }),
@@ -465,8 +444,6 @@ async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'st
 	true
 }
 
-/// Shared by both platforms, so the protocol a native module speaks does not
-/// drift between them.
 async fn pipe_lines(
 	reader: impl tokio::io::AsyncRead + Unpin,
 	lua: Lua,
@@ -499,8 +476,6 @@ async fn pipe_lines(
 	}
 }
 
-/// A native module's own threads may write lines here: they reach the node in
-/// Rust, so the Lua state is never entered from those threads.
 #[cfg(unix)]
 fn pipe(
 	lua: &Lua,
@@ -516,7 +491,6 @@ fn pipe(
 	));
 	let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
 		.map_err(|e| external(e.to_string()))?;
-	// SAFETY: a NUL-terminated path; mkfifo touches nothing else.
 	if unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) } != 0 {
 		return Err(external(format!(
 			"{}: {}",
@@ -524,8 +498,6 @@ fn pipe(
 			std::io::Error::last_os_error()
 		)));
 	}
-	// A clean dispose unlinks the FIFO, so a reload doesn't leave it behind;
-	// the base's monitor still has to sweep the crash path beside the socket.
 	{
 		let unlink = path.clone();
 		ctx.on_dispose(move || async move {
@@ -560,16 +532,12 @@ fn pipe(
 	f: Option<Function>,
 ) -> mlua::Result<String> {
 	use tokio::net::windows::named_pipe::ServerOptions;
-	// The directory names the node's own sockets; a pipe is not a file, so it
-	// borrows the directory's identity for its name rather than living in it.
 	let name = format!(
 		r"\\.\pipe\cartridge-{}-{}-{}",
 		crate::transport::typed::path_tag(dir),
 		std::process::id(),
 		counter.fetch_add(1, Ordering::SeqCst)
 	);
-	// The first instance is made here, before init.lua goes on, so a writer
-	// that opens the name immediately finds it already there.
 	let mut server = ServerOptions::new()
 		.first_pipe_instance(true)
 		.create(&name)
@@ -603,8 +571,6 @@ fn pipe(
 }
 
 struct Spawned {
-	/// `None` once a write timed out: a half-written line nobody can finish,
-	/// so the handle is gone the way the killed `child` is.
 	stdin: tokio::sync::Mutex<Option<tokio::process::ChildStdin>>,
 	pending: Mutex<HashMap<u64, oneshot::Sender<Value>>>,
 	on_line: Mutex<Option<Function>>,
@@ -633,11 +599,6 @@ fn spawn(
 		.stdout(std::process::Stdio::piped())
 		.stderr(std::process::Stdio::inherit())
 		.kill_on_drop(true);
-	// A node's own wiring is not its helpers'. The socket it serves, the
-	// credential it was minted, the entry it ran, the pipe instances it was
-	// handed — a helper needs none of them, and one that reads them is holding
-	// the node's credential. The base already withholds its own from the node;
-	// this is the same rule one step down.
 	for (key, _) in std::env::vars_os() {
 		if key.to_string_lossy().starts_with("CARTRIDGE_") {
 			process.env_remove(key);
@@ -705,9 +666,6 @@ fn spawn(
 				}
 			}
 		}
-		// The helper exited without answering these; drop their senders so
-		// every waiting `rx` resolves to `RecvError` instead of hanging for
-		// the full timeout.
 		reader.pending.lock().expect("pending lock").clear();
 	});
 	lua.create_userdata(Handle(spawned))
@@ -719,11 +677,8 @@ impl Spawned {
 	async fn write(&self, value: &Value) -> std::io::Result<()> {
 		let mut line = value.to_string();
 		line.push('\n');
-		// Bounded, so a helper that stops reading its stdin cannot park every
-		// later send behind the filled pipe forever. The lock is taken outside
-		// the timed block and held across it: on timeout the write is dropped
-		// mid-line, and no writer parked behind may resume that line, so the
-		// handle is taken away and the helper killed before the lock is let go.
+		// Held across the timeout: a write dropped mid-line cannot be resumed, so
+		// the helper is killed before the lock is released.
 		let mut held = self.stdin.lock().await;
 		let Some(stdin) = held.as_mut() else {
 			return Err(std::io::Error::new(
@@ -776,9 +731,6 @@ impl UserData for Handle {
 				value["id"] = json!(id);
 				let (tx, rx) = oneshot::channel();
 				spawned.pending.lock().expect("pending lock").insert(id, tx);
-				// The write is bounded by `timeout` too, so a stalled helper
-				// can make one `:request` wait twice it: once writing, once
-				// for the reply.
 				let written = spawned.write(&value).await;
 				let reply = match &written {
 					Ok(()) => Some(tokio::time::timeout(spawned.timeout, rx).await),
@@ -786,8 +738,6 @@ impl UserData for Handle {
 				};
 				spawned.pending.lock().expect("pending lock").remove(&id);
 				match reply {
-					// The write's own error says what went wrong: a stalled
-					// helper did not answer, it did not close its input.
 					None => Err(external(match written.unwrap_err() {
 						e if e.kind() == std::io::ErrorKind::TimedOut => {
 							"the program did not answer in time".to_string()

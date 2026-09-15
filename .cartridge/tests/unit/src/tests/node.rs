@@ -1,5 +1,3 @@
-// The node re-checks the entry against the digest the base verified, not a
-// second read of its own.
 #[test]
 fn the_entry_recheck_refuses_bytes_that_changed() {
 	let dir = tempfile::tempdir().unwrap();

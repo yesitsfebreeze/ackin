@@ -4,7 +4,6 @@ use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_interrupt_stops_the_host_unless_a_program_holds_the_terminal() {
-	// SAFETY: signals only this process, which the test owns.
 	let signal = |sig: i32| unsafe { libc::kill(std::process::id() as libc::pid_t, sig) };
 	let held = Arc::new(AtomicBool::new(true));
 	let stop = tokio_util::sync::CancellationToken::new();

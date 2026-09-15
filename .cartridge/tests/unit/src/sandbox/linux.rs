@@ -1,8 +1,6 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 
-/// The trampoline reads `cmd[0]`, the caller's own binary, never
-/// `current_exe()` — which under this test harness would be the harness.
 #[test]
 fn the_trampoline_carries_the_policy_on_argv() {
 	let fixture = tempfile::tempdir().unwrap();
@@ -33,8 +31,6 @@ fn the_trampoline_carries_the_policy_on_argv() {
 	);
 }
 
-/// Landlock is inode-based: a dropped rule for a missing path would be a
-/// silently ungranted one, so this refuses instead.
 #[test]
 fn a_grant_naming_a_path_that_is_not_there_is_refused() {
 	let missing = tempfile::tempdir()
@@ -56,8 +52,6 @@ fn a_grant_naming_a_path_that_is_not_there_is_refused() {
 	);
 }
 
-// Applying the filter would restrict this test process; comparing the two
-// generated programs instead.
 #[test]
 fn an_empty_net_grant_allows_only_unix_sockets() {
 	let fields = |program: BpfProgram| -> Vec<(u16, u8, u8, u32)> {

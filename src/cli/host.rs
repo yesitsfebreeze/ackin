@@ -88,8 +88,6 @@ pub(crate) async fn launch(
 ) -> Result<ExitCode> {
 	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
 	if let Some((peer, _incoming)) = client::served(project).await {
-		// A proxy-less composition errors here; that's not a refusal, the
-		// local host below takes over instead.
 		if let Ok(launch) = client::bail(&peer, "proxy", request.clone()).await {
 			let status = spawn(launch).await?;
 			return Ok(ExitCode::from(
@@ -141,8 +139,6 @@ async fn spawn(launch: Value) -> Result<Value> {
 			command.env(k, v.as_str().unwrap_or_default());
 		}
 	}
-	// Dropping this without kill_on_drop would leave the agent running
-	// unproxied.
 	command.kill_on_drop(true);
 	let status = command
 		.status()
@@ -185,9 +181,7 @@ impl Backend {
 	}
 }
 
-/// One task per message: sequential processing would block a cancellation
-/// notification behind the call it cancels. Never print to stdout here — it
-/// carries the protocol.
+/// Never print to stdout here: it carries the protocol.
 async fn stdio(backend: Backend) -> Result<Value> {
 	use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 	let (replies, mut pending) =
@@ -206,7 +200,6 @@ async fn stdio(backend: Backend) -> Result<Value> {
 		if line.trim().is_empty() {
 			continue;
 		}
-		// Without this a long session keeps every finished task alive.
 		while serving.try_join_next().is_some() {}
 		let (backend, replies) = (backend.clone(), replies.clone());
 		serving.spawn(async move {
@@ -222,8 +215,6 @@ async fn stdio(backend: Backend) -> Result<Value> {
 	Ok(Value::Null)
 }
 
-/// Returns None (no reply sent) for a notification or an unparseable line,
-/// not just for a successful call: only a request with an id owes an error.
 fn mcp_bridge_reply(line: &str, result: Result<Value>) -> Option<Value> {
 	match result {
 		Ok(reply) => (!reply.is_null()).then_some(reply),
@@ -294,7 +285,6 @@ pub(crate) async fn verify(project: &Project, cartridge: Option<&str>) -> Result
 #[path = "../../.cartridge/tests/unit/stdio.rs"]
 mod stdio_tests;
 
-// No Windows counterpart: ctrl_c/ctrl_close carry no foreground-held signal.
 #[cfg(all(test, unix))]
 #[path = "../../.cartridge/tests/unit/src/cli/signals.rs"]
 mod signal_tests;
