@@ -921,10 +921,17 @@ async fn handle(ctx: Ctx, access: Access, request: Request, apply: Arc<Mutex<Opt
 			if let Err(error) = ctx.validate(&name, &params["data"]) {
 				return request.reply(Err(rpc::Error::new(rpc::INVALID_PARAMS, error)));
 			}
-			match TRACE
-				.scope(trace_of(&params), listener(params["data"].clone()))
-				.await
-			{
+			// Off the workers: a listener takes its node's Lua lock synchronously,
+			// and a lock held by a handler waiting on another cartridge would park
+			// the worker whose queue carries that very reply.
+			let (trace, data) = (trace_of(&params), params["data"].clone());
+			let runtime = tokio::runtime::Handle::current();
+			let outcome = tokio::task::spawn_blocking(move || {
+				runtime.block_on(TRACE.scope(trace, listener(data)))
+			})
+			.await
+			.unwrap_or_else(|error| Err(format!("listener panicked: {error}")));
+			match outcome {
 				Ok(answer) => request.reply(Ok(answer)),
 				Err(error) => {
 					ctx.publish_kind("error", "error", json!({ "event": name, "error": error }));
