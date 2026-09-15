@@ -89,15 +89,15 @@ fn dispatch() -> ExitCode {
 			ask,
 		} => trust::run(path.as_deref(), revoke, list, ask),
 		command => {
+			if yolo {
+				std::env::set_var(cartridge::settings::YOLO_ENV, "1");
+			}
 			let project = project::locate(cli.dir)?;
 			// Still single threaded: a runtime's workers would race this `setenv`.
 			if matches!(command, Command::Launch { .. }) {
 				if let Some(key) = host::minted_proxy_key()? {
 					std::env::set_var(host::PROXY_KEY_ENV, key);
 				}
-			}
-			if yolo {
-				std::env::set_var(cartridge::settings::YOLO_ENV, "1");
 			}
 			let runtime = tokio::runtime::Runtime::new()?;
 			let outcome = runtime.block_on(run(command, &project));

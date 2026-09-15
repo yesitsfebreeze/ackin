@@ -70,13 +70,70 @@ pub(crate) fn run(path: Option<&Path>, revoke: bool, list: bool, ask: bool) -> R
 
 /// Whether every file under `dir` is trusted, asking on the terminal when one
 /// is not. The question goes to stderr so a command's stdout stays its answer;
-/// without a terminal nothing is asked and the answer is no.
+/// without a terminal nothing is asked and the answer is no. Under `--yolo` the
+/// same question is the mode's one gate: a terminal is asked once to trust any
+/// untrusted files and let everything run without further prompts, and Enter
+/// accepts; without a terminal only already-trusted projects proceed.
 pub(crate) fn ask(dir: &Path) -> Result<bool> {
 	let pending = trust::pending(dir)?;
+	let terminal = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+	if cartridge::settings::yolo() {
+		if !terminal {
+			return Ok(pending.is_empty());
+		}
+		let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
+		let mut err = std::io::stderr();
+		if !pending.is_empty() {
+			let _ = writeln!(
+				err,
+				"{} has {} untrusted or changed file(s):",
+				project.display(),
+				pending.len()
+			);
+			for file in pending.iter().take(10) {
+				let _ = writeln!(
+					err,
+					"  {}",
+					file.strip_prefix(&project).unwrap_or(file).display()
+				);
+			}
+			if pending.len() > 10 {
+				let _ = writeln!(err, "  … and {} more", pending.len() - 10);
+			}
+			let _ = writeln!(err);
+		}
+		// One confirmation for the whole launch: the files it will run, and
+		// the mode that lets them do anything.
+		let _ = write!(
+			err,
+			"YOLO mode: trust {} and let every cartridge and tool run without further prompts? [Y/n] ",
+			project.display()
+		);
+		let _ = err.flush();
+		let mut answer = String::new();
+		std::io::stdin()
+			.lock()
+			.read_line(&mut answer)
+			.map_err(|e| Error::file("stdin", e))?;
+		if !matches!(
+			answer.trim().to_ascii_lowercase().as_str(),
+			"" | "y" | "yes"
+		) {
+			return Ok(false);
+		}
+		let record = trust::record(&project)?;
+		let _ = writeln!(
+			err,
+			"YOLO: trusted {} and running with everything allowed ({} files)",
+			record.project.display(),
+			record.files.len()
+		);
+		return Ok(true);
+	}
 	if pending.is_empty() {
 		return Ok(true);
 	}
-	if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+	if !terminal {
 		return Ok(false);
 	}
 	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;

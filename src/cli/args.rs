@@ -16,8 +16,8 @@ pub(crate) struct Cli {
 	/// Cartridge root: entry paths in init.lua resolve against it (default: the project)
 	#[arg(long, global = true)]
 	pub(crate) dir: Option<PathBuf>,
-	/// Automatic execution: bypass tool policy and skip resolver provenance
-	/// recording, for the agent this command runs or launches
+	/// Automatic execution: trust the project's files, bypass tool policy and
+	/// skip resolver provenance recording — one confirmation, Enter accepts
 	#[arg(long, global = true)]
 	pub(crate) yolo: bool,
 	#[command(subcommand)]

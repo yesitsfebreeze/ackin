@@ -99,6 +99,10 @@ you review it and run `cartridge trust`.
 `cartridge mcp` and `cartridge launch` start the descriptor and hand this terminal
 to the cartridges that listen to `mcp` and `proxy`.
 
+`cartridge run|launch|daemon --yolo` asks once to trust the project's files and
+let every cartridge and tool run without further prompts; Enter accepts, and the
+trust is recorded so only changed files ask again.
+
 Ctrl-C or a terminate stops a foreground command and every cartridge it
 started, with the programs those cartridges spawned; while `launch`'s agent
 runs, Ctrl-C is the agent's.
