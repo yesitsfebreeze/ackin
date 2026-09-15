@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use super::*;
 
 /// A mode and an owner are POSIX facts. What the directory guarantees on

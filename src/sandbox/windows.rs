@@ -282,7 +282,7 @@ fn ace(path: &Path, sid: PSID, rights: u32, grant: bool) -> crate::Result<()> {
 			std::io::Error::from_raw_os_error(read as i32),
 		));
 	}
-	let mut entry = EXPLICIT_ACCESS_W {
+	let entry = EXPLICIT_ACCESS_W {
 		grfAccessPermissions: rights,
 		grfAccessMode: if grant { GRANT_ACCESS } else { REVOKE_ACCESS },
 		grfInheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT,
@@ -297,7 +297,7 @@ fn ace(path: &Path, sid: PSID, rights: u32, grant: bool) -> crate::Result<()> {
 	let mut merged: *mut ACL = std::ptr::null_mut();
 	// SAFETY: one entry is described, the old DACL came from the read above,
 	// and `merged` is `LocalAlloc`ed for the caller to free.
-	let built = unsafe { SetEntriesInAclW(1, &mut entry, dacl, &mut merged) };
+	let built = unsafe { SetEntriesInAclW(1, &entry, dacl, &mut merged) };
 	if built != 0 {
 		// SAFETY: the descriptor was allocated by `GetNamedSecurityInfoW`.
 		unsafe { LocalFree(descriptor as HLOCAL) };

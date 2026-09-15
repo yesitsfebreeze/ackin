@@ -1044,7 +1044,7 @@ async fn one_cartridge_cannot_see_anothers_globals() {
 
 /// Stopping a cartridge kills the whole group it leads, so a program it
 /// started does not outlive it.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_cartridge_takes_its_programs_along() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1158,13 +1158,13 @@ async fn a_terminated_mcp_exits_with_its_input_still_open() {
 /// Whether a process id names a live process. The group guarantee below is
 /// made by a process group on Unix and a job object on Windows, and is worth
 /// asserting on both.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn alive(pid: u32) -> bool {
 	// SAFETY: signal 0 only checks that the process exists.
 	unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn kill_now(pid: u32) {
 	// SAFETY: the pid was reported by a child of this test.
 	unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
@@ -1172,9 +1172,9 @@ fn kill_now(pid: u32) {
 
 #[cfg(windows)]
 fn alive(pid: u32) -> bool {
-	use windows_sys::Win32::Foundation::CloseHandle;
+	use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
 	use windows_sys::Win32::System::Threading::{
-		GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
+		GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 	};
 	// SAFETY: a query-only handle, closed below; a dead or unknown pid opens
 	// nothing. A pid that still has an exit code is a handle, not a process.
