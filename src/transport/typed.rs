@@ -902,7 +902,6 @@ pub async fn bind(endpoint: &Endpoint) -> Result<BindOutcome, BindError> {
 /// its own.
 #[cfg(windows)]
 fn adopt_handed(name: &str) -> Result<Option<LocalListener>, BindError> {
-	use std::os::windows::io::FromRawHandle;
 	let Some(handed) = std::env::var_os(PIPE_HANDLES_ENV) else {
 		return Ok(None);
 	};
