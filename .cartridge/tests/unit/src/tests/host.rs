@@ -64,6 +64,23 @@ fn status(host: &Host, id: &str) -> crate::host::Status {
 	host.status().into_iter().find(|s| s.id == id).unwrap()
 }
 
+/// The status of a cartridge that is expected to be running. A cartridge that
+/// did not come up carries why, and an assertion reading only `Failed` sends
+/// the reader off to find it.
+fn active(host: &Host, id: &str) -> crate::host::Status {
+	let status = status(host, id);
+	assert_eq!(
+		status.state,
+		State::Active,
+		"{id} is not running: {}",
+		status
+			.error
+			.clone()
+			.unwrap_or_else(|| "no reason given".into())
+	);
+	status
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cartridge_answers_the_events_it_listens_to() {
 	let dir = tempfile::tempdir().unwrap();
@@ -79,8 +96,8 @@ async fn a_cartridge_answers_the_events_it_listens_to() {
 	);
 	descriptor(dir.path(), &["welcome", "greeter"]);
 	let host = boot(dir.path()).await;
-	assert_eq!(status(&host, "greeter").state, State::Active);
-	assert_eq!(status(&host, "welcome").state, State::Active);
+	active(&host, "greeter");
+	active(&host, "welcome");
 	assert_eq!(
 		host.bail("welcome", json!({"name": "you"})).await.unwrap(),
 		Some(json!("hello you"))
@@ -180,7 +197,7 @@ async fn an_event_declared_twice_fails_the_later_entry() {
 	);
 	descriptor(dir.path(), &["greeter", "twin"]);
 	let host = boot(dir.path()).await;
-	assert_eq!(status(&host, "greeter").state, State::Active);
+	active(&host, "greeter");
 	let twin = status(&host, "twin");
 	assert_eq!(twin.state, State::Failed);
 	assert!(twin
@@ -368,7 +385,7 @@ async fn a_waiting_cartridge_starts_when_the_descriptor_adds_its_listener() {
 	descriptor(dir.path(), &["greeter", "welcome"]);
 	host.reconcile().await.unwrap();
 	assert_eq!(status(&host, "shadow").state, State::Disabled);
-	assert_eq!(status(&host, "welcome").state, State::Active);
+	active(&host, "welcome");
 	assert_eq!(
 		host.bail("welcome", json!({"name": "late"})).await.unwrap(),
 		Some(json!("hello late"))
@@ -517,7 +534,7 @@ async fn a_restart_keeps_its_dependents_working() {
 	);
 	trust(dir.path());
 	host.replace("greeter").await.unwrap();
-	assert_eq!(status(&host, "welcome").state, State::Active);
+	active(&host, "welcome");
 	assert_eq!(
 		host.bail("welcome", json!({"name": "b"})).await.unwrap(),
 		Some(json!("hi b"))
@@ -620,7 +637,7 @@ async fn a_glob_in_needs_names_what_the_others_listen_to() {
 	);
 	descriptor(dir.path(), &["greeter", "tools", "user"]);
 	let host = boot(dir.path()).await;
-	assert_eq!(status(&host, "user").state, State::Active);
+	active(&host, "user");
 	assert_eq!(
 		host.bail("which", json!(null)).await.unwrap(),
 		Some(json!(["tool.a", "tool.b", "greet"]))
@@ -929,7 +946,7 @@ async fn a_spinning_handler_is_refused_and_its_node_keeps_serving() {
 		host.bail("ping", json!(null)).await.unwrap(),
 		Some(json!("pong"))
 	);
-	assert_eq!(status(&host, "spin").state, State::Active);
+	active(&host, "spin");
 	host.stop().await;
 }
 

@@ -49,6 +49,8 @@ use windows_sys::Win32::Security::{
 	DeriveCapabilitySidsFromName, FreeSid, ACL, DACL_SECURITY_INFORMATION, PSID,
 	SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
 };
+#[cfg(test)]
+use windows_sys::Win32::Storage::FileSystem::{FILE_EXECUTE, FILE_WRITE_DATA};
 use windows_sys::Win32::Storage::FileSystem::{
 	FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
 };
@@ -591,8 +593,25 @@ mod tests {
 				.map(|(_, rights)| *rights)
 				.expect("every policy path is granted")
 		};
-		assert_eq!(of("c:\\r") & FILE_GENERIC_EXECUTE, 0);
-		assert_ne!(of("c:\\w") & FILE_GENERIC_READ, 0);
-		assert_ne!(of("c:\\x") & FILE_GENERIC_EXECUTE, 0);
+		// FILE_GENERIC_READ and FILE_GENERIC_EXECUTE share every standard right
+		// and differ only in FILE_EXECUTE, so that is what distinguishes them.
+		assert_eq!(
+			of("c:\\r") & FILE_EXECUTE,
+			0,
+			"a read grant is not an exec grant"
+		);
+		assert_eq!(
+			of("c:\\r") & FILE_WRITE_DATA,
+			0,
+			"a read grant is not a write grant"
+		);
+		assert_ne!(of("c:\\w") & FILE_WRITE_DATA, 0, "a write grant writes");
+		assert_ne!(of("c:\\w") & FILE_GENERIC_READ, 0, "a write is also a read");
+		assert_eq!(
+			of("c:\\w") & FILE_EXECUTE,
+			0,
+			"a write grant is not an exec grant"
+		);
+		assert_ne!(of("c:\\x") & FILE_EXECUTE, 0, "an exec grant executes");
 	}
 }

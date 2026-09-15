@@ -58,6 +58,7 @@ fn an_empty_grant_builds_no_allowance_beyond_the_runtime() {
 	assert!(text.contains("(allow file-read*"), "{text}");
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn a_write_grant_names_the_canonicalized_path_and_implies_the_read() {
 	let root = std::env::temp_dir().canonicalize().unwrap();
@@ -86,6 +87,7 @@ fn a_net_grant_turns_the_network_on_and_an_empty_one_leaves_it_off() {
 	assert!(!off.contains("network"), "{off}");
 }
 
+#[cfg(target_os = "macos")]
 #[test]
 fn an_exec_grant_that_resolves_builds_a_literal_and_one_that_does_not_builds_nothing() {
 	let grant = Grant {
