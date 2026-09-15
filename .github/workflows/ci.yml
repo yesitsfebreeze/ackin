@@ -1,5 +1,6 @@
-# The base builds and its tests pass. Linux runners wait for the Landlock
-# sandbox; the base refuses to run nodes where it cannot confine them.
+# The base builds and its tests pass on every platform it claims to confine
+# nodes on. A runner is added here only once that platform has a sandbox
+# backend: the base refuses to run nodes where it cannot confine them.
 name: ci
 
 on:
@@ -9,13 +10,25 @@ on:
 
 jobs:
   test:
-    runs-on: macos-latest
+    strategy:
+      # Every platform reports; one failing does not hide the others.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Windows builds and most of its suite passes, but a confined node cannot
+    # yet create its own pipe: an AppContainer redirects the named-object
+    # namespace, so the name the host expects is not the one the node can make.
+    # Reported, not gating, until that is resolved — then this line goes.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # One platform checks formatting; it is the same source everywhere.
       - run: cargo fmt --all --check
+        if: matrix.os == 'macos-latest'
       - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace

@@ -181,14 +181,22 @@ fn a_root_that_does_not_exist_yet_tags_the_same_from_every_spelling() {
 	);
 }
 
+#[cfg(unix)]
 #[test]
 fn the_tag_is_the_same_before_and_after_the_root_is_created() {
 	let tmp = tempfile::tempdir().unwrap();
-	// Not canonicalized: on macOS the temp root is reached through a symlink.
-	let dir = tmp.path().join("store");
+	// The point is a root whose spelling differs from its canonical form.
+	// macOS hands one over for free — its temp root is reached through a
+	// symlink — and Linux does not, so the test makes its own rather than
+	// resting on a property one platform happens to have.
+	let real = tmp.path().join("real");
+	std::fs::create_dir_all(&real).unwrap();
+	let through = tmp.path().join("link");
+	std::os::unix::fs::symlink(&real, &through).unwrap();
+	let dir = through.join("store");
 	assert_ne!(
-		tmp.path(),
-		std::fs::canonicalize(tmp.path()).unwrap(),
+		through,
+		std::fs::canonicalize(&through).unwrap(),
 		"this test needs a root whose spelling differs from its canonical form"
 	);
 

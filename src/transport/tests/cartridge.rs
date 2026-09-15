@@ -17,7 +17,7 @@ async fn start(path: &std::path::Path, apply: Apply) -> Running {
 }
 
 async fn host(path: &std::path::Path) -> Peer {
-	let adapter = crate::transport::typed::connect(&Endpoint::Unix(path.to_owned()))
+	let adapter = crate::transport::typed::connect(&Endpoint::local(path))
 		.await
 		.unwrap();
 	let (peer, _incoming) = Peer::spawn(adapter, None);
@@ -162,7 +162,7 @@ async fn an_undeclared_event_or_a_bad_payload_is_refused_before_sending() {
 
 /// A raw connection to `a` with `b`'s token, bypassing every sender-side check.
 async fn as_b(dir: &std::path::Path) -> Peer {
-	let adapter = crate::transport::typed::connect(&Endpoint::Unix(dir.join("a.sock")))
+	let adapter = crate::transport::typed::connect(&Endpoint::local(&dir.join("a.sock")))
 		.await
 		.unwrap();
 	let (peer, _incoming) = Peer::spawn(adapter, None);
@@ -307,7 +307,7 @@ async fn a_peer_token_sends_events_and_nothing_else() {
 #[tokio::test]
 async fn an_unknown_token_is_refused_and_disconnected() {
 	let (dir, _a, _b, _) = pair().await;
-	let adapter = crate::transport::typed::connect(&Endpoint::Unix(dir.path().join("a.sock")))
+	let adapter = crate::transport::typed::connect(&Endpoint::local(&dir.path().join("a.sock")))
 		.await
 		.unwrap();
 	let (peer, _incoming) = Peer::spawn(adapter, None);

@@ -382,8 +382,7 @@ pub(crate) fn install(dir: &Path, chosen: &[Candidate]) -> Result<Vec<(String, P
 						}
 						Err(_) => {
 							let relative = relative(&absolute(dir), &target);
-							std::os::unix::fs::symlink(&relative, &place)
-								.map_err(|e| Error::file(&place, e))?;
+							link(&relative, &place, &target)?;
 							println!("linked {} -> {}", place.display(), relative.display());
 						}
 					}
@@ -393,6 +392,37 @@ pub(crate) fn install(dir: &Path, chosen: &[Candidate]) -> Result<Vec<(String, P
 		installed.push((c.name.clone(), place));
 	}
 	Ok(installed)
+}
+
+/// Link `place` at `original`. A cartridge is installed by a link on every
+/// platform, so that what a project holds is a name for the cartridge rather
+/// than a copy of it that can drift.
+///
+/// Windows needs the symlink privilege for this, which a user has under
+/// Developer Mode and otherwise does not. There is no unprivileged link with
+/// the same meaning — a junction is not relative and not a file — so the
+/// refusal says what to turn on rather than quietly installing a copy that
+/// would stop tracking the cartridge it came from.
+fn link(original: &Path, place: &Path, target: &Path) -> Result<()> {
+	#[cfg(unix)]
+	{
+		let _ = target;
+		std::os::unix::fs::symlink(original, place).map_err(|e| Error::file(place, e))
+	}
+	#[cfg(windows)]
+	{
+		let made = match target.is_dir() {
+			true => std::os::windows::fs::symlink_dir(original, place),
+			false => std::os::windows::fs::symlink_file(original, place),
+		};
+		made.map_err(|e| {
+			Error::Argument(format!(
+				"{}: {e}. Linking a cartridge needs the symbolic link privilege, \
+				 which Developer Mode grants.",
+				place.display()
+			))
+		})
+	}
 }
 
 /// Write the descriptor that names what was installed. Returns one line per
@@ -644,9 +674,9 @@ fn answer(id: &str, question: &Value, default: &Value) -> Result<Value> {
 /// whether it is healthy here, and the answers are printed one per line.
 pub(crate) async fn doctor(project: &Project) -> Result<ExitCode> {
 	let host = super::host::host(project, None)?;
-	let composed = host
-		.entries()
-		.map_err(|e| Error::Descriptor(format!("{}: {e}", project.descriptor.join(INIT).display())))?;
+	let composed = host.entries().map_err(|e| {
+		Error::Descriptor(format!("{}: {e}", project.descriptor.join(INIT).display()))
+	})?;
 	let mut asks = Vec::new();
 	let mut lines = Vec::new();
 	for entry in composed.iter().filter(|e| !e.disabled) {

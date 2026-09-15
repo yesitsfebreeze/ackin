@@ -147,7 +147,11 @@ impl Host {
 	/// `${config.<key>}`, a settled config value; a relative config value is
 	/// relative to the project root, where cartridges run.
 	fn expand_grant(&self, grant: &Grant, config: &serde_json::Value) -> Result<Grant> {
-		let project = self.descriptor.parent().unwrap_or(&self.descriptor).to_path_buf();
+		let project = self
+			.descriptor
+			.parent()
+			.unwrap_or(&self.descriptor)
+			.to_path_buf();
 		let expand = |path: &String| -> Result<String> {
 			if let Some(key) = path
 				.strip_prefix("${config.")

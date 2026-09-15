@@ -318,8 +318,9 @@ fn adapter_err_from_codec(e: CodecError) -> AdapterError {
 
 // ==== [local] ====
 
+use std::path::Path;
 #[cfg(unix)]
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
 pub enum Endpoint {
@@ -327,6 +328,28 @@ pub enum Endpoint {
 	Unix(PathBuf),
 	#[cfg(windows)]
 	NamedPipe(String),
+}
+
+impl Endpoint {
+	/// The local endpoint a path names, in whatever this platform offers. The
+	/// path *is* the identity: a base and a caller holding the same path derive
+	/// the same endpoint, so nothing has to be published for one to find the
+	/// other and there is no link on disk to keep true.
+	///
+	/// Windows has no socket in the filesystem, so the same path becomes a pipe
+	/// name through the same tag the rest of the base addresses runs by. It is
+	/// derived, never looked up: two spellings of one path are one endpoint,
+	/// and a path that does not exist yet still names its endpoint.
+	pub fn local(path: &Path) -> Self {
+		#[cfg(unix)]
+		{
+			Endpoint::Unix(path.to_path_buf())
+		}
+		#[cfg(windows)]
+		{
+			Endpoint::NamedPipe(format!(r"\\.\pipe\cartridge-{}", path_tag(path)))
+		}
+	}
 }
 
 // FNV-1a over the canonical path: stable across processes, unlike DefaultHasher.

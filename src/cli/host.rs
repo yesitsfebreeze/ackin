@@ -27,9 +27,22 @@ fn stop_on_signals(
 	foreground: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<()> {
 	use std::sync::atomic::Ordering;
-	use tokio::signal::unix::{signal, SignalKind};
-	let mut interrupt = signal(SignalKind::interrupt())?;
-	let mut terminate = signal(SignalKind::terminate())?;
+	// Two ways to be asked to stop, and the same answer to each on every
+	// platform: one a person types at a terminal a foreground program may be
+	// holding, and one the system sends that nothing gets to hold.
+	#[cfg(unix)]
+	let (mut interrupt, mut terminate) = {
+		use tokio::signal::unix::{signal, SignalKind};
+		(
+			signal(SignalKind::interrupt())?,
+			signal(SignalKind::terminate())?,
+		)
+	};
+	#[cfg(windows)]
+	let (mut interrupt, mut terminate) = {
+		use tokio::signal::windows::{ctrl_c, ctrl_close};
+		(ctrl_c()?, ctrl_close()?)
+	};
 	tokio::spawn(async move {
 		loop {
 			tokio::select! {
@@ -278,6 +291,8 @@ pub(crate) async fn verify(project: &Project, cartridge: Option<&str>) -> Result
 #[path = "../../.cartridge/tests/unit/stdio.rs"]
 mod stdio_tests;
 
-#[cfg(test)]
+// Signals are POSIX. What this covers — an interrupt stops the base unless a
+// program holds the terminal — has no counterpart to raise on Windows.
+#[cfg(all(test, unix))]
 #[path = "../../.cartridge/tests/unit/src/cli/signals.rs"]
 mod signal_tests;

@@ -41,6 +41,8 @@ use crate::loader::Grant;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "windows")]
+mod windows;
 
 /// The operating-system policy launcher.
 #[cfg(target_os = "macos")]
@@ -370,7 +372,12 @@ pub fn command(
 		let _ = binary;
 		linux::command(cmd, grant, root, sockets)
 	}
-	#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+	#[cfg(target_os = "windows")]
+	{
+		let _ = binary;
+		windows::command(cmd, grant, root, sockets)
+	}
+	#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 	{
 		let _ = (binary, cmd, grant, root, sockets);
 		Err(std::io::Error::new(
@@ -387,11 +394,15 @@ pub fn confine(policy: &str, cmd: &[String]) -> crate::Result<std::convert::Infa
 	{
 		linux::confine(policy, cmd)
 	}
-	#[cfg(not(target_os = "linux"))]
+	#[cfg(target_os = "windows")]
+	{
+		windows::confine(policy, cmd)
+	}
+	#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 	{
 		let _ = (policy, cmd);
 		Err(crate::Error::Argument(
-			"__confine is the Linux trampoline; this platform confines at spawn".into(),
+			"__confine is the Linux and Windows trampoline; this platform confines at spawn".into(),
 		))
 	}
 }

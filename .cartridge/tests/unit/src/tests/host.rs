@@ -64,6 +64,23 @@ fn status(host: &Host, id: &str) -> crate::host::Status {
 	host.status().into_iter().find(|s| s.id == id).unwrap()
 }
 
+/// The status of a cartridge that is expected to be running. A cartridge that
+/// did not come up carries why, and an assertion reading only `Failed` sends
+/// the reader off to find it.
+fn active(host: &Host, id: &str) -> crate::host::Status {
+	let status = status(host, id);
+	assert_eq!(
+		status.state,
+		State::Active,
+		"{id} is not running: {}",
+		status
+			.error
+			.clone()
+			.unwrap_or_else(|| "no reason given".into())
+	);
+	status
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cartridge_answers_the_events_it_listens_to() {
 	let dir = tempfile::tempdir().unwrap();
@@ -79,8 +96,8 @@ async fn a_cartridge_answers_the_events_it_listens_to() {
 	);
 	descriptor(dir.path(), &["welcome", "greeter"]);
 	let host = boot(dir.path()).await;
-	assert_eq!(status(&host, "greeter").state, State::Active);
-	assert_eq!(status(&host, "welcome").state, State::Active);
+	active(&host, "greeter");
+	active(&host, "welcome");
 	assert_eq!(
 		host.bail("welcome", json!({"name": "you"})).await.unwrap(),
 		Some(json!("hello you"))
@@ -180,7 +197,7 @@ async fn an_event_declared_twice_fails_the_later_entry() {
 	);
 	descriptor(dir.path(), &["greeter", "twin"]);
 	let host = boot(dir.path()).await;
-	assert_eq!(status(&host, "greeter").state, State::Active);
+	active(&host, "greeter");
 	let twin = status(&host, "twin");
 	assert_eq!(twin.state, State::Failed);
 	assert!(twin
@@ -368,7 +385,7 @@ async fn a_waiting_cartridge_starts_when_the_descriptor_adds_its_listener() {
 	descriptor(dir.path(), &["greeter", "welcome"]);
 	host.reconcile().await.unwrap();
 	assert_eq!(status(&host, "shadow").state, State::Disabled);
-	assert_eq!(status(&host, "welcome").state, State::Active);
+	active(&host, "welcome");
 	assert_eq!(
 		host.bail("welcome", json!({"name": "late"})).await.unwrap(),
 		Some(json!("hello late"))
@@ -517,7 +534,7 @@ async fn a_restart_keeps_its_dependents_working() {
 	);
 	trust(dir.path());
 	host.replace("greeter").await.unwrap();
-	assert_eq!(status(&host, "welcome").state, State::Active);
+	active(&host, "welcome");
 	assert_eq!(
 		host.bail("welcome", json!({"name": "b"})).await.unwrap(),
 		Some(json!("hi b"))
@@ -620,7 +637,7 @@ async fn a_glob_in_needs_names_what_the_others_listen_to() {
 	);
 	descriptor(dir.path(), &["greeter", "tools", "user"]);
 	let host = boot(dir.path()).await;
-	assert_eq!(status(&host, "user").state, State::Active);
+	active(&host, "user");
 	assert_eq!(
 		host.bail("which", json!(null)).await.unwrap(),
 		Some(json!(["tool.a", "tool.b", "greet"]))
@@ -929,7 +946,7 @@ async fn a_spinning_handler_is_refused_and_its_node_keeps_serving() {
 		host.bail("ping", json!(null)).await.unwrap(),
 		Some(json!("pong"))
 	);
-	assert_eq!(status(&host, "spin").state, State::Active);
+	active(&host, "spin");
 	host.stop().await;
 }
 
@@ -1044,7 +1061,7 @@ async fn one_cartridge_cannot_see_anothers_globals() {
 
 /// Stopping a cartridge kills the whole group it leads, so a program it
 /// started does not outlive it.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_cartridge_takes_its_programs_along() {
 	let dir = tempfile::tempdir().unwrap();
@@ -1075,15 +1092,13 @@ cartridge.listen("pid", function() return pid end)"#,
 	}
 	assert!(pid > 0, "the program never reported its child");
 	host.stop().await;
-	let pid = pid as libc::pid_t;
-	// SAFETY: signal 0 only checks that the process exists.
+	let pid = pid as u32;
 	let gone = (0..100).any(|_| {
 		std::thread::sleep(Duration::from_millis(20));
-		let alive = unsafe { libc::kill(pid, 0) };
-		alive != 0
+		!alive(pid)
 	});
 	if !gone {
-		unsafe { libc::kill(pid, libc::SIGKILL) };
+		kill_now(pid);
 	}
 	assert!(gone, "a program's child outlived its cartridge");
 }
@@ -1155,4 +1170,53 @@ async fn a_terminated_mcp_exits_with_its_input_still_open() {
 	let exited = tokio::time::timeout(Duration::from_secs(20), mcp.wait()).await;
 	drop(input);
 	assert!(exited.is_ok(), "mcp held its exit on an open stdin");
+}
+
+/// Whether a process id names a live process. The group guarantee below is
+/// made by a process group on Unix and a job object on Windows, and is worth
+/// asserting on both.
+#[cfg(target_os = "macos")]
+fn alive(pid: u32) -> bool {
+	// SAFETY: signal 0 only checks that the process exists.
+	unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(target_os = "macos")]
+fn kill_now(pid: u32) {
+	// SAFETY: the pid was reported by a child of this test.
+	unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+}
+
+#[cfg(windows)]
+fn alive(pid: u32) -> bool {
+	use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+	use windows_sys::Win32::System::Threading::{
+		GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+	};
+	// SAFETY: a query-only handle, closed below; a dead or unknown pid opens
+	// nothing. A pid that still has an exit code is a handle, not a process.
+	unsafe {
+		let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+		if handle.is_null() {
+			return false;
+		}
+		let mut code = 0u32;
+		let read = GetExitCodeProcess(handle, &mut code);
+		CloseHandle(handle);
+		read != 0 && code == STILL_ACTIVE as u32
+	}
+}
+
+#[cfg(windows)]
+fn kill_now(pid: u32) {
+	use windows_sys::Win32::Foundation::CloseHandle;
+	use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+	// SAFETY: the pid was reported by a child of this test.
+	unsafe {
+		let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+		if !handle.is_null() {
+			TerminateProcess(handle, 1);
+			CloseHandle(handle);
+		}
+	}
 }

@@ -26,36 +26,66 @@ use super::Host;
 /// Create `dir` owner-only, and narrow it when found wider: every socket and
 /// token of a run lives in one of these.
 fn owner_only_dir(dir: &Path) -> Result<()> {
-	use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-	// SAFETY: `getuid` cannot fail and touches no memory.
-	let uid = unsafe { libc::getuid() };
-	std::fs::DirBuilder::new()
-		.recursive(true)
-		.mode(0o700)
-		.create(dir)
-		.map_err(|e| Error::file(dir, e))?;
+	let mut builder = std::fs::DirBuilder::new();
+	builder.recursive(true);
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::DirBuilderExt;
+		builder.mode(0o700);
+	}
+	builder.create(dir).map_err(|e| Error::file(dir, e))?;
+	// Never followed: a link standing in for the directory is a substitution,
+	// and what is asked of the name is asked of the name itself.
 	let meta = std::fs::symlink_metadata(dir).map_err(|e| Error::file(dir, e))?;
-	if !meta.is_dir() || meta.uid() != uid {
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::{MetadataExt, PermissionsExt};
+		// SAFETY: `getuid` cannot fail and touches no memory.
+		let uid = unsafe { libc::getuid() };
+		if !meta.is_dir() || meta.uid() != uid {
+			return Err(Error::Descriptor(format!(
+				"{} is not a directory owned by this user",
+				dir.display()
+			)));
+		}
+		if meta.permissions().mode() & 0o077 != 0 {
+			std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+				.map_err(|e| Error::file(dir, e))?;
+		}
+	}
+	// Windows has no mode to narrow and no uid to compare. The directory is
+	// under the user's own profile, which the system keeps private to them, so
+	// what is left to refuse is a name that is not the directory it claims.
+	#[cfg(windows)]
+	if !meta.is_dir() {
 		return Err(Error::Descriptor(format!(
 			"{} is not a directory owned by this user",
 			dir.display()
 		)));
 	}
-	if meta.permissions().mode() & 0o077 != 0 {
-		std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-			.map_err(|e| Error::file(dir, e))?;
-	}
 	Ok(())
 }
 
 /// The per-user directory every host of this user keeps its sockets in.
+///
+/// A unix socket's path is capped near 100 bytes by the address family, so the
+/// base is kept short and `XDG_RUNTIME_DIR` is only taken when it is short too.
+/// Windows sockets are pipe names, not paths, and its per-user directory is
+/// private to that user by the ACL the system puts on the profile.
 pub fn base() -> Result<PathBuf> {
-	// SAFETY: `getuid` cannot fail and touches no memory.
-	let uid = unsafe { libc::getuid() };
-	let base = std::env::var_os("XDG_RUNTIME_DIR")
+	#[cfg(unix)]
+	let base = {
+		// SAFETY: `getuid` cannot fail and touches no memory.
+		let uid = unsafe { libc::getuid() };
+		std::env::var_os("XDG_RUNTIME_DIR")
+			.map(|dir| PathBuf::from(dir).join("cartridge"))
+			.filter(|dir| dir.as_os_str().len() < 48)
+			.unwrap_or_else(|| PathBuf::from(format!("/tmp/cartridge-{uid}")))
+	};
+	#[cfg(windows)]
+	let base = std::env::var_os("LOCALAPPDATA")
 		.map(|dir| PathBuf::from(dir).join("cartridge"))
-		.filter(|dir| dir.as_os_str().len() < 48)
-		.unwrap_or_else(|| PathBuf::from(format!("/tmp/cartridge-{uid}")));
+		.ok_or_else(|| Error::Descriptor("LOCALAPPDATA names no directory".into()))?;
 	owner_only_dir(&base)?;
 	Ok(base)
 }
@@ -64,36 +94,27 @@ fn tag(descriptor: &Path) -> String {
 	crate::transport::typed::path_tag(descriptor)[..12].to_owned()
 }
 
-/// Where the command line finds the base serving `descriptor`: a link to its socket.
+/// Where the base serving `descriptor` listens. Derived, not published: the
+/// command line computes the same address from the same project.
 pub fn path(descriptor: &Path) -> Result<PathBuf> {
-	Ok(base()?.join(format!("{}.sock", tag(descriptor))))
+	Ok(run_dir(descriptor)?.join("host.sock"))
 }
 
 fn token_path(descriptor: &Path) -> Result<PathBuf> {
 	Ok(base()?.join(format!("{}.token", tag(descriptor))))
 }
 
-/// A directory for the cartridge sockets of one host run. Directories of runs
-/// whose process is gone are removed.
+/// The directory holding every socket of the base serving `descriptor`: its
+/// own and one per cartridge. Named for the project, not for the run, so the
+/// address of a base is a fact about the project rather than about which
+/// process happens to be serving it.
+///
+/// One directory per project also means one base per project, which is the
+/// rule anyway: the second one finds the address taken when it binds. A run
+/// that died leaves its sockets here, and `bind` reclaims the ones nothing
+/// answers on — which is what the process check this used to do was for.
 pub(crate) fn run_dir(descriptor: &Path) -> Result<PathBuf> {
-	let base = base()?;
-	let prefix = format!("{}-", tag(descriptor));
-	if let Ok(read) = std::fs::read_dir(&base) {
-		for entry in read.flatten() {
-			let name = entry.file_name().to_string_lossy().into_owned();
-			let Some(pid) = name
-				.strip_prefix(&prefix)
-				.and_then(|pid| pid.parse::<i32>().ok())
-			else {
-				continue;
-			};
-			// SAFETY: signal 0 only checks that the process exists.
-			if unsafe { libc::kill(pid, 0) } != 0 {
-				let _ = std::fs::remove_dir_all(entry.path());
-			}
-		}
-	}
-	let dir = base.join(format!("{prefix}{}", std::process::id()));
+	let dir = base()?.join(tag(descriptor));
 	owner_only_dir(&dir)?;
 	Ok(dir)
 }
@@ -114,11 +135,7 @@ pub(crate) fn file_name(id: &str) -> String {
 }
 
 pub(crate) async fn listen(path: &Path) -> Result<crate::transport::typed::LocalListener> {
-	match crate::transport::typed::bind(&crate::transport::typed::Endpoint::Unix(
-		path.to_path_buf(),
-	))
-	.await
-	{
+	match crate::transport::typed::bind(&crate::transport::typed::Endpoint::local(path)).await {
 		Ok(crate::transport::typed::BindOutcome::Bound(listener)) => Ok(listener),
 		Ok(crate::transport::typed::BindOutcome::AlreadyRunning) => Err(Error::Remote(format!(
 			"{} is already served",
@@ -143,17 +160,17 @@ pub(crate) async fn accept(
 /// Publish this base as the project's, for the command line, until asked to
 /// stop. Returns `Ok(false)` when another base already serves this project.
 pub async fn serve(host: Arc<Host>) -> Result<bool> {
-	let link = path(&host.descriptor)?;
 	let token = token_path(&host.descriptor)?;
-	if let Ok(existing) = std::fs::read_link(&link) {
-		if existing.exists() && existing != host.socket_path() {
-			return Ok(false);
-		}
-	}
-	let _ = std::fs::remove_file(&link);
-	std::os::unix::fs::symlink(host.socket_path(), &link).map_err(|e| Error::file(&link, e))?;
+	// Nothing is published to say where this base listens. Its address is
+	// derived from the descriptor, so a caller holding the project computes the
+	// same one; there is no link to write, to read back, or to leave stale.
+	//
+	// That also moves the refusal of a second base for one project: it is the
+	// bind in `listen` that finds the address taken and answers AlreadyRunning,
+	// before this runs. Reaching here means this base holds the address, so the
+	// `false` this returns for the caller's sake no longer occurs.
 	write_private(&token, host.host_token())?;
-	let _published = Published(vec![link, token]);
+	let _published = Published(vec![token]);
 	host.stopped().await;
 	Ok(true)
 }
@@ -171,14 +188,17 @@ impl Drop for Published {
 
 pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
 	use std::io::Write;
-	use std::os::unix::fs::OpenOptionsExt;
 	let _ = std::fs::remove_file(path);
-	let mut file = std::fs::OpenOptions::new()
-		.write(true)
-		.create_new(true)
-		.mode(0o600)
-		.open(path)
-		.map_err(|e| Error::file(path, e))?;
+	let mut options = std::fs::OpenOptions::new();
+	options.write(true).create_new(true);
+	// Windows has no mode to open with. The file is made inside the socket
+	// directory, which is under the user's own profile and private to them.
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::OpenOptionsExt;
+		options.mode(0o600);
+	}
+	let mut file = options.open(path).map_err(|e| Error::file(path, e))?;
 	file.write_all(text.as_bytes())
 		.map_err(|e| Error::file(path, e))
 }
@@ -367,13 +387,11 @@ pub(crate) async fn forward(mut events: broadcast::Receiver<Value>, peer: Peer) 
 
 /// A connection to the host serving `descriptor`.
 pub async fn client(descriptor: &Path) -> Result<(Peer, mpsc::Receiver<Incoming>)> {
-	let token = std::fs::read_to_string(token_path(descriptor)?).map_err(|e| Error::Unavailable {
-		key: "host".into(),
-		why: format!("no base serves {}: {e}", descriptor.display()),
-	})?;
-	let socket = std::fs::read_link(path(descriptor)?).map_err(|e| Error::Unavailable {
-		key: "host".into(),
-		why: format!("no base serves {}: {e}", descriptor.display()),
-	})?;
-	super::connect(&socket, token.trim()).await
+	let token =
+		std::fs::read_to_string(token_path(descriptor)?).map_err(|e| Error::Unavailable {
+			key: "host".into(),
+			why: format!("no base serves {}: {e}", descriptor.display()),
+		})?;
+	// The same derivation the base used to bind: the descriptor is the address.
+	super::connect(&path(descriptor)?, token.trim()).await
 }

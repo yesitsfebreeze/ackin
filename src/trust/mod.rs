@@ -51,16 +51,24 @@ fn store() -> Result<PathBuf> {
 }
 
 fn ensure_store() -> Result<PathBuf> {
-	use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 	let store = store()?;
-	std::fs::DirBuilder::new()
-		.recursive(true)
-		.mode(0o700)
-		.create(&store)
-		.map_err(|e| Error::file(&store, e))?;
-	// `DirBuilder` leaves an existing, wider store as it is.
-	std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700))
-		.map_err(|e| Error::file(&store, e))?;
+	let mut builder = std::fs::DirBuilder::new();
+	builder.recursive(true);
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::DirBuilderExt;
+		builder.mode(0o700);
+	}
+	builder.create(&store).map_err(|e| Error::file(&store, e))?;
+	// `DirBuilder` leaves an existing, wider store as it is. Windows has no
+	// mode to narrow: the store lives under the user's own profile, which the
+	// system already keeps private to them, and no wider parent is created here.
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700))
+			.map_err(|e| Error::file(&store, e))?;
+	}
 	Ok(store)
 }
 
