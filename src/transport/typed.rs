@@ -1045,28 +1045,46 @@ impl LocalListener {
 		}
 		#[cfg(windows)]
 		{
-			let server = self.current.take().expect("listener uninitialised");
-			server.connect().await?;
-			// Ready the next instance so a fast reconnect does not race this
-			// accept. A node serves what it was handed and makes nothing; when
-			// it runs out it says so, because the alternative is a silently
-			// deaf listener.
+			// A process that makes its own instances has exactly one listening
+			// at a time, so there is one to wait on and the next is made behind
+			// it.
 			if let Some(security) = self.security.as_ref() {
+				let server = self.current.take().expect("listener uninitialised");
+				server.connect().await?;
 				self.current = Some(create_pipe_instance(&self.pipe_name, security, false)?);
-			} else {
-				self.current = Some(self.handed.pop().ok_or_else(|| {
-					std::io::Error::new(
+				return Ok(LocalAdapter::NamedPipe(NamedPipeAdapter::from_server(
+					server,
+				)));
+			}
+			// A node's instances were all made before it started and are all
+			// listening at once, so a client lands on whichever the kernel
+			// picks. Waiting on one of them would be waiting for a client to
+			// guess it: every idle instance is waited on together, and the one
+			// that a client actually reached is the one that answers.
+			let index = {
+				let pending: Vec<_> = self
+					.handed
+					.iter()
+					.map(|server| Box::pin(server.connect()))
+					.collect();
+				if pending.is_empty() {
+					return Err(std::io::Error::new(
 						std::io::ErrorKind::OutOfMemory,
 						format!(
 							"{}: every pipe instance this node was handed is in use; \
 							 it cannot make more",
 							self.pipe_name
 						),
-					)
-				})?);
-			}
+					));
+				}
+				let (connected, index, rest) = futures::future::select_all(pending).await;
+				// The rest borrow `handed`, and it is about to be taken from.
+				drop(rest);
+				connected?;
+				index
+			};
 			Ok(LocalAdapter::NamedPipe(NamedPipeAdapter::from_server(
-				server,
+				self.handed.remove(index),
 			)))
 		}
 	}
