@@ -302,7 +302,14 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		});
 	}
 	let (manifest, entry, entry_bytes) = Cartridge::read_verified(&path)?;
-	let sources = vec![path.clone(), entry.clone()];
+	let mut sources = vec![path.clone(), entry.clone()];
+	if let Some(root) = entry.parent() {
+		sources.extend(
+			super::native_candidates(root, &manifest.name)
+				.into_iter()
+				.filter(|path| path.is_file()),
+		);
+	}
 	Ok(Declared {
 		entry_sha256: crate::trust::digest_bytes(&entry_bytes),
 		entry,

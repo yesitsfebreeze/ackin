@@ -62,6 +62,31 @@ impl Source {
 	}
 }
 
+/// Every file `cartridge.load(name)` may open for a cartridge rooted at `root`,
+/// in the order it tries them. The host watches the same list, so rebuilding a
+/// native module restarts its cartridge in the running host.
+pub(crate) fn native_candidates(root: &Path, name: &str) -> Vec<PathBuf> {
+	let symbol = name.replace(['-', '.'], "_");
+	let files: Vec<String> = if cfg!(windows) {
+		vec![format!("{symbol}.dll"), format!("lib{symbol}.dll")]
+	} else {
+		vec![
+			format!("lib{symbol}.dylib"),
+			format!("{symbol}.dylib"),
+			format!("lib{symbol}.so"),
+			format!("{symbol}.so"),
+		]
+	};
+	[
+		root.to_path_buf(),
+		root.join("target/release"),
+		root.join("target/debug"),
+	]
+	.iter()
+	.flat_map(|dir| files.iter().map(move |file| dir.join(file)))
+	.collect()
+}
+
 pub(crate) fn normalize(path: &Path) -> PathBuf {
 	path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }

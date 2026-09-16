@@ -362,24 +362,8 @@ fn install(
 
 fn load_native(lua: &Lua, root: &Path, name: &str) -> mlua::Result<mlua::Value> {
 	let symbol = name.replace(['-', '.'], "_");
-	let files: Vec<String> = if cfg!(windows) {
-		vec![format!("{symbol}.dll"), format!("lib{symbol}.dll")]
-	} else {
-		vec![
-			format!("lib{symbol}.dylib"),
-			format!("{symbol}.dylib"),
-			format!("lib{symbol}.so"),
-			format!("{symbol}.so"),
-		]
-	};
-	let dirs = [
-		root.to_path_buf(),
-		root.join("target/release"),
-		root.join("target/debug"),
-	];
-	let path = dirs
-		.iter()
-		.flat_map(|dir| files.iter().map(move |file| dir.join(file)))
+	let path = crate::loader::native_candidates(root, name)
+		.into_iter()
 		.find(|path| path.is_file())
 		.ok_or_else(|| external(format!("no native module `{name}` in {}", root.display())))?;
 	// Leaked on purpose: Lua holds functions from it for the life of the node.
