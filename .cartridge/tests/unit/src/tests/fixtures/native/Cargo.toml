@@ -8,6 +8,10 @@ build = "build.rs"
 [lib]
 crate-type = ["cdylib"]
 
+# A second, behaviourally different build of this same module: `twice` triples.
+[features]
+rebuilt = []
+
 [dependencies]
 mlua = { version = "0.12", features = ["lua54", "module"] }
 

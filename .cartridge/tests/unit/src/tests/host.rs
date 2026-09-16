@@ -1305,12 +1305,25 @@ fn kill_now(pid: u32) {
 
 /// A test build (`cargo test` whose tests run `cargo build --lib`) rewrites a
 /// module's `target/debug` dylib. That is not a deliberate rebuild: the running
-/// node keeps its generation. `reload` is, and starts one on the new file.
+/// node keeps its generation, even once the file holds a different build.
+/// `reload` is, and the node it starts answers out of the file on disk now.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rewritten_native_module_restarts_only_on_reload() {
 	let module = built(&[
 		"--manifest-path",
 		".cartridge/tests/unit/src/tests/fixtures/native/Cargo.toml",
+	]);
+	// The same fixture built again, with `twice` tripling instead of doubling.
+	// Its own target directory keeps `module` above intact, so the two builds
+	// tell each other apart by what they answer.
+	let elsewhere = tempfile::tempdir().unwrap();
+	let rebuilt = built(&[
+		"--manifest-path",
+		".cartridge/tests/unit/src/tests/fixtures/native/Cargo.toml",
+		"--features",
+		"rebuilt",
+		"--target-dir",
+		elsewhere.path().to_str().unwrap(),
 	]);
 	let dir = tempfile::tempdir().unwrap();
 	cartridge(
@@ -1328,10 +1341,10 @@ async fn a_rewritten_native_module_restarts_only_on_reload() {
 		.path()
 		.join("native/target/debug")
 		.join(module.file_name().unwrap());
-	let rebuild = || {
+	let rebuild = |source: &std::path::Path| {
 		let _ = std::fs::remove_file(&target);
 		std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-		std::fs::copy(&module, &target).unwrap();
+		std::fs::copy(source, &target).unwrap();
 		std::fs::File::options()
 			.write(true)
 			.open(&target)
@@ -1339,7 +1352,7 @@ async fn a_rewritten_native_module_restarts_only_on_reload() {
 			.set_modified(std::time::SystemTime::now())
 			.unwrap();
 	};
-	rebuild();
+	rebuild(&module);
 	descriptor(dir.path(), &["native"]);
 	let host = boot(dir.path()).await;
 	let watcher = host.watch().unwrap();
@@ -1349,7 +1362,7 @@ async fn a_rewritten_native_module_restarts_only_on_reload() {
 		Some(json!(2))
 	);
 	tokio::time::sleep(Duration::from_millis(100)).await;
-	rebuild();
+	rebuild(&module);
 	tokio::time::sleep(crate::settings::host().watch_debounce() * 4).await;
 	active(&host, "native");
 	assert_eq!(
@@ -1357,12 +1370,25 @@ async fn a_rewritten_native_module_restarts_only_on_reload() {
 		Some(json!(4)),
 		"a test build restarted the node"
 	);
+	// Now the file holds a build that answers differently. Still no restart:
+	// the counter keeps counting and the answer is still the loaded build's.
+	rebuild(&rebuilt);
+	tokio::time::sleep(crate::settings::host().watch_debounce() * 4).await;
+	active(&host, "native");
+	assert_eq!(
+		host.bail("count", json!(null)).await.unwrap(),
+		Some(json!(6)),
+		"a new build restarted the node on its own"
+	);
+	// The deliberate path. 3 is the one answer only a fresh node that dlopened
+	// the file on disk now can give: the old node would say 8, and a fresh node
+	// on the old build would say 2.
 	host.replace("native").await.unwrap();
 	active(&host, "native");
 	assert_eq!(
 		host.bail("count", json!(null)).await.unwrap(),
-		Some(json!(2)),
-		"reload kept the old node"
+		Some(json!(3)),
+		"reload did not pick up the rebuilt module"
 	);
 	watcher.abort();
 	host.stop().await;
