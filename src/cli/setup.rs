@@ -35,6 +35,12 @@ pub(crate) enum Source {
 const INIT: &str = "init.lua";
 const CONFIG: &str = "config.lua";
 const IGNORE: &str = ".gitignore";
+/// Where the prompt-recall hook is written, and the command that runs it. The
+/// command string is also how an already-installed hook is recognised, because
+/// a settings document carries no comment to mark one with.
+const HOOK: &str = "hooks/prompt-recall";
+const HOOK_COMMAND: &str = "\"$CLAUDE_PROJECT_DIR\"/.cartridge/hooks/prompt-recall";
+const HOOK_SCRIPT: &str = include_str!("prompt-recall.sh");
 const WRITTEN_BY_SETUP: &str = "-- Written by `cartridge setup`;";
 const ROUNDS: usize = 16;
 
@@ -408,7 +414,89 @@ pub(crate) fn write(
 	for (_, place) in installed {
 		cartridge::trust::record(place)?;
 	}
+	recall_hook(root, &descriptor, &mut done);
 	Ok(done)
+}
+
+/// Install the automatic prompt recall: the script, and the agent hook that
+/// runs it. A project is worth composing because its record answers questions,
+/// so answering them on every prompt is the default rather than something each
+/// project wires by hand. Nothing here may fail the setup — a project without
+/// the hook is a project that simply asks for context by hand.
+fn recall_hook(root: &Path, descriptor: &Path, done: &mut Vec<String>) {
+	let script = descriptor.join(HOOK);
+	if std::fs::read_to_string(&script).ok().as_deref() != Some(HOOK_SCRIPT) {
+		if let Some(parent) = script.parent() {
+			let _ = std::fs::create_dir_all(parent);
+		}
+		if std::fs::write(&script, HOOK_SCRIPT).is_err() {
+			return;
+		}
+		done.push(format!("wrote {}", script.display()));
+	}
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		let _ = std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755));
+	}
+	let settings = root.join(".claude").join("settings.json");
+	let mut document: Value = match std::fs::read_to_string(&settings) {
+		Ok(text) => match serde_json::from_str(&text) {
+			Ok(document) => document,
+			// Someone else's file, in a shape this does not understand: leave it.
+			Err(_) => {
+				done.push(format!(
+					"skipped {}: not a settings document",
+					settings.display()
+				));
+				return;
+			}
+		},
+		Err(_) => json!({}),
+	};
+	let Some(hooks) = document
+		.as_object_mut()
+		.map(|root| root.entry("hooks").or_insert_with(|| json!({})))
+		.and_then(Value::as_object_mut)
+	else {
+		done.push(format!(
+			"skipped {}: not a settings document",
+			settings.display()
+		));
+		return;
+	};
+	let event = hooks.entry("UserPromptSubmit").or_insert_with(|| json!([]));
+	let Some(matchers) = event.as_array_mut() else {
+		done.push(format!(
+			"skipped {}: UserPromptSubmit is not a list",
+			settings.display()
+		));
+		return;
+	};
+	// The prompt is the user's, and so is whatever already reads it. Add to that
+	// list, never rewrite it, and say so when this hook is already there.
+	if matchers.iter().any(|matcher| {
+		matcher["hooks"]
+			.as_array()
+			.into_iter()
+			.flatten()
+			.any(|hook| hook["command"] == json!(HOOK_COMMAND))
+	}) {
+		return;
+	}
+	matchers.push(json!({"hooks":[{"type":"command","command":HOOK_COMMAND,"timeout":20}]}));
+	let Ok(text) = serde_json::to_string_pretty(&document) else {
+		return;
+	};
+	if settings
+		.parent()
+		.is_some_and(|parent| std::fs::create_dir_all(parent).is_err())
+	{
+		return;
+	}
+	if std::fs::write(&settings, text + "\n").is_ok() {
+		done.push(format!("wrote {}", settings.display()));
+	}
 }
 
 fn render_config(config: &Map<String, Value>) -> String {
@@ -588,7 +676,7 @@ fn answer(id: &str, question: &Value, default: &Value) -> Result<Value> {
 }
 
 pub(crate) async fn doctor(project: &Project) -> Result<ExitCode> {
-	let host = super::host::host(project, None)?;
+	let host = super::host::host(project)?.private();
 	let composed = host.entries().map_err(|e| {
 		Error::Descriptor(format!("{}: {e}", project.descriptor.join(INIT).display()))
 	})?;

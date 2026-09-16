@@ -1127,6 +1127,12 @@ impl LocalListener {
 		use std::os::fd::AsFd;
 		self.inner.as_fd().try_clone_to_owned()
 	}
+
+	/// The socket file was renamed (a takeover stages it under one name and
+	/// moves it over the served one): unlink-on-drop follows the new name.
+	pub fn moved_to(&mut self, path: PathBuf) {
+		self.socket_path = path;
+	}
 }
 
 impl LocalListener {

@@ -22,6 +22,9 @@ pub struct Plan {
 	pub config: serde_json::Value,
 	pub grant: Grant,
 	pub sources: Vec<PathBuf>,
+	/// The address the host binds for this node, from the manifest's
+	/// `listener` key in the settled config; empty or absent means none.
+	pub listener: Option<String>,
 }
 
 impl Plan {
@@ -121,6 +124,13 @@ impl Host {
 		exact(&needs)?;
 		dedup(&mut needs);
 		let grant = self.expand_grant(&declared.grant, &config)?;
+		let listener = declared
+			.listener
+			.as_deref()
+			.and_then(|key| crate::settings::get(&config, key))
+			.and_then(serde_json::Value::as_str)
+			.filter(|address| !address.is_empty())
+			.map(str::to_owned);
 		Ok(Plan {
 			id: entry.id.clone(),
 			name: declared.name.clone(),
@@ -133,6 +143,7 @@ impl Host {
 			config,
 			grant,
 			sources: declared.sources.clone(),
+			listener,
 		})
 	}
 

@@ -26,6 +26,7 @@ fn plan(id: &str, events: &[(&str, Option<u64>)], needs: &[&str], listen: &[&str
 		config: serde_json::Value::Null,
 		grant: Grant::default(),
 		sources: Vec::new(),
+		listener: None,
 	})
 }
 
@@ -112,4 +113,29 @@ fn every_event_carries_its_deadline() {
 		dirs["b"].events["b.news"].timeout_ms,
 		crate::settings::host().event_timeout_ms
 	);
+}
+
+/// `run` and `verify` compose beside the daemon. Their nodes must reach their
+/// own host, not the daemon's socket (which rejects their tokens), and their
+/// listeners must not share the daemon's remembered port.
+#[cfg(unix)]
+#[test]
+fn a_private_host_keeps_its_socket_and_ports_to_itself() {
+	let dir = tempfile::tempdir().unwrap();
+	let daemon = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap();
+	let fd = daemon.listener_for("proxy", "127.0.0.1:0").unwrap();
+	let port = |fd| {
+		use std::os::fd::BorrowedFd;
+		let fd = unsafe { BorrowedFd::borrow_raw(fd) };
+		socket2::SockRef::from(&fd).local_addr().unwrap().as_socket().unwrap().port()
+	};
+	let taken = port(fd);
+
+	let private = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap().private();
+	assert_ne!(private.socket_path(), daemon.socket_path());
+	let own = private.listener_for("proxy", "127.0.0.1:0").unwrap();
+	assert_ne!(port(own), taken, "the daemon's port is not shared");
+	assert_eq!(private.listener_for("proxy", "127.0.0.1:0").unwrap(), own, "kept across restarts");
+	let memo = std::fs::read_to_string(daemon.sockets.join(format!("{}.port", crate::host::socket::file_name("proxy")))).unwrap();
+	assert!(memo.ends_with(&format!(":{taken}")), "the project's memo stays the daemon's: {memo}");
 }

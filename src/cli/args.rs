@@ -46,7 +46,12 @@ pub(crate) enum Command {
 	/// is healthy here, and say which are not
 	Doctor,
 	/// Start the descriptor and serve the host socket until stopped
-	Daemon,
+	Daemon {
+		/// Take over from the host already serving this project: come up
+		/// beside it, take the socket, then stop it
+		#[arg(long)]
+		replace: bool,
+	},
 	/// Start the harness proxy and run an agent against it: `cartridge launch claude -- -p hi`
 	Launch {
 		agent: String,
@@ -89,6 +94,8 @@ pub(crate) enum Command {
 	Reload { cartridge: Option<String> },
 	/// Stop the running host
 	Stop,
+	/// Remove the socket files and run directories no host answers on
+	Sweep,
 	/// The host socket of this project
 	Socket,
 	/// Cartridges of the descriptor and what each one needs, resolved to its provider
@@ -157,7 +164,7 @@ impl Cli {
 		if self.yolo
 			&& !matches!(
 				&self.command,
-				Command::Run { .. } | Command::Daemon | Command::Launch { .. }
+				Command::Run { .. } | Command::Daemon { .. } | Command::Launch { .. }
 			) {
 			return Err(Error::Argument(
 				"--yolo requires run, launch or daemon; it cannot change an existing daemon".into(),

@@ -103,7 +103,7 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 		Command::Run { event, data } => host::run(project, &event, json_arg(&data)?).await,
 		Command::Launch { agent, model, args } => host::launch(project, agent, model, args).await,
 		Command::Mcp => host::mcp(project).await,
-		Command::Daemon => host::daemon(project).await,
+		Command::Daemon { replace } => host::daemon(project, replace).await,
 		Command::Verify { cartridge } => host::verify(project, cartridge.as_deref()).await,
 		Command::Call { event, data } => {
 			client::ask(
@@ -132,6 +132,11 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 			client::ask(project, "reload", json!({ "cartridge": cartridge })).await
 		}
 		Command::Stop => client::ask(project, "stop", Value::Null).await,
+		Command::Sweep => {
+			let removed = cartridge::host::socket::sweep_all()?;
+			println!("swept {removed}");
+			Ok(ExitCode::SUCCESS)
+		}
 		Command::Socket => {
 			println!(
 				"{}",

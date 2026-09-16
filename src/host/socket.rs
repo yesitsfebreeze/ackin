@@ -83,24 +83,115 @@ pub(crate) fn host_dir(descriptor: &Path) -> Result<PathBuf> {
 	Ok(dir)
 }
 
-fn sweep(run: &Path) {
+/// Collect what a killed host left in one run directory: node directories
+/// of dead pids and socket files nobody answers on. `<id>.port` files stay;
+/// they carry a node's address to the next host.
+fn sweep(run: &Path) -> usize {
 	let Ok(entries) = std::fs::read_dir(run) else {
-		return;
+		return 0;
 	};
+	let mut removed = 0;
 	for entry in entries.flatten() {
 		let name = entry.file_name();
 		let path = entry.path();
-		let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) else {
-			if name != "host.sock" && entry.file_type().is_ok_and(|t| t.is_file()) && !served(&path)
-			{
-				let _ = std::fs::remove_file(&path);
+		if let Some(pid) = name.to_str().and_then(|n| n.parse::<u32>().ok()) {
+			if pid != std::process::id() && !alive(pid) && std::fs::remove_dir_all(&path).is_ok() {
+				removed += 1;
 			}
 			continue;
-		};
-		if pid != std::process::id() && !alive(pid) {
-			let _ = std::fs::remove_dir_all(&path);
+		}
+		if is_socket(&entry) && !served(&path) && std::fs::remove_file(&path).is_ok() {
+			removed += 1;
 		}
 	}
+	removed
+}
+
+/// Alive: a run directory whose host answers, or that holds a live pid.
+fn run_alive(run: &Path) -> bool {
+	served(&run.join("host.sock"))
+		|| std::fs::read_dir(run).is_ok_and(|entries| {
+			entries.flatten().any(|entry| {
+				entry
+					.file_name()
+					.to_str()
+					.and_then(|n| n.parse::<u32>().ok())
+					.is_some_and(alive)
+			})
+		})
+}
+
+/// `cartridge sweep`: every project's run directory under the base, plus the
+/// files earlier layouts wrote there (`<tag>.sock`, `<tag>.token`,
+/// `<tag>-<pid>/`). Returns how many entries went.
+pub fn sweep_all() -> Result<usize> {
+	let base = base()?;
+	let entries = std::fs::read_dir(&base).map_err(|e| Error::file(&base, e))?;
+	let mut removed = 0;
+	for entry in entries.flatten() {
+		let path = entry.path();
+		let name = entry.file_name().to_string_lossy().into_owned();
+		let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+		if is_dir && name.len() == 12 && name.chars().all(|c| c.is_ascii_hexdigit()) {
+			removed += sweep(&path);
+			if !run_alive(&path) && std::fs::remove_dir_all(&path).is_ok() {
+				removed += 1;
+			}
+			continue;
+		}
+		// An earlier layout put `<tag>.sock` and `<tag>.token` at the base. The
+		// token is the command line's way in, so it goes only once its socket
+		// no longer answers.
+		let unanswered = |tag: &str| !served(&base.join(format!("{tag}.sock")));
+		let gone = match name.rsplit_once('-') {
+			Some((_, pid)) if is_dir => pid.parse::<u32>().is_ok_and(|pid| !alive(pid)),
+			_ => match name.strip_suffix(".token") {
+				Some(tag) => unanswered(tag),
+				None => {
+					(name.ends_with(".sock") && !served(&path))
+						|| (is_dir
+							&& std::fs::read_dir(&path).is_ok_and(|mut d| d.next().is_none()))
+				}
+			},
+		};
+		if !gone {
+			continue;
+		}
+		let ok = if is_dir {
+			std::fs::remove_dir_all(&path).is_ok()
+		} else {
+			std::fs::remove_file(&path).is_ok()
+		};
+		if ok {
+			removed += 1;
+		}
+	}
+	Ok(removed)
+}
+
+#[cfg(unix)]
+fn is_socket(entry: &std::fs::DirEntry) -> bool {
+	use std::os::unix::fs::FileTypeExt;
+	entry.file_type().is_ok_and(|t| t.is_socket())
+}
+
+#[cfg(windows)]
+fn is_socket(_entry: &std::fs::DirEntry) -> bool {
+	false
+}
+
+/// Device and inode of the socket file, the identity a stop compares before
+/// unlinking by path.
+#[cfg(unix)]
+pub(crate) fn identity(path: &Path) -> std::io::Result<(u64, u64)> {
+	use std::os::unix::fs::MetadataExt;
+	let meta = std::fs::symlink_metadata(path)?;
+	Ok((meta.dev(), meta.ino()))
+}
+
+#[cfg(windows)]
+pub(crate) fn identity(_path: &Path) -> std::io::Result<(u64, u64)> {
+	Err(std::io::Error::other("a named pipe has no file identity"))
 }
 
 #[cfg(unix)]
@@ -116,7 +207,7 @@ fn served(_path: &Path) -> bool {
 }
 
 #[cfg(unix)]
-fn alive(pid: u32) -> bool {
+pub(crate) fn alive(pid: u32) -> bool {
 	let exists = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
 	exists || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
@@ -124,7 +215,7 @@ fn alive(pid: u32) -> bool {
 // ponytail: no liveness check on Windows, so nothing is swept there; a dead
 // run's directory stays until the user clears it.
 #[cfg(windows)]
-fn alive(_pid: u32) -> bool {
+pub(crate) fn alive(_pid: u32) -> bool {
 	true
 }
 

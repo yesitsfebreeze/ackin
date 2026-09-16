@@ -30,7 +30,10 @@ directory. Run `cartridge trust` once per checkout, and again after changing
 `.cartridge/init.lua`, `.cartridge/config.lua`, a `cartridge.json` or a
 cartridge's Lua. A linked cartridge outside the project is trusted on its
 own: `cartridge trust <its folder>`. `cartridge socket` prints the project's host socket; `cartridge
-status`, `call`, `send`, `follow`, `reload` and `stop` talk to the host serving it.
+status`, `call`, `send`, `follow`, `reload`, `stop` and `sweep` talk to the host
+serving it. One host serves a project: `cartridge daemon` refuses when another
+already does and `cartridge daemon --replace` takes over from it in place,
+while `launch` and `mcp` attach to whichever host is there.
 `cartridge mcp` hands this terminal's stdio to the cartridge listening to `mcp`,
 for an MCP client such as `claude mcp add cartridge -- cartridge mcp`.
 

@@ -146,3 +146,32 @@ with a fresh node token. Other nodes keep running and reconnect. A changed
 stop, new ones start, and running nodes whose directory changed receive it.
 A source or profile edited after it was trusted fails with the untrusted
 refusal instead of restarting; `cartridge trust`, then `cartridge reload`.
+
+A cartridge whose manifest names `listener` (a dotted key of its own settings
+holding a `host:port`) does not bind that address itself. The base binds it,
+reuse-port, and hands the node the file descriptor in
+`CARTRIDGE_LISTENER_FD`; the node adopts it instead of binding. The address
+therefore belongs to the base and outlives every restart of that node: a
+connection arriving while the node is down waits in the backlog rather than
+being refused. A port of 0 is bound once and then remembered in
+`<run>/<id>.sock.port`, so the next base of this project takes the same one.
+
+ONE BASE PER PROJECT
+
+A project is served by one base. `launch` and `mcp` attach to it, and start
+one in the background when none answers, so an agent and the tools it calls
+run against the cartridges already up. `run` and `verify` keep a base of
+their own for the one command, and that one never binds the project's socket,
+so it cannot take the name from the serving base or unlink it on the way out.
+
+A second `daemon` refuses and names `--replace`. A replacing base composes
+its whole profile beside the running one, renames its staged socket over the
+served name in one step, and only then asks the old base to stop: a client
+connecting at any moment reaches a base whose cartridges are active, and the
+reuse-port listeners above keep every node address through the swap. This is
+how a rebuilt binary takes over from the one running.
+
+A base that is killed rather than stopped leaves its socket and its run
+directory behind. A starting base collects its own project's; `cartridge
+sweep` collects every project's, removing only what no listener answers on
+and no live pid owns.

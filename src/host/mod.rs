@@ -21,7 +21,7 @@ use crate::error::{Error, Result};
 use crate::loader::{Entry, Source};
 
 pub use plan::Plan;
-pub use process::NODE_BIN_ENV;
+pub use process::{LISTENER_FD_ENV, NODE_BIN_ENV};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -101,6 +101,19 @@ pub struct Host {
 	lifecycle: broadcast::Sender<Value>,
 	inner: std::sync::OnceLock<tokio::task::JoinHandle<()>>,
 	stop: tokio_util::sync::CancellationToken,
+	/// Set while a takeover holds its listener back until its composition is up.
+	deferred: std::sync::atomic::AtomicBool,
+	/// A private host (one command's own `run` or `verify`) serves this path in
+	/// its own run directory instead of the project's name, so it cannot take
+	/// the name from the daemon, and its nodes' host calls still reach it.
+	private: std::sync::atomic::AtomicBool,
+	/// The socket file this host published, so a stop unlinks its own and
+	/// never a successor's.
+	published: Mutex<Option<(u64, u64)>>,
+	/// Listeners bound on behalf of nodes (a manifest's `listener`), kept
+	/// across a node's restarts and handed down as an inherited fd.
+	#[cfg(unix)]
+	tcp: Mutex<HashMap<String, std::net::TcpListener>>,
 }
 
 impl Drop for Host {
@@ -137,7 +150,19 @@ impl Host {
 			lifecycle: broadcast::channel(crate::settings::host().lifecycle_queue).0,
 			inner: std::sync::OnceLock::new(),
 			stop: tokio_util::sync::CancellationToken::new(),
+			deferred: std::sync::atomic::AtomicBool::new(false),
+			private: std::sync::atomic::AtomicBool::new(false),
+			published: Mutex::new(None),
+			#[cfg(unix)]
+			tcp: Mutex::default(),
 		}))
+	}
+
+	/// One command's own host: it never binds the project's socket.
+	pub fn private(self: &Arc<Self>) -> Arc<Self> {
+		self.private
+			.store(true, std::sync::atomic::Ordering::SeqCst);
+		self.clone()
 	}
 
 	pub fn dir(&self) -> &Path {
@@ -165,6 +190,9 @@ impl Host {
 	}
 
 	pub fn socket_path(&self) -> PathBuf {
+		if self.private.load(std::sync::atomic::Ordering::SeqCst) {
+			return self.nodes.join("host.sock");
+		}
 		self.sockets.join("host.sock")
 	}
 
@@ -227,11 +255,9 @@ impl Host {
 
 	pub async fn reconcile(self: &Arc<Self>) -> Result<()> {
 		let _op = self.op.lock().await;
-		if self.inner.get().is_none() {
+		if self.inner.get().is_none() && !self.deferred.load(std::sync::atomic::Ordering::SeqCst) {
 			let listener = socket::listen(&self.socket_path()).await?;
-			let _ = self
-				.inner
-				.set(tokio::spawn(socket::accept(Arc::downgrade(self), listener)));
+			self.publish_listener(listener);
 		}
 		let entries = self.entries()?;
 		let planned: Vec<(Entry, Option<Result<Plan>>)> = entries
@@ -256,6 +282,8 @@ impl Host {
 		};
 		for id in stale {
 			self.stop_slot(&id).await;
+			#[cfg(unix)]
+			self.tcp.lock().remove(&id);
 		}
 		{
 			let mut slots = self.slots.lock();
@@ -565,8 +593,141 @@ impl Host {
 	}
 
 	fn unpublish(&self) {
-		let _ = std::fs::remove_file(self.socket_path());
+		// A successor may already hold this name (`daemon --replace`): unlink
+		// only the socket this host itself published.
+		let ours = self.published.lock().take();
+		if ours.is_some() && socket::identity(&self.socket_path()).ok() == ours {
+			let _ = std::fs::remove_file(self.socket_path());
+		}
+		#[cfg(unix)]
+		self.tcp.lock().clear();
 		let _ = std::fs::remove_dir_all(&self.nodes);
+	}
+
+	fn publish_listener(self: &Arc<Self>, listener: crate::transport::typed::LocalListener) {
+		*self.published.lock() = socket::identity(&self.socket_path()).ok();
+		let task = tokio::spawn(socket::accept(Arc::downgrade(self), listener));
+		if let Err(task) = self.inner.set(task) {
+			// A second acceptor on a rebound name; it ends with the stop signal.
+			drop(task);
+		}
+	}
+
+	/// Become the host of a project another host serves. The addresses this
+	/// composition's nodes are reached on are bound first, beside the old
+	/// host's, so nothing refuses a connection while the swap happens; then
+	/// the old host is stopped, which releases the stores and sockets its
+	/// nodes hold; only then does this one compose. Composing beside it
+	/// instead would mean two hosts holding one project's single-writer
+	/// stores, which is what makes a plain restart fail today.
+	pub async fn takeover(self: &Arc<Self>, old: &Peer) -> Result<()> {
+		use std::sync::atomic::Ordering;
+		let settings = crate::settings::host();
+		self.deferred.store(true, Ordering::SeqCst);
+		let pid = old
+			.call("snapshot", Value::Null)
+			.await
+			.ok()
+			.and_then(|snapshot| snapshot["host_pid"].as_u64())
+			.map(|pid| pid as u32);
+		#[cfg(unix)]
+		let staged = {
+			// Bound before the old host goes: a caller reaching one of these
+			// addresses in the meantime waits in a backlog this host owns.
+			for (id, address) in self.fronts()? {
+				if let Err(error) = self.listener_for(&id, &address) {
+					tracing::warn!(target: "cartridge", cartridge = %id, "{error}");
+				}
+			}
+			let staged = self
+				.sockets
+				.join(format!("host.sock.{}", std::process::id()));
+			let listener = socket::listen(&staged).await?;
+			(staged, listener)
+		};
+		let _ = old.call("stop", Value::Null).await;
+		if let Some(pid) = pid {
+			let deadline = tokio::time::Instant::now() + settings.shutdown_timeout() * 2;
+			while socket::alive(pid) && tokio::time::Instant::now() < deadline {
+				tokio::time::sleep(Duration::from_millis(50)).await;
+			}
+		}
+		#[cfg(unix)]
+		{
+			let (staged, mut listener) = staged;
+			// The name is taken back at once, so a command arriving during the
+			// composition below finds this host starting rather than none.
+			std::fs::rename(&staged, self.socket_path()).map_err(|e| Error::file(&staged, e))?;
+			listener.moved_to(self.socket_path());
+			self.publish_listener(listener);
+		}
+		self.deferred.store(false, Ordering::SeqCst);
+		self.reconcile().await?;
+		Ok(())
+	}
+
+	/// Every enabled cartridge that names an address for the host to bind,
+	/// with that address.
+	#[cfg(unix)]
+	fn fronts(self: &Arc<Self>) -> Result<Vec<(String, String)>> {
+		Ok(self
+			.entries()?
+			.iter()
+			.filter(|entry| !entry.disabled)
+			.filter_map(|entry| {
+				let plan = self.plan(entry).ok()?;
+				Some((plan.id.clone(), plan.listener.clone()?))
+			})
+			.collect())
+	}
+
+	/// The listener a node inherits: bound once per cartridge id and kept
+	/// across its restarts. Port 0 in the configured address takes the port
+	/// this project last bound (`<run>/<id>.port`), so a replacing host and
+	/// a restarted node keep the address a launched agent was given.
+	#[cfg(unix)]
+	pub(crate) fn listener_for(&self, id: &str, address: &str) -> Result<std::os::fd::RawFd> {
+		use std::os::fd::AsRawFd;
+		let want: std::net::SocketAddr = address
+			.parse()
+			.map_err(|e| Error::Descriptor(format!("{id}: listener `{address}`: {e}")))?;
+		let mut held = self.tcp.lock();
+		if let Some(listener) = held.get(id) {
+			let same = listener
+				.local_addr()
+				.is_ok_and(|bound| {
+					want.port() == 0 || bound == want || self.private.load(std::sync::atomic::Ordering::SeqCst)
+				});
+			if same {
+				return Ok(listener.as_raw_fd());
+			}
+			held.remove(id);
+		}
+		// A private host serves nobody: a fresh port of its own, never the
+		// project's, which SO_REUSEPORT would otherwise let it share with the daemon.
+		if self.private.load(std::sync::atomic::Ordering::SeqCst) {
+			let listener = std::net::TcpListener::bind((want.ip(), 0))
+				.map_err(|e| Error::Descriptor(format!("{id}: listen on {}:0: {e}", want.ip())))?;
+			let fd = listener.as_raw_fd();
+			held.insert(id.to_owned(), listener);
+			return Ok(fd);
+		}
+		let memo = self.sockets.join(format!("{}.port", socket::file_name(id)));
+		let remembered = std::fs::read_to_string(&memo)
+			.ok()
+			.and_then(|text| text.trim().parse::<std::net::SocketAddr>().ok())
+			.filter(|last| want.port() == 0 && last.ip() == want.ip());
+		let listener = remembered
+			.and_then(|last| bind_reuse(last).ok())
+			.map(Ok)
+			.unwrap_or_else(|| bind_reuse(want))
+			.map_err(|e| Error::Descriptor(format!("{id}: listen on {want}: {e}")))?;
+		if let Ok(bound) = listener.local_addr() {
+			let _ = socket::write_private(&memo, &bound.to_string());
+		}
+		let fd = listener.as_raw_fd();
+		held.insert(id.to_owned(), listener);
+		Ok(fd)
 	}
 
 	fn peer_of(&self, id: &str) -> Option<Peer> {
@@ -741,6 +902,23 @@ impl Host {
 		}
 		connect(&self.socket(id), &self.node_token(id)).await
 	}
+}
+
+/// Reuse-address and reuse-port: a replacing host binds beside the host it
+/// replaces, and the kernel hands new connections to whichever still accepts.
+#[cfg(unix)]
+fn bind_reuse(address: std::net::SocketAddr) -> std::io::Result<std::net::TcpListener> {
+	use socket2::{Domain, Protocol, Socket, Type};
+	let socket = Socket::new(
+		Domain::for_address(address),
+		Type::STREAM,
+		Some(Protocol::TCP),
+	)?;
+	socket.set_reuse_address(true)?;
+	socket.set_reuse_port(true)?;
+	socket.bind(&address.into())?;
+	socket.listen(128)?;
+	Ok(socket.into())
 }
 
 pub(crate) async fn connect(

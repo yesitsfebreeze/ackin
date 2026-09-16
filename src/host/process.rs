@@ -12,6 +12,9 @@ use crate::transport::cartridge::{Directory, CONNECT_TIMEOUT_ENV, NODE_TOKEN_ENV
 use super::{Host, Plan, Running};
 
 pub const NODE_BIN_ENV: &str = "CARTRIDGE_NODE_BIN";
+/// The fd of the listener the host bound for this node (its manifest's
+/// `listener`), inherited across the spawn.
+pub const LISTENER_FD_ENV: &str = "CARTRIDGE_LISTENER_FD";
 
 /// Trim with care: without `HOME`/`CARTRIDGE_HOME` a node reads another
 /// machine's trust store and global `config.lua`.
@@ -141,6 +144,21 @@ pub(super) async fn start(
 	spawner.env(crate::transport::typed::PIPE_HANDLES_ENV, &handed);
 	#[cfg(unix)]
 	spawner.process_group(0);
+	#[cfg(unix)]
+	if let Some(address) = &plan.listener {
+		let fd = host.listener_for(&plan.id, address)?;
+		spawner.env(LISTENER_FD_ENV, fd.to_string());
+		// SAFETY: runs in the child between fork and exec, and only clears
+		// close-on-exec on one fd this process owns; nothing allocates.
+		unsafe {
+			spawner.pre_exec(move || {
+				if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+					return Err(std::io::Error::last_os_error());
+				}
+				Ok(())
+			});
+		}
+	}
 	let mut child = spawner.spawn().map_err(|e| Error::process(&plan.id, e))?;
 	let group = Group::of(&child).map_err(|e| Error::process(&plan.id, e))?;
 	let stdin = child.stdin.take();

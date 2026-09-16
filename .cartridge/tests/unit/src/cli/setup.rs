@@ -134,7 +134,9 @@ fn setup_links_the_chosen_writes_a_descriptor_the_host_reads_and_lets_a_cartridg
 	assert_eq!(std::fs::read_link(builtin.join("beta")).unwrap(), link);
 
 	let done = write(&project, &builtin, &installed).unwrap();
-	assert_eq!(done.len(), 3, "{done:?}");
+	assert_eq!(done.len(), 5, "{done:?}");
+	assert!(project.join(".cartridge/hooks/prompt-recall").is_file());
+	assert!(project.join(".claude/settings.json").is_file());
 	let init = std::fs::read_to_string(project.join(".cartridge/init.lua")).unwrap();
 	assert!(init.contains(r#"{ id = "beta", path = "beta" }"#), "{init}");
 	assert!(project.join(".cartridge/.gitignore").is_file());

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use cartridge::loader;
 use cartridge::{Error, Result};
 
+#[derive(Clone)]
 pub(crate) struct Project {
 	pub(crate) dir: PathBuf,
 	pub(crate) descriptor: PathBuf,

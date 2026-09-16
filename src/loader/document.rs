@@ -30,6 +30,12 @@ pub struct Cartridge {
 	pub listen: Vec<String>,
 	#[serde(default)]
 	pub grant: Grant,
+	/// A dotted config key naming a `host:port` the host binds once and keeps
+	/// across this cartridge's restarts; the node inherits it as
+	/// `CARTRIDGE_LISTENER_FD`, so a connection made during a restart waits in
+	/// the backlog instead of being refused.
+	#[serde(default)]
+	pub listener: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -253,6 +259,7 @@ pub(crate) struct Declared {
 	pub(crate) config: serde_json::Value,
 	pub(crate) settings: crate::settings::Specs,
 	pub(crate) grant: Grant,
+	pub(crate) listener: Option<String>,
 }
 
 pub fn is_bare_name(name: &str) -> bool {
@@ -291,6 +298,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 			config: serde_json::Value::Null,
 			settings: Default::default(),
 			grant: Grant::default(),
+			listener: None,
 		});
 	}
 	let (manifest, entry, entry_bytes) = Cartridge::read_verified(&path)?;
@@ -306,5 +314,6 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		config: manifest.config,
 		settings: manifest.settings,
 		grant: manifest.grant,
+		listener: manifest.listener,
 	})
 }
