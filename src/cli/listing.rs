@@ -88,6 +88,9 @@ fn lines(cartridges: &[CartridgeInfo]) -> usize {
 					line.push_str(&format!("  {label} {}", asked.join(", ")));
 				}
 			}
+			if grant.audio {
+				line.push_str("  audio");
+			}
 		}
 		for note in [p.unread.as_deref(), p.error.as_deref()]
 			.into_iter()

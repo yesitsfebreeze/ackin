@@ -230,6 +230,7 @@ impl Host {
 			net: grant.net.clone(),
 			exec: all(&grant.exec)?,
 			env,
+			audio: grant.audio,
 		})
 	}
 

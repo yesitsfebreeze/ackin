@@ -70,6 +70,10 @@ pub struct Grant {
 	pub exec: Vec<String>,
 	#[serde(default)]
 	pub env: Vec<String>,
+	/// The microphone. macOS hands a denied capture silence rather than an
+	/// error, so a cartridge that records without this reads zeroes forever.
+	#[serde(default)]
+	pub audio: bool,
 }
 
 impl Cartridge {

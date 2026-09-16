@@ -305,6 +305,9 @@ pub fn profile(grant: &Grant, root: &Path, binary: &Path, sockets: Option<&Path>
 	if !grant.net.is_empty() {
 		profile.push_str("(allow network*)\n(allow system-socket)\n");
 	}
+	if grant.audio {
+		profile.push_str("(allow device-microphone)\n");
+	}
 	if let Some(sockets) = sockets {
 		let mut spellings = vec![sockets.to_path_buf()];
 		spellings.extend(sockets.canonicalize());

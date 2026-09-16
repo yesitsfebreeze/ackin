@@ -60,6 +60,21 @@ fn an_empty_grant_builds_no_allowance_beyond_the_runtime() {
 		"{text}"
 	);
 	assert!(text.contains("(allow file-read*"), "{text}");
+	assert!(!text.contains("device-microphone"), "{text}");
+}
+
+/// macOS answers a denied capture with silence instead of an error, so a
+/// cartridge that records reads zeroes forever unless it asked for the
+/// microphone. Nothing else in the profile grants it.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_microphone_is_granted_only_when_it_is_asked_for() {
+	let grant = Grant {
+		audio: true,
+		..Grant::default()
+	};
+	let text = profile(&grant, &root(), Path::new("/bin/tool"), None);
+	assert!(text.contains("(allow device-microphone)"), "{text}");
 }
 
 #[cfg(target_os = "macos")]
