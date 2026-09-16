@@ -127,15 +127,34 @@ fn a_private_host_keeps_its_socket_and_ports_to_itself() {
 	let port = |fd| {
 		use std::os::fd::BorrowedFd;
 		let fd = unsafe { BorrowedFd::borrow_raw(fd) };
-		socket2::SockRef::from(&fd).local_addr().unwrap().as_socket().unwrap().port()
+		socket2::SockRef::from(&fd)
+			.local_addr()
+			.unwrap()
+			.as_socket()
+			.unwrap()
+			.port()
 	};
 	let taken = port(fd);
 
-	let private = Host::new(dir.path(), dir.path().join(".cartridge")).unwrap().private();
+	let private = Host::new(dir.path(), dir.path().join(".cartridge"))
+		.unwrap()
+		.private();
 	assert_ne!(private.socket_path(), daemon.socket_path());
 	let own = private.listener_for("proxy", "127.0.0.1:0").unwrap();
 	assert_ne!(port(own), taken, "the daemon's port is not shared");
-	assert_eq!(private.listener_for("proxy", "127.0.0.1:0").unwrap(), own, "kept across restarts");
-	let memo = std::fs::read_to_string(daemon.sockets.join(format!("{}.port", crate::host::socket::file_name("proxy")))).unwrap();
-	assert!(memo.ends_with(&format!(":{taken}")), "the project's memo stays the daemon's: {memo}");
+	assert_eq!(
+		private.listener_for("proxy", "127.0.0.1:0").unwrap(),
+		own,
+		"kept across restarts"
+	);
+	let memo = std::fs::read_to_string(
+		daemon
+			.sockets
+			.join(format!("{}.port", crate::host::socket::file_name("proxy"))),
+	)
+	.unwrap();
+	assert!(
+		memo.ends_with(&format!(":{taken}")),
+		"the project's memo stays the daemon's: {memo}"
+	);
 }

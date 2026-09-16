@@ -693,11 +693,11 @@ impl Host {
 			.map_err(|e| Error::Descriptor(format!("{id}: listener `{address}`: {e}")))?;
 		let mut held = self.tcp.lock();
 		if let Some(listener) = held.get(id) {
-			let same = listener
-				.local_addr()
-				.is_ok_and(|bound| {
-					want.port() == 0 || bound == want || self.private.load(std::sync::atomic::Ordering::SeqCst)
-				});
+			let same = listener.local_addr().is_ok_and(|bound| {
+				want.port() == 0
+					|| bound == want
+					|| self.private.load(std::sync::atomic::Ordering::SeqCst)
+			});
 			if same {
 				return Ok(listener.as_raw_fd());
 			}
