@@ -87,6 +87,7 @@ pub(crate) fn host_dir(descriptor: &Path) -> Result<PathBuf> {
 /// of dead pids and socket files nobody answers on. `<id>.port` files stay;
 /// they carry a node's address to the next host.
 fn sweep(run: &Path) -> usize {
+	let _names = lock_names(run);
 	let Ok(entries) = std::fs::read_dir(run) else {
 		return 0;
 	};
@@ -257,7 +258,33 @@ pub(crate) fn file_name(id: &str) -> String {
 	format!("{name}.sock")
 }
 
+/// Held across a bind and across a sweep of one directory. A socket is bound
+/// before it listens, and a connect in between is refused, so without this a
+/// second host (or a sweep) takes that for a stale file, unlinks the name and
+/// binds its own: two daemons, each thinking it serves the project.
+// ponytail: a blocking flock on the calling thread; it is held for a bind or a
+// directory scan, microseconds, so no spawn_blocking.
+#[cfg(unix)]
+fn lock_names(dir: &Path) -> Option<std::fs::File> {
+	use std::os::unix::fs::OpenOptionsExt;
+	use std::os::unix::io::AsRawFd;
+	let file = std::fs::OpenOptions::new()
+		.create(true)
+		.truncate(false)
+		.write(true)
+		.mode(0o600)
+		.open(dir.join("host.lock"))
+		.ok()?;
+	(unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0).then_some(file)
+}
+
+#[cfg(windows)]
+fn lock_names(_dir: &Path) -> Option<std::fs::File> {
+	None
+}
+
 pub(crate) async fn listen(path: &Path) -> Result<crate::transport::typed::LocalListener> {
+	let _names = path.parent().and_then(lock_names);
 	match crate::transport::typed::bind(&crate::transport::typed::Endpoint::local(path)).await {
 		Ok(crate::transport::typed::BindOutcome::Bound(listener)) => Ok(listener),
 		Ok(crate::transport::typed::BindOutcome::AlreadyRunning) => Err(Error::Remote(format!(
