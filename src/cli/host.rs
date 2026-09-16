@@ -145,10 +145,24 @@ async fn settle_remote(peer: &cartridge::transport::rpc::Peer, timeout: std::tim
 	let deadline = tokio::time::Instant::now() + timeout;
 	let mut last = Value::Null;
 	let mut stable = 0;
+	let mut reloaded = false;
 	while tokio::time::Instant::now() < deadline {
 		let Ok(status) = peer.call("status", Value::Null).await else {
 			return;
 		};
+		// A daemon that refused a changed file keeps the cartridge failed after
+		// the file is trusted (`--yolo`, `cartridge trust`); one reload lets it
+		// read the new trust instead of serving without the cartridge.
+		if !reloaded && !untrusted(&status).is_empty() {
+			reloaded = true;
+			if peer
+				.call("reload", json!({ "cartridge": null }))
+				.await
+				.is_ok()
+			{
+				continue;
+			}
+		}
 		let starting = status.as_array().is_some_and(|all| {
 			!all.is_empty()
 				&& all
@@ -165,6 +179,43 @@ async fn settle_remote(peer: &cartridge::transport::rpc::Peer, timeout: std::tim
 		}
 		last = status;
 		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+	}
+}
+
+/// Failed cartridges whose error is a trust refusal.
+fn untrusted(status: &Value) -> Vec<&Value> {
+	status
+		.as_array()
+		.into_iter()
+		.flatten()
+		.filter(|s| s["state"] == "failed")
+		.filter(|s| {
+			s["error"]
+				.as_str()
+				.is_some_and(|e| e.contains("since it was trusted") || e.contains("not trusted"))
+		})
+		.collect()
+}
+
+/// `error` with the failed cartridge that serves `key`, when one does, so a
+/// missing event names its cause and fix instead of only its absence.
+async fn explain(peer: &cartridge::transport::rpc::Peer, key: &str, error: Error) -> Error {
+	let Ok(status) = peer.call("status", Value::Null).await else {
+		return error;
+	};
+	let failed = status.as_array().into_iter().flatten().find(|s| {
+		s["state"] == "failed"
+			&& s["listen"]
+				.as_array()
+				.is_some_and(|l| l.iter().any(|k| k == key))
+	});
+	match failed {
+		Some(s) => Error::Remote(format!(
+			"{error}: cartridge `{}` failed: {}",
+			s["id"].as_str().unwrap_or("?"),
+			s["error"].as_str().unwrap_or("no error recorded")
+		)),
+		None => error,
 	}
 }
 
@@ -185,7 +236,10 @@ pub(crate) async fn launch(
 ) -> Result<ExitCode> {
 	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
 	let (peer, _incoming) = attach(project).await?;
-	let launch = client::bail(&peer, "proxy", request).await?;
+	let launch = match client::bail(&peer, "proxy", request).await {
+		Ok(launch) => launch,
+		Err(error) => return Err(explain(&peer, "proxy", error).await),
+	};
 	ignore_interrupt()?;
 	let status = spawn(launch).await?;
 	Ok(ExitCode::from(

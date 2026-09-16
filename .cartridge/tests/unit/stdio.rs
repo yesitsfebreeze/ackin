@@ -40,3 +40,15 @@ fn mcp_bridge_keeps_notifications_silent_and_successes_intact() {
 	assert_eq!(parse["error"]["code"], -32700);
 	assert!(parse["id"].is_null());
 }
+
+#[test]
+fn only_trust_refusals_prompt_an_attach_reload() {
+	let status = json!([
+		{"id":"proxy","state":"failed","error":"/p/init.lua: has changed since it was trusted; review it"},
+		{"id":"broken","state":"failed","error":"init.lua:3: syntax error"},
+		{"id":"memo","state":"active"}
+	]);
+	let ids: Vec<_> = untrusted(&status).iter().map(|s| s["id"].clone()).collect();
+	assert_eq!(ids, [json!("proxy")]);
+	assert!(untrusted(&json!([{"id":"memo","state":"active"}])).is_empty());
+}
