@@ -270,7 +270,7 @@ fn a_file_under_a_skipped_directory_names_the_real_dead_end() {
 
 #[cfg(not(windows))]
 #[test]
-fn a_built_native_module_is_a_source_so_its_rebuild_restarts_the_cartridge() {
+fn a_built_native_module_is_not_a_source_so_a_test_build_keeps_the_cartridge() {
 	let dir = project(&[
 		(
 			"x/cartridge.json",
@@ -281,15 +281,5 @@ fn a_built_native_module_is_a_source_so_its_rebuild_restarts_the_cartridge() {
 	]);
 	record(&dir.path().join("x")).unwrap();
 	let declared = crate::loader::resolve(&dir.path().join("x")).unwrap();
-	let module = dir
-		.path()
-		.join("x/target/debug/libx_y.dylib")
-		.canonicalize()
-		.unwrap();
-	assert!(declared.sources.contains(&module), "{:?}", declared.sources);
-	assert_eq!(
-		declared.sources.len(),
-		3,
-		"absent candidates are not sources"
-	);
+	assert_eq!(declared.sources.len(), 2, "{:?}", declared.sources);
 }

@@ -63,8 +63,7 @@ impl Source {
 }
 
 /// Every file `cartridge.load(name)` may open for a cartridge rooted at `root`,
-/// in the order it tries them. The host watches the same list, so rebuilding a
-/// native module restarts its cartridge in the running host.
+/// in the order it tries them.
 pub(crate) fn native_candidates(root: &Path, name: &str) -> Vec<PathBuf> {
 	let symbol = name.replace(['-', '.'], "_");
 	let files: Vec<String> = if cfg!(windows) {

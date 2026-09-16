@@ -302,14 +302,9 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		});
 	}
 	let (manifest, entry, entry_bytes) = Cartridge::read_verified(&path)?;
-	let mut sources = vec![path.clone(), entry.clone()];
-	if let Some(root) = entry.parent() {
-		sources.extend(
-			super::native_candidates(root, &manifest.name)
-				.into_iter()
-				.filter(|path| path.is_file()),
-		);
-	}
+	// A built native module is not a source: `cargo test` rewrites it too, and
+	// only `cartridge reload <id>` restarts a cartridge onto a new build.
+	let sources = vec![path.clone(), entry.clone()];
 	Ok(Declared {
 		entry_sha256: crate::trust::digest_bytes(&entry_bytes),
 		entry,

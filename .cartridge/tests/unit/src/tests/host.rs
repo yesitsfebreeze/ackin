@@ -1302,3 +1302,68 @@ fn kill_now(pid: u32) {
 		}
 	}
 }
+
+/// A test build (`cargo test` whose tests run `cargo build --lib`) rewrites a
+/// module's `target/debug` dylib. That is not a deliberate rebuild: the running
+/// node keeps its generation. `reload` is, and starts one on the new file.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rewritten_native_module_restarts_only_on_reload() {
+	let module = built(&[
+		"--manifest-path",
+		".cartridge/tests/unit/src/tests/fixtures/native/Cargo.toml",
+	]);
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"native",
+		json!({
+			"name": "native_fixture", "entry": "init.lua",
+			"events": {"count": {}}, "listen": ["count"],
+		}),
+		r#"local native = cartridge.load("native_fixture")
+		local calls = 0
+		cartridge.listen("count", function() calls = calls + 1; return native.twice(calls) end)"#,
+	);
+	let target = dir
+		.path()
+		.join("native/target/debug")
+		.join(module.file_name().unwrap());
+	let rebuild = || {
+		let _ = std::fs::remove_file(&target);
+		std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+		std::fs::copy(&module, &target).unwrap();
+		std::fs::File::options()
+			.write(true)
+			.open(&target)
+			.unwrap()
+			.set_modified(std::time::SystemTime::now())
+			.unwrap();
+	};
+	rebuild();
+	descriptor(dir.path(), &["native"]);
+	let host = boot(dir.path()).await;
+	let watcher = host.watch().unwrap();
+	active(&host, "native");
+	assert_eq!(
+		host.bail("count", json!(null)).await.unwrap(),
+		Some(json!(2))
+	);
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	rebuild();
+	tokio::time::sleep(crate::settings::host().watch_debounce() * 4).await;
+	active(&host, "native");
+	assert_eq!(
+		host.bail("count", json!(null)).await.unwrap(),
+		Some(json!(4)),
+		"a test build restarted the node"
+	);
+	host.replace("native").await.unwrap();
+	active(&host, "native");
+	assert_eq!(
+		host.bail("count", json!(null)).await.unwrap(),
+		Some(json!(2)),
+		"reload kept the old node"
+	);
+	watcher.abort();
+	host.stop().await;
+}
