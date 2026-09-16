@@ -253,6 +253,17 @@ impl Host {
 			.collect()
 	}
 
+	/// Bind the project's socket before composing, so a host that loses the
+	/// name to another fails here instead of running nodeless.
+	pub async fn listen(self: &Arc<Self>) -> Result<()> {
+		let _op = self.op.lock().await;
+		if self.inner.get().is_none() {
+			let listener = socket::listen(&self.socket_path()).await?;
+			self.publish_listener(listener);
+		}
+		Ok(())
+	}
+
 	pub async fn reconcile(self: &Arc<Self>) -> Result<()> {
 		let _op = self.op.lock().await;
 		if self.inner.get().is_none() && !self.deferred.load(std::sync::atomic::Ordering::SeqCst) {

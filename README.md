@@ -77,7 +77,7 @@ cargo test --workspace
 cartridge setup                   # make this directory a project: choose cartridges, write .cartridge/init.lua
 cartridge doctor                  # ask every composed cartridge whether it is healthy here
 cartridge trust [<dir>]           # record this project's Lua and manifests so this machine runs them
-cartridge run <event> '<json>'    # start the descriptor, send, print the first answer, stop
+cartridge run <event> '<json>'    # send on the project's host, starting it when none answers
 cartridge daemon                  # start the descriptor and keep it running
 cartridge call <event> '<json>'   # send on the running base, print the first answer
 cartridge send <event> '<json>'   # send on the running base, print every listener's outcome

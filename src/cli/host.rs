@@ -49,15 +49,6 @@ fn ignore_interrupt() -> Result<()> {
 	Ok(())
 }
 
-fn serve_beside(host: &Arc<Host>) -> tokio::task::JoinHandle<()> {
-	let host = host.clone();
-	tokio::spawn(async move {
-		if let Err(error) = socket::serve(host).await {
-			tracing::warn!(target: "cartridge", "host socket: {error}");
-		}
-	})
-}
-
 type Attached = (
 	cartridge::transport::rpc::Peer,
 	tokio::sync::mpsc::Receiver<cartridge::transport::rpc::Incoming>,
@@ -75,13 +66,28 @@ pub(crate) async fn attach(project: &Project) -> Result<Attached> {
 	// starting a competitor.
 	let grace = std::time::Duration::from_millis(1500);
 	loop {
-		if let Some(found) = client::served(project).await {
-			settle_remote(&found.0, settings.verify_timeout()).await;
-			return Ok(found);
-		}
-		if !spawned && started.elapsed() >= grace {
-			spawn_daemon(project)?;
-			spawned = true;
+		// A socket that answers but errors is retried through the grace, as a
+		// host mid-swap does; nothing is spawned while it answers or while a
+		// replacement is staged beside it.
+		match client::served(project).await {
+			Ok(Some(found)) => {
+				settle_remote(&found.0, settings.verify_timeout()).await;
+				return Ok(found);
+			}
+			Err(error) => {
+				if started.elapsed() >= grace && !socket::takeover_pending(&project.descriptor)? {
+					return Err(client::unanswered(project, error));
+				}
+			}
+			Ok(None) => {
+				if !spawned
+					&& started.elapsed() >= grace
+					&& !socket::takeover_pending(&project.descriptor)?
+				{
+					spawn_daemon(project)?;
+					spawned = true;
+				}
+			}
 		}
 		if tokio::time::Instant::now() >= deadline {
 			return Err(Error::Timeout(format!(
@@ -163,21 +169,10 @@ async fn settle_remote(peer: &cartridge::transport::rpc::Peer, timeout: std::tim
 }
 
 pub(crate) async fn run(project: &Project, key: &str, args: Value) -> Result<ExitCode> {
-	if let Some((peer, _incoming)) = client::served(project).await {
-		settle_remote(&peer, cartridge::settings::host().verify_timeout()).await;
-		let value = client::bail(&peer, key, args).await?;
-		if !value.is_null() {
-			println!("{value}");
-		}
-		return Ok(ExitCode::SUCCESS);
-	}
-	let host = host(project)?.private();
-	let served = serve_beside(&host);
-	let result = host.run(key, args).await;
-	served.abort();
-	match result? {
-		value if !value.is_null() => println!("{value}"),
-		_ => {}
+	let (peer, _incoming) = attach(project).await?;
+	let value = client::bail(&peer, key, args).await?;
+	if !value.is_null() {
+		println!("{value}");
 	}
 	Ok(ExitCode::SUCCESS)
 }
@@ -326,12 +321,17 @@ fn mcp_bridge_reply(line: &str, result: Result<Value>) -> Option<Value> {
 }
 
 pub(crate) async fn daemon(project: &Project, replace: bool) -> Result<ExitCode> {
-	let existing = client::served(project).await;
-	if existing.is_some() && !replace {
-		return Err(Error::Descriptor(format!(
+	let already = || {
+		Error::Descriptor(format!(
 			"a host already serves {}; `cartridge daemon --replace` takes over from it",
 			project.descriptor.display()
-		)));
+		))
+	};
+	let existing = client::served(project)
+		.await
+		.map_err(|error| client::unanswered(project, error))?;
+	if !replace && (existing.is_some() || socket::takeover_pending(&project.descriptor)?) {
+		return Err(already());
 	}
 	let host = host(project)?;
 	match existing {
@@ -342,6 +342,16 @@ pub(crate) async fn daemon(project: &Project, replace: bool) -> Result<ExitCode>
 			}
 		}
 		None => {
+			// Bound before composing: a daemon that lost the race exits here
+			// instead of running with no nodes.
+			if let Err(error) = host.listen().await {
+				host.stop().await;
+				return Err(if socket::answers(&host.socket_path()) {
+					already()
+				} else {
+					error
+				});
+			}
 			if let Err(error) = host.reconcile().await {
 				tracing::error!(target: "cartridge", cartridge = "init.lua", "{error}");
 			}

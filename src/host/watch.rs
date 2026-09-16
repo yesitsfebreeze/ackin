@@ -10,6 +10,7 @@ use super::Host;
 
 impl Host {
 	pub fn watch(self: &Arc<Self>) -> Result<tokio::task::JoinHandle<()>> {
+		self.stop_when_project_gone();
 		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<PathBuf>();
 		let mut watcher =
 			notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -56,6 +57,41 @@ impl Host {
 				}
 			}
 		}))
+	}
+
+	/// A host outlives no project: its directory or descriptor directory
+	/// missing on two consecutive ticks stops it. Directories only, so an
+	/// editor's save of `init.lua` never counts, and an unreadable path is
+	/// present. Its own task, so a long reconcile neither starves the tick nor
+	/// bursts two misses at once.
+	fn stop_when_project_gone(&self) {
+		let (dir, descriptor, stop) = (
+			self.dir.clone(),
+			self.descriptor.clone(),
+			self.stop_signal(),
+		);
+		tokio::spawn(async move {
+			let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+			tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+			let mut misses = 0;
+			loop {
+				tokio::select! {
+					() = stop.cancelled() => return,
+					_ = tick.tick() => {}
+				}
+				let gone = |path: &Path| matches!(path.try_exists(), Ok(false));
+				misses = if gone(&dir) || gone(&descriptor) {
+					misses + 1
+				} else {
+					0
+				};
+				if misses >= 2 {
+					tracing::warn!(target: "cartridge", dir = %dir.display(), "project gone, stopping");
+					stop.cancel();
+					return;
+				}
+			}
+		});
 	}
 
 	fn watch_sources(

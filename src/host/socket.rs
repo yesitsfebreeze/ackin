@@ -100,7 +100,7 @@ fn sweep(run: &Path) -> usize {
 			}
 			continue;
 		}
-		if is_socket(&entry) && !served(&path) && std::fs::remove_file(&path).is_ok() {
+		if is_socket(&entry) && !answers(&path) && std::fs::remove_file(&path).is_ok() {
 			removed += 1;
 		}
 	}
@@ -109,7 +109,7 @@ fn sweep(run: &Path) -> usize {
 
 /// Alive: a run directory whose host answers, or that holds a live pid.
 fn run_alive(run: &Path) -> bool {
-	served(&run.join("host.sock"))
+	answers(&run.join("host.sock"))
 		|| std::fs::read_dir(run).is_ok_and(|entries| {
 			entries.flatten().any(|entry| {
 				entry
@@ -142,13 +142,13 @@ pub fn sweep_all() -> Result<usize> {
 		// An earlier layout put `<tag>.sock` and `<tag>.token` at the base. The
 		// token is the command line's way in, so it goes only once its socket
 		// no longer answers.
-		let unanswered = |tag: &str| !served(&base.join(format!("{tag}.sock")));
+		let unanswered = |tag: &str| !answers(&base.join(format!("{tag}.sock")));
 		let gone = match name.rsplit_once('-') {
 			Some((_, pid)) if is_dir => pid.parse::<u32>().is_ok_and(|pid| !alive(pid)),
 			_ => match name.strip_suffix(".token") {
 				Some(tag) => unanswered(tag),
 				None => {
-					(name.ends_with(".sock") && !served(&path))
+					(name.ends_with(".sock") && !answers(&path))
 						|| (is_dir
 							&& std::fs::read_dir(&path).is_ok_and(|mut d| d.next().is_none()))
 				}
@@ -195,15 +195,39 @@ pub(crate) fn identity(_path: &Path) -> std::io::Result<(u64, u64)> {
 }
 
 #[cfg(unix)]
-fn served(path: &Path) -> bool {
+pub fn answers(path: &Path) -> bool {
 	std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
 // ponytail: Windows leaves nothing to distinguish without the pipe peer, so a
 // loose file there is never swept; the directory holds the pipe names anyway.
 #[cfg(windows)]
-fn served(_path: &Path) -> bool {
+pub fn answers(_path: &Path) -> bool {
 	true
+}
+
+/// A replacing host has staged `host.sock.<pid>` beside the name and not yet
+/// renamed it into place: the name may be missing for a moment, and nobody
+/// should start a competitor meanwhile.
+#[cfg(unix)]
+pub fn takeover_pending(descriptor: &Path) -> Result<bool> {
+	let run = run_dir(descriptor)?;
+	let Ok(entries) = std::fs::read_dir(&run) else {
+		return Ok(false);
+	};
+	Ok(entries.flatten().any(|entry| {
+		entry
+			.file_name()
+			.to_str()
+			.and_then(|n| n.strip_prefix("host.sock."))
+			.and_then(|pid| pid.parse::<u32>().ok())
+			.is_some_and(|pid| alive(pid) && answers(&entry.path()))
+	}))
+}
+
+#[cfg(windows)]
+pub fn takeover_pending(_descriptor: &Path) -> Result<bool> {
+	Ok(false)
 }
 
 #[cfg(unix)]

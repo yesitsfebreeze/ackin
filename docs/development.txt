@@ -33,7 +33,16 @@ own: `cartridge trust <its folder>`. `cartridge socket` prints the project's hos
 status`, `call`, `send`, `follow`, `reload`, `stop` and `sweep` talk to the host
 serving it. One host serves a project: `cartridge daemon` refuses when another
 already does and `cartridge daemon --replace` takes over from it in place,
-while `launch` and `mcp` attach to whichever host is there.
+while `run`, `launch` and `mcp` attach to whichever host is there, starting
+the daemon detached when none answers. They never compose on their own: a
+socket that answers but errors fails the command, naming the socket. A tool
+outside the runtime attaches with `cartridge run <event>` (or `cartridge call`)
+and never starts `cartridge daemon` itself.
+
+`cartridge stop` is the one way to stop the host. A daemon also exits when its
+project directory is removed. A host that accepts but never answers is
+recovered by `cartridge stop`, else by `kill <pid>`, where <pid> is the
+numeric directory beside `$(cartridge socket)` — never by process name.
 `cartridge mcp` hands this terminal's stdio to the cartridge listening to `mcp`,
 for an MCP client such as `claude mcp add cartridge -- cartridge mcp`.
 
