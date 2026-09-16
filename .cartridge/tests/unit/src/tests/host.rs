@@ -775,6 +775,49 @@ async fn a_pipe_wakes_the_node_from_outside() {
 	host.stop().await;
 }
 
+/// Without a Lua `fn`, answers go to `<pipe>.answers` in Rust, so a module's
+/// own threads get them even while a blocking handler holds the Lua state.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pipe_without_fn_answers_on_its_answers_fifo() {
+	use std::io::BufRead;
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"piped",
+		json!({"name": "piped", "entry": "init.lua", "events": {"path": {}, "echo": {}}, "listen": ["path", "echo"], "grant": {"exec": ["/bin/sh"]}}),
+		r#"local path = cartridge.pipe()
+		cartridge.listen("path", function() return path end)
+		cartridge.listen("echo", function(data) return data end)"#,
+	);
+	descriptor(dir.path(), &["piped"]);
+	let host = boot(dir.path()).await;
+	let path = host.bail("path", json!(null)).await.unwrap().unwrap();
+	let path = path.as_str().unwrap().to_owned();
+	let answers = std::fs::OpenOptions::new()
+		.read(true)
+		.write(true)
+		.open(format!("{path}.answers"))
+		.unwrap();
+	std::fs::write(&path, "{\"ask\":\"a\",\"bail\":\"echo\",\"args\":\"hi\"}\n").unwrap();
+	let line = tokio::task::spawn_blocking(move || {
+		let mut line = String::new();
+		std::io::BufReader::new(answers)
+			.read_line(&mut line)
+			.unwrap();
+		line
+	});
+	let line = tokio::time::timeout(Duration::from_secs(10), line)
+		.await
+		.unwrap()
+		.unwrap();
+	assert_eq!(
+		serde_json::from_str::<Value>(&line).unwrap(),
+		json!({"ask": "a", "result": "hi"})
+	);
+	host.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_helper_asks_the_base_while_answering() {
 	let dir = tempfile::tempdir().unwrap();

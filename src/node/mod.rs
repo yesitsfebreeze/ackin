@@ -428,19 +428,37 @@ async fn relay(ctx: &Ctx, value: &Value, answer: impl FnOnce(Value) + Send + 'st
 	true
 }
 
+/// Where a pipe's answers go without a Lua `fn`: a FIFO the module reads on
+/// its own thread. Answers through `fn` wait for the Lua state, which a module's
+/// blocking handler can hold for minutes; these never touch it.
+type Answers = Arc<tokio::sync::Mutex<tokio::fs::File>>;
+
 async fn pipe_lines(
 	reader: impl tokio::io::AsyncRead + Unpin,
 	lua: Lua,
 	ctx: Ctx,
 	f: Option<Function>,
+	answers: Option<Answers>,
 ) {
 	let mut lines = BufReader::new(reader).lines();
 	while let Ok(Some(line)) = lines.next_line().await {
 		let value: Value = serde_json::from_str(&line).unwrap_or(Value::String(line));
 		let answer = {
-			let (lua, f) = (lua.clone(), f.clone());
+			let (lua, f, answers) = (lua.clone(), f.clone(), answers.clone());
 			move |answer: Value| {
-				let Some(f) = f else { return };
+				let Some(f) = f else {
+					let Some(answers) = answers else { return };
+					tokio::spawn(async move {
+						let line = answer.to_string() + "\n";
+						// One writer at a time: an answer past PIPE_BUF is not
+						// atomic and would interleave with another.
+						let mut file = answers.lock().await;
+						if let Err(error) = file.write_all(line.as_bytes()).await {
+							tracing::warn!(target: "cartridge", "pipe answer: {error}");
+						}
+					});
+					return;
+				};
 				tokio::spawn(async move {
 					let run = async { f.call_async::<()>(lua.to_value(&answer)?).await };
 					if let Err(error) = run.await {
@@ -460,6 +478,31 @@ async fn pipe_lines(
 	}
 }
 
+/// A FIFO at `path`, unlinked on dispose, opened read and write.
+#[cfg(unix)]
+fn fifo(ctx: &Ctx, path: &Path) -> mlua::Result<std::fs::File> {
+	let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
+		.map_err(|e| external(e.to_string()))?;
+	if unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) } != 0 {
+		return Err(external(format!(
+			"{}: {}",
+			path.display(),
+			std::io::Error::last_os_error()
+		)));
+	}
+	{
+		let unlink = path.to_owned();
+		ctx.on_dispose(move || async move {
+			let _ = std::fs::remove_file(&unlink);
+		});
+	}
+	std::fs::OpenOptions::new()
+		.read(true)
+		.write(true)
+		.open(path)
+		.map_err(|e| external(format!("{}: {e}", path.display())))
+}
+
 #[cfg(unix)]
 fn pipe(
 	lua: &Lua,
@@ -473,35 +516,25 @@ fn pipe(
 		std::process::id(),
 		counter.fetch_add(1, Ordering::SeqCst)
 	));
-	let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
-		.map_err(|e| external(e.to_string()))?;
-	if unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) } != 0 {
-		return Err(external(format!(
-			"{}: {}",
-			path.display(),
-			std::io::Error::last_os_error()
-		)));
-	}
-	{
-		let unlink = path.clone();
-		ctx.on_dispose(move || async move {
-			let _ = std::fs::remove_file(&unlink);
-		});
-	}
 	// Held open by the node itself before init.lua goes on, so a writer's open
 	// never waits for a reader and readers never see EOF between writers.
-	let keep = std::fs::OpenOptions::new()
-		.read(true)
-		.write(true)
-		.open(&path)
-		.map_err(|e| external(format!("{}: {e}", path.display())))?;
+	let keep = fifo(ctx, &path)?;
+	let answers = match f {
+		Some(_) => None,
+		None => {
+			let path = PathBuf::from(format!("{}.answers", path.display()));
+			Some(Arc::new(tokio::sync::Mutex::new(
+				tokio::fs::File::from_std(fifo(ctx, &path)?),
+			)))
+		}
+	};
 	let (lua, ctx) = (lua.clone(), ctx.clone());
 	let reader = path.clone();
 	tokio::spawn(async move {
 		let Ok(file) = tokio::fs::File::open(&reader).await else {
 			return;
 		};
-		pipe_lines(file, lua, ctx, f).await;
+		pipe_lines(file, lua, ctx, f, answers).await;
 		drop(keep);
 	});
 	Ok(path.to_string_lossy().into_owned())
@@ -547,6 +580,7 @@ fn pipe(
 				lua.clone(),
 				ctx.clone(),
 				f.clone(),
+				None,
 			)
 			.await;
 		}
