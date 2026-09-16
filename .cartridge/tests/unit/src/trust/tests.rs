@@ -283,3 +283,21 @@ fn a_built_native_module_is_not_a_source_so_a_test_build_keeps_the_cartridge() {
 	let declared = crate::loader::resolve(&dir.path().join("x")).unwrap();
 	assert_eq!(declared.sources.len(), 2, "{:?}", declared.sources);
 }
+
+#[test]
+fn yolo_trusts_a_file_changed_after_the_record_but_still_lists_it_pending() {
+	let dir = project(&[(".cartridge/init.lua", "return {}")]);
+	record(dir.path()).unwrap();
+	crate::tests::write(dir.path(), ".cartridge/init.lua", "return { {} }");
+	let init = dir.path().join(".cartridge/init.lua");
+	let ambient = std::env::var_os(crate::settings::YOLO_ENV);
+	std::env::set_var(crate::settings::YOLO_ENV, "1");
+	let read = verify(&init);
+	let listed = pending(dir.path());
+	match ambient {
+		Some(value) => std::env::set_var(crate::settings::YOLO_ENV, value),
+		None => std::env::remove_var(crate::settings::YOLO_ENV),
+	}
+	assert_eq!(read.unwrap(), b"return { {} }");
+	assert_eq!(listed.unwrap(), vec![init.canonicalize().unwrap()]);
+}

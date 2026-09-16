@@ -87,8 +87,19 @@ fn own(path: &Path, file: &Path) -> Result<bool> {
 }
 
 /// Hands back the bytes checked — the same read — so a caller never opens the
-/// file a second, unchecked time (TOCTOU).
+/// file a second, unchecked time (TOCTOU). Under `--yolo` every file is
+/// trusted, including one edited after the record was written, so a saved
+/// `init.lua` or `cartridge.json` reloads instead of failing its cartridge.
 pub fn verify(path: &Path) -> Result<Vec<u8>> {
+	if crate::settings::yolo() {
+		return std::fs::read(path).map_err(|e| Error::file(path, e));
+	}
+	strict(path)
+}
+
+/// The record's answer regardless of mode: what `pending` lists, and what
+/// `verify` enforces outside yolo.
+fn strict(path: &Path) -> Result<Vec<u8>> {
 	let bytes = std::fs::read(path).map_err(|e| Error::file(path, e))?;
 	let file = path.canonicalize().map_err(|e| Error::file(path, e))?;
 	if !own(path, &file)? {
@@ -217,7 +228,7 @@ pub fn pending(dir: &Path) -> Result<Vec<PathBuf>> {
 	let project = dir.canonicalize().map_err(|e| Error::file(dir, e))?;
 	let mut found = Vec::new();
 	collect(&project, &mut found)?;
-	found.retain(|file| verify(file).is_err());
+	found.retain(|file| strict(file).is_err());
 	Ok(found)
 }
 

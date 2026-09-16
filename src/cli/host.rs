@@ -116,6 +116,9 @@ fn spawn_daemon(project: &Project) -> Result<()> {
 		.open(&log)
 		.map_err(|e| Error::file(&log, e))?;
 	let mut command = std::process::Command::new(&exe);
+	if cartridge::settings::yolo() {
+		command.arg("--yolo");
+	}
 	command
 		.arg("--dir")
 		.arg(&project.dir)
