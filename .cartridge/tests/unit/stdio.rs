@@ -52,3 +52,45 @@ fn only_trust_refusals_prompt_an_attach_reload() {
 	assert_eq!(ids, [json!("proxy")]);
 	assert!(untrusted(&json!([{"id":"memo","state":"active"}])).is_empty());
 }
+
+#[test]
+fn settled_when_the_key_is_active() {
+	let status = json!([
+		{"id":"memo","state":"active","listen":["memo"]},
+		{"id":"mcp","state":"active","listen":["mcp","tools"]},
+		{"id":"slow","state":"starting","listen":[]}
+	]);
+	assert!(settled(&status, "mcp"));
+}
+
+#[test]
+fn settled_not_while_the_key_is_starting() {
+	// The defect: the composition holds one picture while `mcp` is still
+	// starting. The decision is a pure function of that picture, so seeing it
+	// again is the same answer — there is no count that could end the wait.
+	let status = json!([
+		{"id":"memo","state":"active","listen":["memo"]},
+		{"id":"mcp","state":"starting","listen":["mcp"]},
+		{"id":"prd","state":"waiting","listen":["prd"]}
+	]);
+	assert!(!settled(&status, "mcp"));
+	assert!(!settled(&status, "mcp"));
+}
+
+#[test]
+fn settled_when_nothing_is_left_starting() {
+	// `mcp` is served by nobody and nothing can change that, so the caller
+	// fails fast and `explain` names the cause.
+	let status = json!([
+		{"id":"memo","state":"active","listen":["memo"]},
+		{"id":"broken","state":"failed","error":"init.lua:3: syntax error"}
+	]);
+	assert!(settled(&status, "mcp"));
+}
+
+#[test]
+fn settled_not_on_an_empty_composition() {
+	assert!(!settled(&json!([]), "mcp"));
+	assert!(!settled(&Value::Null, "mcp"));
+	assert!(!settled(&json!({"id":"mcp","state":"active"}), "mcp"));
+}

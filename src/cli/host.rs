@@ -55,8 +55,10 @@ type Attached = (
 );
 
 /// The one host of this project, started detached when none answers, and
-/// its composition settled before the connection is handed back.
-pub(crate) async fn attach(project: &Project) -> Result<Attached> {
+/// its composition settled before the connection is handed back. `key` is
+/// the event this caller is about to send: the wait ends when a cartridge
+/// serving it is active, not when the picture merely stops changing.
+pub(crate) async fn attach(project: &Project, key: &str) -> Result<Attached> {
 	let settings = cartridge::settings::host();
 	let mut spawned = false;
 	let started = tokio::time::Instant::now();
@@ -71,7 +73,10 @@ pub(crate) async fn attach(project: &Project) -> Result<Attached> {
 		// replacement is staged beside it.
 		match client::served(project).await {
 			Ok(Some(found)) => {
-				settle_remote(&found.0, settings.verify_timeout()).await;
+				// `startup_timeout_secs` is the budget a cartridge already has
+				// to serve and apply, so it is the composition's startup
+				// deadline too; `verify_timeout_secs` (300 s) is `verify`'s.
+				settle_remote(&found.0, key, settings.startup_timeout()).await;
 				return Ok(found);
 			}
 			Err(error) => {
@@ -177,15 +182,22 @@ fn spawn_daemon(project: &Project) -> Result<()> {
 	Ok(())
 }
 
-/// Wait until the remote host's cartridges stop changing state: none
-/// starting, and the same picture three polls in a row.
-async fn settle_remote(peer: &cartridge::transport::rpc::Peer, timeout: std::time::Duration) {
+/// Wait until a cartridge serving `key` is active, or nothing is left
+/// starting, or `timeout` passes. A repeated identical picture is not an
+/// answer: a cold host holds one for a few hundred milliseconds while its
+/// cartridges are still starting, and the caller's listener is not up yet.
+async fn settle_remote(
+	peer: &cartridge::transport::rpc::Peer,
+	key: &str,
+	timeout: std::time::Duration,
+) {
 	let deadline = tokio::time::Instant::now() + timeout;
-	let mut last = Value::Null;
-	let mut stable = 0;
 	let mut reloaded = false;
-	while tokio::time::Instant::now() < deadline {
-		let Ok(status) = peer.call("status", Value::Null).await else {
+	while let Some(left) = deadline.checked_duration_since(tokio::time::Instant::now()) {
+		// A host that answers its socket but never its status would hang this
+		// loop on an untimed oneshot, so the deadline bounds each call too.
+		let Ok(Ok(status)) = tokio::time::timeout(left, peer.call("status", Value::Null)).await
+		else {
 			return;
 		};
 		// A daemon that refused a changed file keeps the cartridge failed after
@@ -201,23 +213,31 @@ async fn settle_remote(peer: &cartridge::transport::rpc::Peer, timeout: std::tim
 				continue;
 			}
 		}
-		let starting = status.as_array().is_some_and(|all| {
-			!all.is_empty()
-				&& all
-					.iter()
-					.any(|s| matches!(s["state"].as_str(), Some("starting" | "waiting")))
-		});
-		let empty = status.as_array().is_none_or(Vec::is_empty);
-		if !starting && !empty {
+		if settled(&status, key) {
 			return;
 		}
-		stable = if status == last { stable + 1 } else { 0 };
-		if stable >= 3 && !empty {
-			return;
-		}
-		last = status;
 		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 	}
+}
+
+/// Whether the wait can end on this status: a cartridge serving `key` is
+/// active, or nothing is left starting and waiting longer cannot change that.
+fn settled(status: &Value, key: &str) -> bool {
+	let Some(all) = status.as_array().filter(|all| !all.is_empty()) else {
+		return false;
+	};
+	let serves = all.iter().any(|s| {
+		s["state"] == "active"
+			&& s["listen"]
+				.as_array()
+				.is_some_and(|l| l.iter().any(|k| k == key))
+	});
+	// Nothing left to start and `key` still unserved: waiting out the deadline
+	// would not change that, so let the caller fail and name it.
+	serves
+		|| !all
+			.iter()
+			.any(|s| matches!(s["state"].as_str(), Some("starting" | "waiting")))
 }
 
 /// Failed cartridges whose error is a trust refusal.
@@ -258,7 +278,7 @@ async fn explain(peer: &cartridge::transport::rpc::Peer, key: &str, error: Error
 }
 
 pub(crate) async fn run(project: &Project, key: &str, args: Value) -> Result<ExitCode> {
-	let (peer, _incoming) = attach(project).await?;
+	let (peer, _incoming) = attach(project, key).await?;
 	let value = client::bail(&peer, key, args).await?;
 	if !value.is_null() {
 		println!("{value}");
@@ -273,7 +293,7 @@ pub(crate) async fn launch(
 	args: Vec<String>,
 ) -> Result<ExitCode> {
 	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
-	let (peer, _incoming) = attach(project).await?;
+	let (peer, _incoming) = attach(project, "proxy").await?;
 	let launch = match client::bail(&peer, "proxy", request).await {
 		Ok(launch) => launch,
 		Err(error) => return Err(explain(&peer, "proxy", error).await),
@@ -319,7 +339,7 @@ async fn spawn(launch: Value) -> Result<Value> {
 }
 
 pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
-	let attached = attach(project).await?;
+	let attached = attach(project, "mcp").await?;
 	stdio(Backend {
 		project: project.clone(),
 		instance: instance(),
@@ -360,7 +380,7 @@ impl Backend {
 			Err(_) if peer.is_closed() => {
 				let mut attached = self.attached.lock().await;
 				if attached.0.is_closed() {
-					*attached = attach(&self.project).await?;
+					*attached = attach(&self.project, "mcp").await?;
 				}
 				let peer = attached.0.clone();
 				drop(attached);
