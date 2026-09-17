@@ -1152,7 +1152,11 @@ impl LocalListener {
 					self.socket_path.display(),
 					cred.uid()
 				),
-				Err(error) => tracing::warn!(
+				// A peer that hung up before its identity could be read is an
+				// ordinary liveness probe, not a refusal worth a warning: at
+				// warn level it was 669 of the 720 lines in a daemon log and
+				// buried every real error.
+				Err(error) => tracing::debug!(
 					target: "cartridge",
 					"{}: refused a connection whose credentials do not read: {error}",
 					self.socket_path.display()

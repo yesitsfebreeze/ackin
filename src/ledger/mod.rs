@@ -124,7 +124,13 @@ fn read_entry(folder: &Path, path: String) -> Installed {
 			dir: folder.to_path_buf(),
 			name: doc.name,
 			listen: doc.listen,
-			needs: doc.needs,
+			// `?` says the cartridge does not wait for the provider at start; the
+			// provider still has to be installed, so the key binds like any other.
+			needs: doc
+				.needs
+				.iter()
+				.map(|key| key.strip_suffix('?').unwrap_or(key).to_owned())
+				.collect(),
 			unread: None,
 		},
 		Err(e) => Installed {

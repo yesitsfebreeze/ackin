@@ -386,12 +386,27 @@ impl Ctx {
 				},
 			}
 		};
-		match prepared.timeout {
+		let started = std::time::Instant::now();
+		let outcome = match prepared.timeout {
 			Some(timeout) => tokio::time::timeout(timeout, call)
 				.await
 				.unwrap_or(Outcome::TimedOut { from }),
 			None => call.await,
+		};
+		// Every path out of an event — emit, bail, call — funnels through here,
+		// so this is the one place a failure is certain to reach the daemon log.
+		// Without it a timeout only ever reaches the caller, and the proxy's
+		// advice to read the log names a file that never recorded the cause.
+		if let Some(error) = outcome.error() {
+			tracing::warn!(
+				target: "cartridge",
+				trace = %prepared.trace,
+				event = name,
+				ms = started.elapsed().as_millis() as u64,
+				"{error}"
+			);
 		}
+		outcome
 	}
 
 	pub fn emit(&self, name: &str, data: Value) -> Result<()> {

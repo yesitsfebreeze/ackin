@@ -16,6 +16,13 @@
       "max": 3600,
       "doc": "How long a cartridge has to serve and apply, and how long a cartridge retries reaching another."
     },
+    "idle_timeout_secs": {
+      "type": "integer",
+      "default": 3600,
+      "min": 0,
+      "max": 604800,
+      "doc": "How long a host started in the background — by `launch` or `mcp`, never by `cartridge daemon` itself — keeps serving with no client attached before it stops. The next command starts one again. 0 keeps it running forever, which is how a throwaway project leaves a whole node tree behind."
+    },
     "event_timeout_ms": {
       "type": "integer",
       "default": 60000,

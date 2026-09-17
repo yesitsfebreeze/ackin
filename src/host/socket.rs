@@ -342,7 +342,7 @@ pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
 #[path = "../../.cartridge/tests/unit/src/host/socket.rs"]
 mod tests;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 enum Caller {
 	Host,
 	Cartridge,
@@ -389,6 +389,11 @@ async fn connection(
 		peer.flushed().await;
 		return;
 	};
+	// Only a client keeps the host busy; a node is the host's own child.
+	let client = caller == Caller::Host;
+	if client {
+		host.client_joined();
+	}
 	while let Some(message) = incoming.recv().await {
 		if let Incoming::Request(request) = message {
 			tokio::spawn(handle(
@@ -399,6 +404,9 @@ async fn connection(
 				stop.clone(),
 			));
 		}
+	}
+	if client {
+		host.client_left();
 	}
 }
 

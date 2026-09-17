@@ -637,6 +637,36 @@ async fn a_glob_in_needs_names_what_the_others_listen_to() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn two_cartridges_that_need_each_other_both_start_when_one_asks_with_a_question_mark() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"voice",
+		json!({"name": "voice", "entry": "init.lua", "events": {"tool.speak": {}}, "listen": ["tool.speak"], "needs": ["work?"]}),
+		r#"cartridge.listen("tool.speak", function() return cartridge.bail("work", {}) end)"#,
+	);
+	cartridge(
+		dir.path(),
+		"worker",
+		json!({"name": "worker", "entry": "init.lua", "events": {"work": {}}, "listen": ["work"], "needs": ["tool.*"]}),
+		r#"cartridge.listen("work", function() return "worked" end)"#,
+	);
+	descriptor(dir.path(), &["voice", "worker"]);
+	let host = boot(dir.path()).await;
+	// Neither waits for the other: `work?` is a need for sending, not for
+	// starting, and the worker's `tool.*` still binds the voice's own tool.
+	active(&host, "voice");
+	let worker = active(&host, "worker");
+	assert_eq!(worker.needs, vec!["tool.speak".to_owned()]);
+	assert_eq!(
+		host.bail("tool.speak", json!(null)).await.unwrap(),
+		Some(json!("worked")),
+		"the optional need is still a send permission"
+	);
+	host.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_node_serves_other_events_while_a_handler_waits() {
 	let dir = tempfile::tempdir().unwrap();
 	cartridge(

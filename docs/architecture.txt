@@ -171,6 +171,15 @@ connecting at any moment reaches a base whose cartridges are active, and the
 reuse-port listeners above keep every node address through the swap. This is
 how a rebuilt binary takes over from the one running.
 
+A base started in the background is given `--idle-timeout`, settled from
+`host.idle_timeout_secs` (one hour by default). It stops when no client has
+been attached for that long; nodes do not count, since they are its own
+children and stay connected for as long as it serves. The next command starts
+one again, so being wrong costs a cold start. A `daemon` started by hand has
+no timeout unless it is passed one: a throwaway project — a test fixture in a
+temporary directory — is what leaves a base and a node per cartridge serving
+nobody, and that is what the timeout ends.
+
 A base that is killed rather than stopped leaves its socket and its run
 directory behind. A starting base collects its own project's; `cartridge
 sweep` collects every project's, removing only what no listener answers on

@@ -22,6 +22,7 @@ fn plan(id: &str, events: &[(&str, Option<u64>)], needs: &[&str], listen: &[&str
 			})
 			.collect(),
 		needs: strings(needs),
+		optional: Vec::new(),
 		listen: strings(listen),
 		config: serde_json::Value::Null,
 		grant: Grant::default(),

@@ -103,7 +103,10 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 		Command::Run { event, data } => host::run(project, &event, json_arg(&data)?).await,
 		Command::Launch { agent, model, args } => host::launch(project, agent, model, args).await,
 		Command::Mcp => host::mcp(project).await,
-		Command::Daemon { replace } => host::daemon(project, replace).await,
+		Command::Daemon {
+			replace,
+			idle_timeout,
+		} => host::daemon(project, replace, idle_timeout).await,
 		Command::Verify { cartridge } => host::verify(project, cartridge.as_deref()).await,
 		Command::Call { event, data } => {
 			client::ask(

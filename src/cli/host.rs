@@ -101,6 +101,39 @@ pub(crate) async fn attach(project: &Project) -> Result<Attached> {
 	}
 }
 
+/// Stop a host nothing is using. A background host outlives the command that
+/// started it on purpose — the next one attaches to it warm — but a project
+/// that was a temporary directory has no next command, and what is left is a
+/// node per cartridge serving nobody. The next command starts one again, so
+/// the only cost of being wrong is one cold start.
+fn stop_when_idle(
+	host: &Arc<Host>,
+	timeout: std::time::Duration,
+) -> Option<tokio::task::JoinHandle<()>> {
+	if timeout.is_zero() {
+		return None;
+	}
+	let (host, stop) = (Arc::downgrade(host), host.stop_signal());
+	Some(tokio::spawn(async move {
+		// Checked often enough that the stop lands near the timeout, rarely
+		// enough that an idle host costs nothing to keep watching.
+		let mut tick = tokio::time::interval(timeout.min(std::time::Duration::from_secs(30)));
+		loop {
+			tick.tick().await;
+			let Some(host) = host.upgrade() else { return };
+			if host.idle_for() >= timeout {
+				tracing::info!(
+					target: "cartridge",
+					seconds = timeout.as_secs(),
+					"no client for the idle timeout; stopping"
+				);
+				stop.cancel();
+				return;
+			}
+		}
+	}))
+}
+
 fn daemon_log(project: &Project) -> std::path::PathBuf {
 	project.descriptor.join("daemon.log")
 }
@@ -123,6 +156,8 @@ fn spawn_daemon(project: &Project) -> Result<()> {
 		.arg("--dir")
 		.arg(&project.dir)
 		.arg("daemon")
+		.arg("--idle-timeout")
+		.arg(cartridge::settings::host().idle_timeout_secs.to_string())
 		.stdin(std::process::Stdio::null())
 		.stdout(file.try_clone().map_err(|e| Error::file(&log, e))?)
 		.stderr(file);
@@ -377,7 +412,11 @@ fn mcp_bridge_reply(line: &str, result: Result<Value>) -> Option<Value> {
 	}
 }
 
-pub(crate) async fn daemon(project: &Project, replace: bool) -> Result<ExitCode> {
+pub(crate) async fn daemon(
+	project: &Project,
+	replace: bool,
+	idle_timeout: u64,
+) -> Result<ExitCode> {
 	let already = || {
 		Error::Descriptor(format!(
 			"a host already serves {}; `cartridge daemon --replace` takes over from it",
@@ -414,6 +453,7 @@ pub(crate) async fn daemon(project: &Project, replace: bool) -> Result<ExitCode>
 			}
 		}
 	}
+	let idle = stop_when_idle(&host, std::time::Duration::from_secs(idle_timeout));
 	let watcher = host.watch();
 	if let Err(error) = &watcher {
 		tracing::error!(target: "cartridge", "watch: {error}");
@@ -426,6 +466,9 @@ pub(crate) async fn daemon(project: &Project, replace: bool) -> Result<ExitCode>
 		"serving"
 	);
 	host.stopped().await;
+	if let Some(idle) = idle {
+		idle.abort();
+	}
 	if let Ok(watcher) = watcher {
 		watcher.abort();
 	}

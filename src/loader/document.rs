@@ -149,9 +149,25 @@ impl Cartridge {
 	fn check(&self, manifest: &Path) -> Result<()> {
 		let at = |what: &str| Error::document(manifest, what);
 		let key = |field: &str, k: &String| -> Result<()> {
-			let glob = field == "needs" && k.len() > 1 && k.ends_with('*');
-			let exact = if glob { &k[..k.len() - 1] } else { k.as_str() };
-			if exact.trim().is_empty() || exact.contains('*') || exact.contains('\0') {
+			// A need may end in `?`: the cartridge may send that event, but does
+			// not wait for its provider. That is how two cartridges that need
+			// each other both start. It marks one exact key, never a glob.
+			let asked = if field == "needs" {
+				k.strip_suffix('?').unwrap_or(k)
+			} else {
+				k.as_str()
+			};
+			let glob = field == "needs" && asked.len() > 1 && asked.ends_with('*');
+			let exact = if glob {
+				&asked[..asked.len() - 1]
+			} else {
+				asked
+			};
+			if exact.trim().is_empty()
+				|| exact.contains('*')
+				|| exact.contains('?')
+				|| exact.contains('\0')
+			{
 				return Err(at(&format!(
 					"`{field}` entry `{k}` must be a nonempty exact key"
 				)));

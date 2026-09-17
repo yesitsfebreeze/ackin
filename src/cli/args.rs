@@ -51,6 +51,12 @@ pub(crate) enum Command {
 		/// beside it, take the socket, then stop it
 		#[arg(long)]
 		replace: bool,
+		/// Stop after this many seconds with no client attached. This is what
+		/// a background host started by `launch` or `mcp` is given, so a
+		/// throwaway project does not keep a node tree alive forever; 0, the
+		/// default of a daemon started by hand, serves until it is stopped
+		#[arg(long, default_value_t = 0)]
+		idle_timeout: u64,
 	},
 	/// Start the harness proxy and run an agent against it: `cartridge launch claude -- -p hi`
 	Launch {

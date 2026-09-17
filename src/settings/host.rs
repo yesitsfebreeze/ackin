@@ -26,6 +26,7 @@ pub fn host_specs() -> &'static Specs {
 pub struct Host {
 	pub lifecycle_queue: usize,
 	pub startup_timeout_secs: u64,
+	pub idle_timeout_secs: u64,
 	pub event_timeout_ms: u64,
 	pub shutdown_timeout_secs: u64,
 	pub verify_timeout_secs: u64,

@@ -453,13 +453,18 @@ pub fn subscribe() {
 		EnvFilter::try_from_env("CARTRIDGE_LOG").unwrap_or_else(|_| EnvFilter::new("warn"));
 	let stderr = tracing_subscriber::fmt::layer()
 		.with_writer(std::io::stderr)
-		.with_target(false)
-		.without_time()
-		.with_filter(filter);
-	let _ = tracing_subscriber::registry()
-		.with(stderr)
-		.with(Layer::default())
-		.try_init();
+		.with_target(false);
+	let registry = tracing_subscriber::registry().with(Layer::default());
+	// A terminal reads better without a time on every line; the daemon's stderr
+	// is a log file that outlives the run, where a line with no time cannot be
+	// placed against a session, a request or another line.
+	if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+		let _ = registry
+			.with(stderr.without_time().with_filter(filter))
+			.try_init();
+	} else {
+		let _ = registry.with(stderr.with_filter(filter)).try_init();
+	}
 }
 
 #[cfg(test)]

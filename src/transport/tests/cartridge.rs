@@ -406,3 +406,41 @@ async fn a_send_reconnects_after_the_listener_restarts() {
 	);
 	drop(restarted.await.unwrap());
 }
+
+#[tokio::test]
+async fn a_listener_that_does_not_answer_reaches_the_log() {
+	use std::sync::{Arc, Mutex};
+	#[derive(Clone, Default)]
+	struct Sink(Arc<Mutex<Vec<u8>>>);
+	impl std::io::Write for Sink {
+		fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+			self.0.lock().expect("sink lock").extend_from_slice(buf);
+			Ok(buf.len())
+		}
+		fn flush(&mut self) -> std::io::Result<()> {
+			Ok(())
+		}
+	}
+	impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Sink {
+		type Writer = Sink;
+		fn make_writer(&'a self) -> Sink {
+			self.clone()
+		}
+	}
+	let sink = Sink::default();
+	let subscriber = tracing_subscriber::fmt()
+		.with_writer(sink.clone())
+		.with_max_level(tracing::Level::WARN)
+		.finish();
+	let _guard = tracing::subscriber::set_default(subscriber);
+	let (_dir, _a, b, _) = pair().await;
+	assert_eq!(
+		b.ctx.gather("slow", json!(null)).await,
+		Ok(vec![Outcome::TimedOut { from: "a".into() }])
+	);
+	let logged = String::from_utf8(sink.0.lock().expect("sink lock").clone()).expect("utf-8 log");
+	assert!(
+		logged.contains("a did not answer in time") && logged.contains("slow"),
+		"the timeout must name the event in the log: {logged}"
+	);
+}

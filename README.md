@@ -25,7 +25,9 @@ Early (`0.1.0`). Interfaces change without notice.
 ## Concepts
 
 - **Cartridge**: `cartridge.json` declares `events` (name, description,
-  schema), `listen` (listened), `needs` (must have a listener), `grant` (machine
+  schema), `listen` (listened), `needs` (must have a listener; `name?` may be
+  sent without waiting for its provider to start, which is how two cartridges
+  that need each other both come up), `grant` (machine
   access and named environment variables) and `settings`. `init.lua` registers into the base. A grant is
   compiled into an operating-system policy the node starts inside —
   `sandbox-exec` on macOS, Landlock plus a seccomp socket filter on Linux; a

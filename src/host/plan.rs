@@ -18,6 +18,10 @@ pub struct Plan {
 	pub entry_sha256: String,
 	pub events: BTreeMap<String, Event>,
 	pub needs: Vec<String>,
+	/// The needs declared with a `?`: the cartridge may send them, and starts
+	/// without waiting for their provider. Two cartridges that need each other
+	/// both start when one side asks optionally.
+	pub optional: Vec<String>,
 	pub listen: Vec<String>,
 	pub config: serde_json::Value,
 	pub grant: Grant,
@@ -30,8 +34,13 @@ pub struct Plan {
 impl Plan {
 	/// Includes each event's schema, not just its name: a schema-only change
 	/// must still register as a wiring change.
-	pub(crate) fn wiring(&self) -> (&BTreeMap<String, Event>, &[String], &[String]) {
-		(&self.events, &self.needs, &self.listen)
+	pub(crate) fn wiring(&self) -> (&BTreeMap<String, Event>, &[String], &[String], &[String]) {
+		(&self.events, &self.needs, &self.optional, &self.listen)
+	}
+
+	/// Whether this cartridge waits for `name` before it starts.
+	pub(crate) fn waits_for(&self, name: &str) -> bool {
+		!self.optional.iter().any(|key| key == name)
 	}
 
 	pub(crate) fn sends(&self, name: &str) -> bool {
@@ -104,7 +113,18 @@ impl Host {
 		let mut listen = declared.listen.clone();
 		exact(&listen)?;
 		dedup(&mut listen);
-		let mut needs = declared.needs.clone();
+		let mut optional = Vec::new();
+		let mut needs: Vec<String> = declared
+			.needs
+			.iter()
+			.map(|key| match key.strip_suffix('?') {
+				Some(base) => {
+					optional.push(base.to_owned());
+					base.to_owned()
+				}
+				None => key.clone(),
+			})
+			.collect();
 		if needs.iter().any(|k| k.ends_with('*')) {
 			let mut listened = Vec::new();
 			for other in self
@@ -123,6 +143,8 @@ impl Host {
 		needs = configured(needs, &config)?;
 		exact(&needs)?;
 		dedup(&mut needs);
+		optional.retain(|key| needs.contains(key));
+		dedup(&mut optional);
 		let grant = self.expand_grant(&declared.grant, &config)?;
 		let listener = declared
 			.listener
@@ -139,6 +161,7 @@ impl Host {
 			entry_sha256: declared.entry_sha256.clone(),
 			events: declared.events.clone(),
 			needs,
+			optional,
 			listen,
 			config,
 			grant,

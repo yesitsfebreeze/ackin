@@ -85,6 +85,13 @@ impl Slot {
 	}
 }
 
+fn unix_time() -> u64 {
+	std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.unwrap_or_default()
+		.as_secs()
+}
+
 pub struct Host {
 	pub(crate) dir: PathBuf,
 	pub(crate) descriptor: PathBuf,
@@ -110,6 +117,11 @@ pub struct Host {
 	/// The socket file this host published, so a stop unlinks its own and
 	/// never a successor's.
 	published: Mutex<Option<(u64, u64)>>,
+	/// Clients attached right now, and when the last one left. Nodes are not
+	/// clients: they are this host's own children and are connected for as
+	/// long as it serves, so counting them would mean no host is ever idle.
+	clients: std::sync::atomic::AtomicI64,
+	idle_since: std::sync::atomic::AtomicU64,
 	/// Listeners bound on behalf of nodes (a manifest's `listener`), kept
 	/// across a node's restarts and handed down as an inherited fd.
 	#[cfg(unix)]
@@ -153,6 +165,8 @@ impl Host {
 			deferred: std::sync::atomic::AtomicBool::new(false),
 			private: std::sync::atomic::AtomicBool::new(false),
 			published: Mutex::new(None),
+			clients: std::sync::atomic::AtomicI64::new(0),
+			idle_since: std::sync::atomic::AtomicU64::new(unix_time()),
 			#[cfg(unix)]
 			tcp: Mutex::default(),
 		}))
@@ -179,6 +193,27 @@ impl Host {
 
 	pub(crate) fn node_token(&self, id: &str) -> String {
 		self.node_tokens.lock().get(id).cloned().unwrap_or_default()
+	}
+
+	pub(crate) fn client_joined(&self) {
+		self.clients
+			.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+	}
+
+	pub(crate) fn client_left(&self) {
+		self.clients
+			.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+		self.idle_since
+			.store(unix_time(), std::sync::atomic::Ordering::SeqCst);
+	}
+
+	/// How long this host has served no client, and zero while one is attached.
+	pub fn idle_for(&self) -> std::time::Duration {
+		if self.clients.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+			return std::time::Duration::ZERO;
+		}
+		let since = self.idle_since.load(std::sync::atomic::Ordering::SeqCst);
+		std::time::Duration::from_secs(unix_time().saturating_sub(since))
 	}
 
 	pub fn stop_signal(&self) -> tokio_util::sync::CancellationToken {
@@ -229,9 +264,10 @@ impl Host {
 					State::Waiting => needs
 						.iter()
 						.filter(|key| {
-							!listeners.get(*key).is_some_and(|ids| {
-								ids.iter().any(|id| active.contains(id.as_str()))
-							})
+							plan.is_some_and(|p| p.waits_for(key))
+								&& !listeners.get(*key).is_some_and(|ids| {
+									ids.iter().any(|id| active.contains(id.as_str()))
+								})
 						})
 						.cloned()
 						.collect(),
@@ -406,9 +442,10 @@ impl Host {
 						continue;
 					};
 					let served = plan.needs.iter().all(|key| {
-						listeners
-							.get(key)
-							.is_some_and(|ids| ids.iter().any(|id| active.contains(id)))
+						!plan.waits_for(key)
+							|| listeners
+								.get(key)
+								.is_some_and(|ids| ids.iter().any(|id| active.contains(id)))
 					});
 					if served {
 						slot.state = State::Starting;
