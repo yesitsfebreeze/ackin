@@ -322,10 +322,22 @@ pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
 	let attached = attach(project).await?;
 	stdio(Backend {
 		project: project.clone(),
+		instance: instance(),
 		attached: Arc::new(tokio::sync::Mutex::new(attached)),
 	})
 	.await?;
 	Ok(ExitCode::SUCCESS)
+}
+
+/// This bridge's identity to the one mcp node: the client on this stdio, not
+/// this process. The node keys that client's session and its in-flight calls
+/// by it, so it must not repeat on a pid the system hands out again.
+fn instance() -> String {
+	let since = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map(|d| d.as_nanos())
+		.unwrap_or_default();
+	format!("{}-{since}", std::process::id())
 }
 
 /// The host this bridge talks to. A host replaced under it (`daemon
@@ -334,12 +346,15 @@ pub(crate) async fn mcp(project: &Project) -> Result<ExitCode> {
 #[derive(Clone)]
 struct Backend {
 	project: Project,
+	/// The attached instance this stdio is; sent with every line, because one
+	/// node serves every `cartridge mcp` on the daemon.
+	instance: String,
 	attached: Arc<tokio::sync::Mutex<Attached>>,
 }
 
 impl Backend {
 	async fn message(&self, line: &str) -> Result<Value> {
-		let data = json!({ "op": "message", "line": line });
+		let data = json!({ "op": "message", "line": line, "instance": self.instance });
 		let peer = self.attached.lock().await.0.clone();
 		match client::bail(&peer, "mcp", data.clone()).await {
 			Err(_) if peer.is_closed() => {
