@@ -5,6 +5,7 @@ mod listing;
 mod manual;
 mod project;
 mod settings;
+mod scope;
 mod setup;
 mod trust;
 mod width;
@@ -100,6 +101,7 @@ fn dispatch() -> ExitCode {
 
 async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 	match command {
+		Command::Scope { once, python } => scope::run(project, once, python.as_deref()),
 		Command::Run { event, data } => host::run(project, &event, json_arg(&data)?).await,
 		Command::Launch { agent, model, args } => host::launch(project, agent, model, args).await,
 		Command::Mcp => host::mcp(project).await,

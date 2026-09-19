@@ -3,6 +3,7 @@
 //! live providers each time, so a cartridge that leaves the composition takes
 //! its types and its facts with it, and nothing has to be retracted.
 
+pub(crate) mod activity;
 mod admit;
 mod ask;
 mod expand;
@@ -13,6 +14,7 @@ mod registry;
 mod render;
 mod search;
 mod tool;
+mod tree;
 mod world;
 
 use serde_json::{json, Value};
@@ -39,12 +41,18 @@ const MAX_DEPTH: u64 = 4;
 const LIMIT: usize = 256;
 
 impl Host {
-	/// The `asp` service: `{op: types | expand | search | actions | act}`.
+	/// The `asp` service: `{op: types | expand | search | actions | act | activity}`.
 	/// `format: "text"` answers compact lines instead of JSON.
 	pub async fn asp(&self, request: Value) -> Result<Value> {
 		let op = request["op"].as_str().unwrap_or_default().to_owned();
 		let text = request["format"] == "text";
+		let observe = request["observe"] != false;
+		let entity = request["entity"].as_str().map(str::to_owned);
 		let answer = self.asp_answer(request).await?;
+		if observe && matches!(op.as_str(), "search" | "expand" | "actions" | "act") {
+			self.asp_activity
+				.record(&op, entity.into_iter().collect(), Some(&answer));
+		}
 		Ok(match text {
 			true => Value::String(render::compact(&op, &answer)),
 			false => answer,
@@ -63,6 +71,7 @@ impl Host {
 			}
 		};
 		match request["op"].as_str() {
+			Some("activity") => Ok(self.asp_activity.snapshot()),
 			Some("types") => Ok(registry.types(&self.participants())),
 			Some("expand") => {
 				let depth = request["depth"]
@@ -107,7 +116,7 @@ impl Host {
 					.unwrap_or(Value::Null))
 			}
 			other => Err(Error::Argument(format!(
-				"unknown asp op {other:?}; one of types, expand, search, actions, act"
+				"unknown asp op {other:?}; one of types, expand, search, actions, act, activity"
 			))),
 		}
 	}

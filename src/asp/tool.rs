@@ -19,14 +19,15 @@ impl Host {
 		match args["op"].as_str() {
 			Some("describe") => Ok(json!({
 				"name": "asp",
-				"description": "The one interface to the project's world. `search` finds entities (files, symbols, memos, ...) by words; `expand` returns everything every cartridge knows about one entity `scheme:key` (nodes, edges, attributes, staleness) and the actions you can run on it, each naming a tool and its arguments; `types` lists the schemes and edge kinds that exist.",
+				"description": "The one interface to the project's world. `search` finds entities (files, symbols, memos, ...) by words; `expand` returns everything every cartridge knows about one entity `scheme:key` (nodes, edges, attributes, staleness) and the actions you can run on it, each naming a tool and its arguments; `types` lists the schemes and edge kinds that exist; `activity` reads retained observed uses without recording another use. Monitoring expansions can set `observe:false`.",
 				"reads": true,
 				"input_schema": {
 					"type": "object",
 					"properties": {
-						"op": { "type": "string", "enum": ["types", "expand", "search", "actions"] },
+						"op": { "type": "string", "enum": ["types", "expand", "search", "actions", "activity"] },
 						"entity": { "type": "string", "description": "scheme:key, for example file:src/a.rs" },
 						"query": { "type": "string" },
+						"observe": { "type": "boolean", "default": true, "description": "Record this lookup as observed use; set false for monitoring. Activity reads never record use." },
 						"depth": { "type": "integer", "minimum": 1, "maximum": MAX_DEPTH },
 						"limit": { "type": "integer", "minimum": 1, "maximum": LIMIT, "description": "at most this many nodes or hits; 20 when absent" },
 						"format": { "type": "string", "enum": ["text", "json"], "description": "text (the default): one line per node, edge, action and source; json: the full answer" }

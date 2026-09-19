@@ -93,6 +93,7 @@ fn unix_time() -> u64 {
 }
 
 pub struct Host {
+	pub(crate) asp_activity: crate::asp::activity::Activity,
 	pub(crate) dir: PathBuf,
 	pub(crate) descriptor: PathBuf,
 	pub(crate) solo: Mutex<Option<Vec<Entry>>>,
@@ -144,6 +145,7 @@ impl Host {
 		let descriptor = descriptor.canonicalize().unwrap_or(descriptor);
 		let host_token = crate::transport::token();
 		Ok(Arc::new(Self {
+			asp_activity: Default::default(),
 			sockets: socket::run_dir(&descriptor)?,
 			nodes: socket::host_dir(&descriptor)?,
 			dir: dir.canonicalize().unwrap_or(dir),
@@ -822,6 +824,7 @@ impl Host {
 	}
 
 	pub async fn send_to(&self, id: &str, name: &str, data: Value) -> Result<Value> {
+		self.asp_activity.dispatch(&self.dir, name, &data);
 		let ctx = self.sender(name, &data)?;
 		let outcome = ctx
 			.ask(id, name, data)
@@ -874,6 +877,7 @@ impl Host {
 		if name == crate::asp::TOOL {
 			return self.asp_tool(data).await.map(Some);
 		}
+		self.asp_activity.dispatch(&self.dir, name, &data);
 		let ctx = self.sender(name, &data)?;
 		// Shared with other requests that may swap it between `sender`'s set
 		// and this read, so never index it: unknown or empty both mean nobody
@@ -892,6 +896,7 @@ impl Host {
 	}
 
 	pub async fn gather(&self, name: &str, data: Value) -> Result<Vec<Outcome>> {
+		self.asp_activity.dispatch(&self.dir, name, &data);
 		let ctx = self.sender(name, &data)?;
 		ctx.gather(name, data).await.map_err(Error::Remote)
 	}

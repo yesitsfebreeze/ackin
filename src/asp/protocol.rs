@@ -19,6 +19,9 @@ use serde_json::Value;
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Declaration {
+	/// Entry points attached to `asp:root` when this cartridge is loaded.
+	#[serde(default)]
+	pub roots: Vec<String>,
 	/// The schemes this cartridge asserts nodes of and is asked to expand.
 	#[serde(default)]
 	pub schemes: BTreeMap<String, Scheme>,
@@ -37,6 +40,9 @@ pub struct Declaration {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scheme {
+	/// JSON Schema for nodes asserted in this scheme.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub schema: Option<Value>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub description: Option<String>,
 	/// The owner defines the scheme's canonical key, and its revision of an
@@ -48,6 +54,9 @@ pub struct Scheme {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Described {
+	/// JSON Schema for the declared attribute value or edge.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub schema: Option<Value>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub description: Option<String>,
 }
@@ -86,6 +95,23 @@ impl Declaration {
 		if self.is_empty() {
 			return None;
 		}
+		for (key, schema) in self
+			.schemes
+			.iter()
+			.map(|(key, value)| (key, &value.schema))
+			.chain(
+				self.attributes
+					.iter()
+					.map(|(key, value)| (key, &value.schema)),
+			)
+			.chain(self.edges.iter().map(|(key, value)| (key, &value.schema)))
+		{
+			if let Some(schema) = schema {
+				if let Err(error) = jsonschema::validator_for(schema) {
+					return Some(format!("`asp` schema for `{key}` is invalid: {error}"));
+				}
+			}
+		}
 		let doors = listen.iter().filter(|k| k.starts_with("asp.")).count();
 		if doors != 1 {
 			return Some(format!(
@@ -109,6 +135,15 @@ impl Declaration {
 			));
 		}
 		let prefix = format!("{name}.");
+		if let Some(root) = self
+			.roots
+			.iter()
+			.find(|id| scheme_of(id).is_none_or(|scheme| !self.schemes.contains_key(scheme)))
+		{
+			return Some(format!(
+				"`asp.roots` entry `{root}` needs a declared scheme"
+			));
+		}
 		if let Some(attribute) = self.attributes.keys().find(|a| !a.starts_with(&prefix)) {
 			return Some(format!(
 				"`asp.attributes.{attribute}` must start with `{prefix}`"

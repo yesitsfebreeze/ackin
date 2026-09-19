@@ -23,11 +23,20 @@ pub(crate) struct Member {
 /// every tool event, which only the base knows in full.
 pub(crate) fn own_types() -> Declaration {
 	let scheme = |description: &str| protocol::Scheme {
+		schema: None,
 		description: Some(description.to_owned()),
 		owner: true,
 	};
 	Declaration {
 		schemes: BTreeMap::from([
+			(
+				"asp".to_owned(),
+				scheme("the extensible composition tree, starting at asp:root"),
+			),
+			(
+				"event".to_owned(),
+				scheme("a declared event type, by its full name"),
+			),
 			(
 				"cartridge".to_owned(),
 				scheme("a cartridge of the profile, by its id; its revision is its start count"),
@@ -37,22 +46,37 @@ pub(crate) fn own_types() -> Declaration {
 				scheme("a tool event, by its name without the `tool.` prefix"),
 			),
 		]),
-		edges: BTreeMap::from([(
-			"provides".to_owned(),
-			protocol::Described {
-				description: Some("the cartridge owns the tool event".to_owned()),
-			},
-		)]),
+		edges: BTreeMap::from([
+			(
+				"contains".to_owned(),
+				protocol::Described {
+					schema: None,
+					description: Some("an ASP tree entry contains another entry".to_owned()),
+				},
+			),
+			(
+				"provides".to_owned(),
+				protocol::Described {
+					schema: None,
+					description: Some("the cartridge owns the tool event".to_owned()),
+				},
+			),
+		]),
 		attributes: [
 			(
 				"host.state",
 				"the lifecycle state: disabled, waiting, starting, active, stopping or failed",
 			),
 			("host.error", "why the cartridge failed or waits"),
+			(
+				"host.event",
+				"the event declaration, including its payload schema and frame",
+			),
 		]
 		.into_iter()
 		.map(|(name, description)| {
 			let described = protocol::Described {
+				schema: None,
 				description: Some(description.to_owned()),
 			};
 			(name.to_owned(), described)
@@ -84,9 +108,22 @@ pub(super) fn own_answer(plans: &[Arc<Plan>], roster: &[Member], request: &Value
 	let subject = request["entity"].as_str().unwrap_or_default();
 	let query = request["query"].as_str().unwrap_or_default();
 	let searching = request["op"] == "search";
-	let mut nodes = Vec::new();
-	let mut edges = Vec::new();
-	for member in roster {
+	let mut tree = super::tree::answer(plans, request);
+	let mut nodes = tree["nodes"]
+		.as_array_mut()
+		.map(std::mem::take)
+		.unwrap_or_default();
+	let mut edges = tree["edges"]
+		.as_array_mut()
+		.map(std::mem::take)
+		.unwrap_or_default();
+	let host = Member {
+		id: "host".to_owned(),
+		state: json!("active"),
+		generation: u64::from(std::process::id()),
+		error: None,
+	};
+	for member in roster.iter().chain(std::iter::once(&host)) {
 		let named = match searching {
 			true => rank::matches(query, &member.id),
 			false => subject == format!("cartridge:{}", member.id),
@@ -114,7 +151,13 @@ pub(super) fn own_answer(plans: &[Arc<Plan>], roster: &[Member], request: &Value
 			}
 		} else if subject == tool || subject == cartridge {
 			if subject == tool {
-				nodes.extend(roster.iter().filter(|m| m.id == owner).map(member_node));
+				nodes.extend(
+					roster
+						.iter()
+						.chain(std::iter::once(&host))
+						.filter(|m| m.id == owner)
+						.map(member_node),
+				);
 			}
 			nodes.push(node);
 			edges.push(json!({ "from": cartridge, "to": tool, "kind": "provides" }));

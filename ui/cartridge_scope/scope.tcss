@@ -1,0 +1,52 @@
+Screen { background: ansi_default; color: ansi_default; }
+* {
+    background-tint: transparent;
+    scrollbar-background: ansi_default;
+    scrollbar-background-hover: ansi_default;
+    scrollbar-background-active: ansi_default;
+    scrollbar-corner-color: ansi_default;
+    scrollbar-color: ansi_default;
+    scrollbar-color-hover: ansi_yellow;
+    scrollbar-color-active: ansi_yellow;
+}
+Input { height: 3; border: round ansi_default; background: ansi_default; color: ansi_default; }
+Input:focus { border: round ansi_yellow; background-tint: transparent; }
+Input > .input--cursor { background: ansi_default; color: ansi_default; text-style: reverse; }
+Input > .input--selection { background: ansi_default; color: ansi_yellow; text-style: underline; }
+#status { height: 2; padding: 0 1; }
+#preview, #panes { height: 1fr; min-height: 3; layout: vertical; }
+.pane { width: 1fr; height: 1fr; min-height: 3; border: round ansi_default; background: ansi_default; }
+.pane:focus-within { border: round ansi_yellow; }
+#waterfall-pane { display: none; }
+#chain { height: 1; color: ansi_yellow; padding: 0 1; }
+.title { height: 1; text-style: bold; }
+DataTable, Tree, RichLog { height: 1fr; background: ansi_default; color: ansi_default; scrollbar-size: 1 1; }
+DataTable:focus, Tree:focus { background-tint: transparent; }
+DataTable > .datatable--header, DataTable:focus > .datatable--header {
+    background: ansi_default; background-tint: transparent; color: ansi_default; text-style: bold;
+}
+DataTable > .datatable--fixed, DataTable > .datatable--odd-row, DataTable > .datatable--even-row,
+DataTable > .datatable--hover, DataTable > .datatable--header-hover, DataTable > .datatable--header-cursor {
+    background: ansi_default; color: ansi_default;
+}
+DataTable > .datatable--cursor, DataTable > .datatable--fixed-cursor, Tree > .tree--cursor {
+    background: ansi_default; color: ansi_yellow; text-style: bold;
+}
+DataTable:focus > .datatable--cursor, DataTable:focus > .datatable--fixed-cursor, Tree:focus > .tree--cursor {
+    background: ansi_default; color: ansi_default; text-style: reverse;
+}
+Tree > .tree--highlight-line { background: ansi_default; }
+Tree > .tree--highlight { color: ansi_yellow; text-style: bold; }
+Tree > .tree--guides, Tree:focus > .tree--guides { color: ansi_default; text-style: dim; }
+Tree > .tree--guides-hover, Tree > .tree--guides-selected,
+Tree:focus > .tree--guides-hover, Tree:focus > .tree--guides-selected { color: ansi_yellow; }
+Footer, FooterKey, FooterKey:hover, FooterLabel { background: ansi_default; color: ansi_default; }
+FooterKey > .footer-key--key { background: ansi_default; color: ansi_yellow; text-style: bold; }
+FooterKey > .footer-key--description { background: ansi_default; color: ansi_default; }
+#conversation { display: none; border: round ansi_default; }
+#conversation:focus { border: round ansi_yellow; }
+
+#editor { display: none; height: 1fr; background: ansi_default; color: ansi_default; border: round ansi_yellow; }
+TextArea > .text-area--cursor { background: ansi_default; color: ansi_default; text-style: reverse; }
+TextArea > .text-area--cursor-line, TextArea > .text-area--gutter { background: ansi_default; color: ansi_default; }
+TextArea > .text-area--selection { background: ansi_default; color: ansi_yellow; text-style: underline; }

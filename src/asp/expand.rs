@@ -49,7 +49,7 @@ impl Host {
 				.map(|subject| async move {
 					let scheme = scheme_of(&subject).expect("admitted ids are scheme:key");
 					let providers = registry.expanding(scheme);
-					let request = json!({ "op": "expand", "entity": subject });
+					let request = json!({ "op": "expand", "entity": subject, "limit":limit });
 					let answers = self.asp_ask(&providers, &request).await;
 					(subject, providers, answers)
 				})
@@ -84,6 +84,9 @@ impl Host {
 						revision,
 					};
 					for node in nodes {
+						if world.nodes.len() >= limit && !world.nodes.contains_key(&node.id) {
+							continue;
+						}
 						let owns = scheme_of(&node.id).and_then(|s| registry.owner(s))
 							== Some(contributor);
 						let given = assertion(node.revision.clone());

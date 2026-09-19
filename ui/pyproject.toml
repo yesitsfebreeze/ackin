@@ -1,0 +1,13 @@
+[project]
+name = "cartridge-scope"
+version = "0.1.0"
+description = "The base cartridge's ASP browser"
+requires-python = ">=3.11"
+dependencies = ["textual==8.2.8", "rapidfuzz==3.14.3"]
+
+[project.scripts]
+cartridge-scope = "cartridge_scope.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

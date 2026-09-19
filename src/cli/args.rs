@@ -23,6 +23,15 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+	/// Browse ASP in a Textual list, waterfall and extensible detail pane
+	Scope {
+		/// Print one ASP snapshot without opening the terminal UI
+		#[arg(long)]
+		once: bool,
+		/// Python with Textual installed; absent, uv manages the pinned dependency
+		#[arg(long)]
+		python: Option<PathBuf>,
+	},
 	/// Make the working directory a project: choose which of the cartridges
 	/// found take part, link or clone them under the cartridge root, and write
 	/// the `.cartridge/init.lua` that names them. Asks on a terminal

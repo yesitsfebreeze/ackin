@@ -9,9 +9,11 @@ a revision on every fact, staleness, and actions. An agent asks ASP about an
 entity and gets one merged answer from every loaded cartridge that knows
 something about it.
 
-ASP keeps no store. It asks the live providers on every request. Installing a
-cartridge adds its types and its facts; removing it removes both, and nothing
-has to be retracted.
+ASP composes live providers on every request. Providers own their storage,
+including the durable trace of agent activity and its time compaction. Start
+at `asp:root`: it links the runtime cartridges and every declared provider
+root. Installing a cartridge extends this tree, its types and events; removing
+it removes its live contributions. Persisted trace history remains in its store.
 
 ENTITIES
 
@@ -25,14 +27,17 @@ DECLARATION
   "events": { "asp.files": {} },
   "listen": ["asp.files"],
   "asp": {
+    "roots":      ["file:src/a.rs"],
     "schemes":    { "file": { "description": "a workspace file", "owner": true } },
     "edges":      { "contains": { "description": "the file holds the symbol" } },
-    "attributes": { "files.bytes": {} },
+    "attributes": { "files.bytes": { "schema": { "type": "integer", "minimum": 0 } } },
     "actions":    [ { "name": "open", "applies_to": "file", "effect": "read",
                       "tool": "tool.read", "args": { "path": "${key}" } } ],
     "search":     true
   }
 
+  roots       entity ids attached to asp:root. Each uses a declared scheme;
+              the provider answers expand for the root and its child edges.
   schemes     the schemes this cartridge asserts nodes of. ASP sends it every
               expand of an entity in one of them. `owner: true` makes it the
               scheme's owner; the first loaded owner wins, and `types` reports
@@ -50,6 +55,17 @@ DECLARATION
 A cartridge with an `asp` block listens to exactly one `asp.<name>` event. The
 base refuses the manifest otherwise, and refuses a scheme or edge kind that is
 not lowercase letters, digits and `-`.
+
+Schemes, attributes and edges may carry a JSON Schema in `schema`, just as
+events do. The manifest rejects invalid schemas. ASP validates a node against
+its contributor's scheme schema, each attribute value against its attribute
+schema, and each edge against its edge schema. A violation refuses the whole
+provider answer and names the contributor and declaration.
+
+Lua supplies the runtime behavior: `cartridge.listen` answers declared events,
+`cartridge.emit`, `bail` and `gather` fire them, and a listener on `asp.<name>`
+contributes the cartridge's tree. `cartridge.host("asp", request)` queries
+the composed world. These are the same manifest and runtime extension path.
 
 WHAT A PROVIDER ANSWERS
 
@@ -69,6 +85,10 @@ declare refuses the provider's whole answer, and the refusal names it.
 
 WHAT THE BASE CONTRIBUTES
 
+The host owns `asp:root` and `event:<name>` for every declared event, including
+its schema and frame in `host.event`. A cartridge's `provides` edges include
+its events as well as its tools.
+
 The base is a provider too, under the name `host`, for what only it knows in
 full: `cartridge:<id>` for every cartridge of the profile, `tool:<name>` for every
 `tool.<name>` event, and a `provides` edge from the cartridge to its tool. A
@@ -81,6 +101,21 @@ declared, its frame: an
 event is a type of the same world, declared in the same manifest.
 
 REQUESTS
+
+  {op: "activity"}                      the last 1024 observed ASP uses and
+                                        host dispatches, with timestamps,
+                                        entity IDs, observed node names and
+                                        graph edges. The host generation
+                                        changes on restart. This does not
+                                        query providers or record a use.
+
+  Monitor expansions may include observe:false so a status screen does not
+  manufacture usage. Activity is bounded telemetry, not a provider-answer
+  cache, a global inventory, or an intrinsic importance score. Search results
+  supply observed names and edges; appearing in a result is not counted as a
+  use. Host dispatch records include the event and explicit entity or workspace
+  file reference, never request contents. Monitoring status/health and trace
+  status/cycles are excluded. Dispatch records describe attempts, not success.
 
   {op: "types"}                         the registry: schemes with owner and
                                         contributors, edge kinds, attributes,
@@ -139,3 +174,8 @@ Search ranks with the fabric's formula: matched words in a node's name and id
 1 + ln(1 + uses). A node whose words do not match keeps its provider's order
 below every node that matched. Use counts come from the event ring; until the
 ring indexes events by entity, every standing is 1.
+
+Agent tools expose `asp {op:"activity"}` through MCP as well as the native
+`tool.asp` envelope. The answer retains up to 1024 observed uses in the current
+host generation. Set `observe:false` on monitoring lookups to leave those use
+counts unchanged; reading activity itself never records another use.

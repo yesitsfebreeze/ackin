@@ -12,10 +12,20 @@ use super::registry::Provider;
 /// whole answer: a provider that asserts past its declaration is wrong about
 /// what it is, and the rest of what it says is not trusted either.
 fn admitted(provider: &Provider, answer: &Value) -> Result<(Vec<Asserted>, Vec<Linked>), String> {
+	let validate = |name: &str, schema: &Option<Value>, value: &Value| -> Result<(), String> {
+		if let Some(schema) = schema {
+			let validator = jsonschema::validator_for(schema)
+				.map_err(|e| format!("`{}` schema `{name}`: {e}", provider.id))?;
+			validator
+				.validate(value)
+				.map_err(|e| format!("`{}` violated schema `{name}`: {e}", provider.id))?;
+		}
+		Ok(())
+	};
 	let rows = |field: &str| answer[field].as_array().cloned().unwrap_or_default();
 	let mut nodes = Vec::new();
 	for row in rows("nodes") {
-		let node: Asserted = serde_json::from_value(row)
+		let node: Asserted = serde_json::from_value(row.clone())
 			.map_err(|e| format!("`{}` answered a malformed node: {e}", provider.id))?;
 		let scheme = scheme_of(&node.id).ok_or_else(|| {
 			format!(
@@ -29,6 +39,7 @@ fn admitted(provider: &Provider, answer: &Value) -> Result<(Vec<Asserted>, Vec<L
 				provider.id
 			));
 		}
+		validate(scheme, &provider.declared.schemes[scheme].schema, &row)?;
 		if let Some(attribute) = node
 			.attributes
 			.keys()
@@ -39,11 +50,14 @@ fn admitted(provider: &Provider, answer: &Value) -> Result<(Vec<Asserted>, Vec<L
 				provider.id
 			));
 		}
+		for (name, value) in &node.attributes {
+			validate(name, &provider.declared.attributes[name].schema, value)?;
+		}
 		nodes.push(node);
 	}
 	let mut edges = Vec::new();
 	for row in rows("edges") {
-		let edge: Linked = serde_json::from_value(row)
+		let edge: Linked = serde_json::from_value(row.clone())
 			.map_err(|e| format!("`{}` answered a malformed edge: {e}", provider.id))?;
 		if !provider.declared.edges.contains_key(&edge.kind) {
 			return Err(format!(
@@ -57,6 +71,11 @@ fn admitted(provider: &Provider, answer: &Value) -> Result<(Vec<Asserted>, Vec<L
 				provider.id
 			));
 		}
+		validate(
+			&edge.kind,
+			&provider.declared.edges[&edge.kind].schema,
+			&row,
+		)?;
 		edges.push(edge);
 	}
 	Ok((nodes, edges))

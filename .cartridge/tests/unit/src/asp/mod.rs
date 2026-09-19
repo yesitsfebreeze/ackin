@@ -1,12 +1,14 @@
 //! Fixture providers every ASP test composes, and one file per behaviour.
 
 mod actions;
+mod activity_tool;
 mod base;
 mod composition;
 mod doors;
 mod manifest;
 mod merge;
 mod search;
+mod tree;
 
 use std::path::Path;
 use std::sync::Arc;

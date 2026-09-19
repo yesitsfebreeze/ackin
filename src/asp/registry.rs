@@ -76,8 +76,21 @@ impl Registry {
 		let mut edges: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
 		let mut attributes: BTreeMap<&str, &str> = BTreeMap::new();
 		let mut actions = Vec::new();
+		let mut schemas = Vec::new();
 		let mut clashes = Vec::new();
 		for provider in &self.providers {
+			for (kind, definitions) in [
+				("attribute", &provider.declared.attributes),
+				("edge", &provider.declared.edges),
+			] {
+				for (name, definition) in definitions {
+					if let Some(schema) = &definition.schema {
+						schemas.push(
+							json!({"kind":kind,"name":name,"contributor":provider.id,"schema":schema}),
+						);
+					}
+				}
+			}
 			for (name, scheme) in &provider.declared.schemes {
 				let owner = self.owner(name);
 				if scheme.owner && owner != Some(provider.id.as_str()) {
@@ -91,6 +104,7 @@ impl Registry {
 					|| json!({ "owner": owner, "description": null, "contributors": [] }),
 				);
 				if entry["description"].is_null() || owner == Some(provider.id.as_str()) {
+					entry["schema"] = json!(scheme.schema);
 					if let Some(description) = &scheme.description {
 						entry["description"] = json!(description);
 					}
@@ -113,6 +127,9 @@ impl Registry {
 			}
 		}
 		json!({
+			"root": "asp:root",
+			"schemas": schemas,
+			"roots": self.providers.iter().flat_map(|p| p.declared.roots.iter()).collect::<Vec<_>>(),
 			"schemes": schemes,
 			"edges": edges,
 			"attributes": attributes,

@@ -33,7 +33,16 @@ async fn the_base_contributes_every_tool_and_cartridge_and_lists_every_event_as_
 	assert_eq!(tool["edges"][0]["kind"], "provides");
 	assert_eq!(tool["edges"][0]["contributor"], "host");
 	let owner = expand(&host, "cartridge:reader").await;
-	assert_eq!(owner["edges"][0]["to"], "tool:read");
+	assert!(owner["edges"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.any(|edge| edge["to"] == "tool:read"));
+	assert!(owner["edges"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.any(|edge| edge["to"] == "event:tool.read"));
 	let reader = &owner["nodes"][0];
 	assert_eq!(reader["id"], "cartridge:reader");
 	assert_eq!(reader["attributes"]["host.state"], "active");
@@ -51,10 +60,17 @@ async fn the_base_contributes_every_tool_and_cartridge_and_lists_every_event_as_
 		.asp(json!({"op": "search", "query": "read a workspace file"}))
 		.await
 		.unwrap();
-	assert_eq!(found["hits"][0]["node"]["id"], "tool:read", "{found}");
+	assert!(
+		found["hits"]
+			.as_array()
+			.unwrap()
+			.iter()
+			.any(|hit| hit["node"]["id"] == "tool:read"),
+		"{found}"
+	);
 	assert_eq!(
 		found["hits"].as_array().unwrap().len(),
-		1,
+		2,
 		"asp itself does not match"
 	);
 	host.stop().await;
