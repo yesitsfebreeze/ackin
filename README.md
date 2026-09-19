@@ -123,6 +123,7 @@ See [docs/creating-cartridges.txt](docs/creating-cartridges.txt).
 
 - [docs/architecture.txt](docs/architecture.txt): the base, lifecycle, nodes, sandbox
 - [docs/transport.txt](docs/transport.txt): events, declarations, checks, the Lua global
+- [docs/asp.txt](docs/asp.txt): ASP, the fabric with a better protocol: entities, declared types, expand, search, actions
 - [docs/creating-cartridges.txt](docs/creating-cartridges.txt): Lua, Rust and helper programs
 - [docs/writing-good-cartridges.txt](docs/writing-good-cartridges.txt): defining, listening, needing
 - [docs/settings.txt](docs/settings.txt): declaring and settling configuration
