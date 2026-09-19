@@ -41,7 +41,8 @@ async fn a_cartridge_that_needs_tools_finds_asp_among_them() {
 				needs = cartridge.needs(),
 				owner = cartridge.events()["tool.asp"].owner,
 				described = cartridge.bail("tool.asp", { op = "describe" }),
-				expanded = cartridge.bail("tool.asp", { op = "call", input = { op = "expand", entity = "file:src/a.rs" } }),
+				expanded = cartridge.bail("tool.asp", { op = "call", input = { op = "expand", entity = "file:src/a.rs", format = "json" } }),
+				text = cartridge.bail("tool.asp", { op = "call", input = { op = "expand", entity = "file:src/a.rs" } }),
 			}
 		end)"#,
 	);
@@ -56,6 +57,18 @@ async fn a_cartridge_that_needs_tools_finds_asp_among_them() {
 		serde_json::from_str(answer["expanded"]["content"].as_str().unwrap()).unwrap();
 	assert_eq!(ids(&world), ["file:src/a.rs"]);
 	assert_eq!(world["actions"][0]["tool"], "tool.open");
+	// Without a format the agent reads lines, one per node, action and source.
+	let text = answer["text"]["content"].as_str().unwrap();
+	let lines: Vec<&str> = text.lines().collect();
+	assert_eq!(
+		lines[0], "file:src/a.rs | files.bytes=12  [files@r1]",
+		"a name the id already ends with is not repeated"
+	);
+	assert!(
+		lines.contains(&r#"action open -> tool.open {"path":"src/a.rs"}"#),
+		"{text}"
+	);
+	assert_eq!(lines.last(), Some(&"sources files:available"), "{text}");
 	host.stop().await;
 	served.abort();
 }

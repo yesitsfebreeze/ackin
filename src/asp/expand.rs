@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 
+use futures::StreamExt;
 use serde_json::{json, Value};
 
 use crate::error::{Error, Result};
@@ -12,6 +13,9 @@ use super::admit::taken;
 use super::protocol::{scheme_of, Assertion, Availability};
 use super::registry::Registry;
 use super::world::World;
+
+/// How many subjects of one level are asked at the same time.
+const PARALLEL: usize = 16;
 
 impl Host {
 	pub(super) async fn asp_expand(
@@ -32,14 +36,28 @@ impl Host {
 		let mut frontier = vec![entity.to_owned()];
 		for _ in 0..depth {
 			let mut next = Vec::new();
-			for subject in std::mem::take(&mut frontier) {
-				if !seen.insert(subject.clone()) || world.nodes.len() >= limit {
-					continue;
-				}
+			let subjects: Vec<String> = std::mem::take(&mut frontier)
+				.into_iter()
+				.filter(|subject| seen.insert(subject.clone()))
+				.collect();
+			if subjects.is_empty() || world.nodes.len() >= limit {
+				break;
+			}
+			// Every subject of one level is asked at once, in bounded parallel,
+			// so a level costs its slowest provider, not the sum of them all.
+			let asked: Vec<_> = futures::stream::iter(subjects)
+				.map(|subject| async move {
+					let scheme = scheme_of(&subject).expect("admitted ids are scheme:key");
+					let providers = registry.expanding(scheme);
+					let request = json!({ "op": "expand", "entity": subject });
+					let answers = self.asp_ask(&providers, &request).await;
+					(subject, providers, answers)
+				})
+				.buffered(PARALLEL)
+				.collect()
+				.await;
+			for (subject, providers, answers) in asked {
 				let scheme = scheme_of(&subject).expect("admitted ids are scheme:key");
-				let providers = registry.expanding(scheme);
-				let request = json!({ "op": "expand", "entity": subject });
-				let answers = self.asp_ask(&providers, &request).await;
 				let owner = registry.owner(scheme);
 				let mut facts = Vec::new();
 				for (provider, answer) in providers.iter().zip(answers) {

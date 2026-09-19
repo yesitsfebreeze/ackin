@@ -55,6 +55,14 @@ pub fn rank(query: &str, nodes: Vec<Node>, uses: &BTreeMap<String, f64>) -> Vec<
 					matched.push(format!("{field}: {}", found.join(", ")));
 				}
 			}
+			// A node whose own name or key holds every word of the query is
+			// what a lookup by name means, however many phrases elsewhere
+			// share one of the words.
+			let named = tokens(&format!("{} {}", node.name, node.id));
+			if !terms.is_empty() && terms.is_subset(&named) {
+				score += 4.0 * terms.len() as f64;
+				matched.push("every word names it".to_owned());
+			}
 			let standing = 1.0 + uses.get(&node.id).copied().unwrap_or(0.0).ln_1p();
 			let why = match matched.is_empty() {
 				true => "provider match".to_owned(),

@@ -10,6 +10,7 @@ pub(crate) mod own;
 pub mod protocol;
 pub mod rank;
 mod registry;
+mod render;
 mod search;
 mod tool;
 mod world;
@@ -39,7 +40,18 @@ const LIMIT: usize = 256;
 
 impl Host {
 	/// The `asp` service: `{op: types | expand | search | actions | act}`.
+	/// `format: "text"` answers compact lines instead of JSON.
 	pub async fn asp(&self, request: Value) -> Result<Value> {
+		let op = request["op"].as_str().unwrap_or_default().to_owned();
+		let text = request["format"] == "text";
+		let answer = self.asp_answer(request).await?;
+		Ok(match text {
+			true => Value::String(render::compact(&op, &answer)),
+			false => answer,
+		})
+	}
+
+	async fn asp_answer(&self, request: Value) -> Result<Value> {
 		let registry = Registry::of(&self.participants());
 		let entity = || {
 			let id = request["entity"].as_str().unwrap_or_default();

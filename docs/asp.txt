@@ -99,6 +99,13 @@ REQUESTS
                                         refuses it, policy included, reaches
                                         the caller unchanged
 
+Every request takes `format: "text"` to answer compact lines instead of JSON:
+one line per node (`id | name | description | attributes  [contributor@rev]`,
+`!stale` when behind the owner), one per edge (`from -kind-> to`), one per
+action and one for the sources. `tool.asp` answers text unless asked for
+`format: "json"`, and caps `expand` and `search` at 20 unless given a `limit`.
+An `expand` of depth 2 or more asks every entity of one level at once.
+
 Every node lists its `contributors`, and every edge names its `contributor`,
 each with the `revision` it answered against. When the scheme owner's revision
 of the expanded entity differs, the fact comes back with `stale: true`; it is
