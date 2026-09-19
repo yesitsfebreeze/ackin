@@ -153,7 +153,7 @@ stops reading is disconnected.
 CLI
 
   cartridge run <event> '<json>'     start the profile, send, print the first answer, stop
-  cartridge call <event> '<json>'    the same on the running host
+  cartridge call <event> '<json>'    the same on the running host; a string answer prints as plain text
   cartridge send <event> '<json>'    every listener's outcome on the running host
   cartridge follow lifecycle | <cartridge>.<channel>
   cartridge status | reload [<id>] | stop

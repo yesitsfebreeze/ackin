@@ -14,8 +14,12 @@ pub(crate) async fn ask(project: &Project, method: &str, params: Value) -> Resul
 		.call(method, params)
 		.await
 		.map_err(|e| Error::Remote(e.message))?;
-	if !answer.is_null() {
-		println!("{answer}");
+	// A string answer is text meant to be read, such as ASP's `format: "text"`,
+	// so it prints as it is rather than as a quoted JSON string.
+	match answer {
+		Value::Null => {}
+		Value::String(text) => println!("{text}"),
+		other => println!("{other}"),
 	}
 	Ok(ExitCode::SUCCESS)
 }
