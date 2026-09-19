@@ -817,9 +817,20 @@ async fn connection(ctx: Ctx, adapter: LocalAdapter, apply: Arc<Mutex<Option<App
 	};
 	let mut subscriptions: Vec<(String, u64)> = Vec::new();
 	let in_flight = Arc::new(tokio::sync::Semaphore::new(IN_FLIGHT));
+	let cancels: Arc<Mutex<HashMap<u64, CancellationToken>>> = Arc::new(Mutex::new(HashMap::new()));
 	while let Some(message) = incoming.recv().await {
-		let Incoming::Request(request) = message else {
-			continue;
+		let request = match message {
+			Incoming::Notification { method, params } => {
+				if method == "cancel" {
+					if let Some(id) = params["id"].as_u64() {
+						if let Some(token) = cancels.lock().expect("cancels lock").get(&id) {
+							token.cancel();
+						}
+					}
+				}
+				continue;
+			}
+			Incoming::Request(request) => request,
 		};
 		match request.method.as_str() {
 			"subscribe" => {
@@ -851,9 +862,21 @@ async fn connection(ctx: Ctx, adapter: LocalAdapter, apply: Arc<Mutex<Option<App
 				let Ok(permit) = in_flight.clone().acquire_owned().await else {
 					break;
 				};
-				let (ctx, access, apply) = (ctx.clone(), access.clone(), apply.clone());
+				let token = CancellationToken::new();
+				let id = request.id();
+				if let Some(id) = id {
+					cancels
+						.lock()
+						.expect("cancels lock")
+						.insert(id, token.clone());
+				}
+				let (ctx, access, apply, cancels) =
+					(ctx.clone(), access.clone(), apply.clone(), cancels.clone());
 				tokio::spawn(async move {
-					handle(ctx, access, request, apply).await;
+					handle(ctx, access, request, apply, token).await;
+					if let Some(id) = id {
+						cancels.lock().expect("cancels lock").remove(&id);
+					}
 					drop(permit);
 				});
 			}
@@ -865,12 +888,26 @@ async fn connection(ctx: Ctx, adapter: LocalAdapter, apply: Arc<Mutex<Option<App
 	peer.flushed().await;
 }
 
+/// A listener either answers on its own or is cancelled first; distinguished
+/// structurally by which `select!` branch resolved, never by matching the
+/// listener's own error message against the string "cancelled".
+enum Raced {
+	Answered(Result<Value>),
+	Cancelled,
+}
+
 fn unauthorized(request: Request) {
 	let message = format!("`{}` is not granted to this token", request.method);
 	request.reply(Err(rpc::Error::new(rpc::UNAUTHORIZED, message)));
 }
 
-async fn handle(ctx: Ctx, access: Access, request: Request, apply: Arc<Mutex<Option<Apply>>>) {
+async fn handle(
+	ctx: Ctx,
+	access: Access,
+	request: Request,
+	apply: Arc<Mutex<Option<Apply>>>,
+	token: CancellationToken,
+) {
 	let params = request.params.clone();
 	match request.method.as_str() {
 		"apply" if access.is_host() => {
@@ -938,19 +975,29 @@ async fn handle(ctx: Ctx, access: Access, request: Request, apply: Arc<Mutex<Opt
 			}
 			// Off the workers: a listener takes its node's Lua lock synchronously,
 			// and a lock held by a handler waiting on another cartridge would park
-			// the worker whose queue carries that very reply.
+			// the worker whose queue carries that very reply. The cancel is raced
+			// against the listener *inside* this same spawn_blocking/block_on, so
+			// the listener never moves onto a worker and nothing is aborted.
 			let (trace, data) = (trace_of(&params), params["data"].clone());
 			let runtime = tokio::runtime::Handle::current();
-			let outcome = tokio::task::spawn_blocking(move || {
-				runtime.block_on(TRACE.scope(trace, listener(data)))
+			let raced = tokio::task::spawn_blocking(move || {
+				runtime.block_on(async {
+					tokio::select! {
+						outcome = TRACE.scope(trace, listener(data)) => Raced::Answered(outcome),
+						() = token.cancelled() => Raced::Cancelled,
+					}
+				})
 			})
 			.await
-			.unwrap_or_else(|error| Err(format!("listener panicked: {error}")));
-			match outcome {
-				Ok(answer) => request.reply(Ok(answer)),
-				Err(error) => {
+			.unwrap_or_else(|error| Raced::Answered(Err(format!("listener panicked: {error}"))));
+			match raced {
+				Raced::Answered(Ok(answer)) => request.reply(Ok(answer)),
+				Raced::Answered(Err(error)) => {
 					ctx.publish_kind("error", "error", json!({ "event": name, "error": error }));
 					request.reply(Err(rpc::Error::application(error)));
+				}
+				Raced::Cancelled => {
+					request.reply(Err(rpc::Error::application("cancelled")));
 				}
 			}
 		}

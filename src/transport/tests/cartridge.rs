@@ -444,3 +444,160 @@ async fn a_listener_that_does_not_answer_reaches_the_log() {
 		"the timeout must name the event in the log: {logged}"
 	);
 }
+
+#[tokio::test]
+async fn a_cancelled_call_drops_the_listener_and_frees_its_permit() {
+	struct Bell(Arc<AtomicUsize>);
+	impl Drop for Bell {
+		fn drop(&mut self) {
+			self.0.fetch_add(1, Ordering::SeqCst);
+		}
+	}
+	let dir = tempfile::tempdir().unwrap();
+	let (a_directory, b_directory) = directories(dir.path());
+	let dropped = Arc::new(AtomicUsize::new(0));
+	let apply: Apply = {
+		let dropped = dropped.clone();
+		Box::new(move |ctx: Ctx, _| {
+			let dropped = dropped.clone();
+			async move {
+				ctx.on("slow", move |_| {
+					let dropped = dropped.clone();
+					async move {
+						let _bell = Bell(dropped);
+						tokio::time::sleep(Duration::from_secs(3)).await;
+						Ok(json!("late"))
+					}
+				});
+				ctx.on("ping", |data| async move { Ok(json!({ "pong": data })) });
+				Ok(())
+			}
+			.boxed()
+		})
+	};
+	let _a = start(&dir.path().join("a.sock"), apply).await;
+	let b = start(&dir.path().join("b.sock"), cartridge_b()).await;
+	apply_directory(&dir.path().join("a.sock"), "a", &a_directory).await;
+	apply_directory(&dir.path().join("b.sock"), "b", &b_directory).await;
+
+	// `slow` is bound at 50 ms by `directories`; every one of these expires.
+	let sends = (0..IN_FLIGHT).map(|_| b.ctx.bail("slow", json!(null)));
+	for outcome in futures::future::join_all(sends).await {
+		assert!(outcome.is_err(), "the bound must expire: {outcome:?}");
+	}
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	assert_eq!(
+		dropped.load(Ordering::SeqCst),
+		IN_FLIGHT,
+		"every expired call must have stopped the work it started"
+	);
+	// `ping` declares no bound, so it can only answer if the permits came back.
+	let answered = tokio::time::timeout(Duration::from_secs(1), b.ctx.bail("ping", json!(1))).await;
+	assert_eq!(answered, Ok(Ok(Some(json!({ "pong": 1 })))));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_cancelled_call_stops_a_listener_waiting_on_another_cartridge() {
+	// The hazard this PRD owns is about a listener parked on *another
+	// cartridge's* answer. This is that listener, cancelled mid-call.
+	struct Bell(Arc<AtomicUsize>);
+	impl Drop for Bell {
+		fn drop(&mut self) {
+			self.0.fetch_add(1, Ordering::SeqCst);
+		}
+	}
+	let dir = tempfile::tempdir().unwrap();
+	let (mut a_directory, b_directory) = directories(dir.path());
+	a_directory.sends.push("ping".to_owned());
+	let dropped = Arc::new(AtomicUsize::new(0));
+	let entered = Arc::new(AtomicUsize::new(0));
+	let apply: Apply = {
+		let (dropped, entered) = (dropped.clone(), entered.clone());
+		Box::new(move |ctx: Ctx, _| {
+			let (dropped, entered, nested) = (dropped.clone(), entered.clone(), ctx.clone());
+			async move {
+				ctx.on("slow", move |_| {
+					let (dropped, entered, nested) =
+						(dropped.clone(), entered.clone(), nested.clone());
+					async move {
+						let _bell = Bell(dropped);
+						// Parked on another cartridge's answer, which never comes.
+						entered.fetch_add(1, Ordering::SeqCst);
+						// The nested call is itself bounded, so a tree that never
+						// cancels still finishes instead of wedging the gate.
+						let _ = tokio::time::timeout(
+							Duration::from_millis(900),
+							nested.bail("ping", json!(null)),
+						)
+						.await;
+						Ok(json!("late"))
+					}
+				});
+				ctx.on("ping", |_| async move {
+					tokio::time::sleep(Duration::from_millis(1200)).await;
+					Ok(json!("eventually"))
+				});
+				Ok(())
+			}
+			.boxed()
+		})
+	};
+	let _a = start(&dir.path().join("a.sock"), apply).await;
+	let b = start(&dir.path().join("b.sock"), cartridge_b()).await;
+	apply_directory(&dir.path().join("a.sock"), "a", &a_directory).await;
+	apply_directory(&dir.path().join("b.sock"), "b", &b_directory).await;
+
+	assert!(
+		b.ctx.bail("slow", json!(null)).await.is_err(),
+		"the bound must expire"
+	);
+	tokio::time::sleep(Duration::from_millis(400)).await;
+	assert_eq!(
+		entered.load(Ordering::SeqCst),
+		1,
+		"the listener must have reached its nested call"
+	);
+	assert_eq!(
+		dropped.load(Ordering::SeqCst),
+		1,
+		"a listener parked on another cartridge must be released by the cancel"
+	);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_listener_that_blocks_does_not_park_the_only_worker() {
+	// The invariant the comment above the listener's spawn guards: a listener
+	// blocks synchronously, so if it ever runs on a worker it takes the runtime
+	// down with it. One worker makes that observable instead of argued.
+	let dir = tempfile::tempdir().unwrap();
+	let (a_directory, b_directory) = directories(dir.path());
+	let apply: Apply = Box::new(move |ctx: Ctx, _| {
+		async move {
+			ctx.on("slow", |_| async move {
+				std::thread::sleep(Duration::from_millis(600));
+				Ok(json!("late"))
+			});
+			ctx.on("ping", |data| async move { Ok(json!({ "pong": data })) });
+			Ok(())
+		}
+		.boxed()
+	});
+	let _a = start(&dir.path().join("a.sock"), apply).await;
+	let b = start(&dir.path().join("b.sock"), cartridge_b()).await;
+	apply_directory(&dir.path().join("a.sock"), "a", &a_directory).await;
+	apply_directory(&dir.path().join("b.sock"), "b", &b_directory).await;
+
+	let busy = tokio::spawn({
+		let ctx = b.ctx.clone();
+		async move { ctx.bail("slow", json!(null)).await }
+	});
+	tokio::time::sleep(Duration::from_millis(100)).await;
+	let answered =
+		tokio::time::timeout(Duration::from_millis(300), b.ctx.bail("ping", json!(2))).await;
+	assert_eq!(
+		answered,
+		Ok(Ok(Some(json!({ "pong": 2 })))),
+		"a blocking listener must not stop the runtime from serving anything else"
+	);
+	let _ = busy.await;
+}

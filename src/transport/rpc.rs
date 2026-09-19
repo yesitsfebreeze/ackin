@@ -108,6 +108,10 @@ pub struct Request {
 }
 
 impl Request {
+	pub fn id(&self) -> Option<u64> {
+		self.id.as_u64()
+	}
+
 	pub fn reply(mut self, result: Result<Value, Error>) {
 		if let Some(connection) = self.connection.take() {
 			connection.push(response(&self.id, result));
@@ -291,15 +295,19 @@ struct Waiting<'a> {
 
 impl Drop for Waiting<'_> {
 	fn drop(&mut self) {
-		if let Some(pending) = self
+		// A surviving entry is an abandoned call: `dispatch` removes it when a
+		// response arrives, so removal succeeding here means a timeout, a
+		// dropped future or a turn that ended — never a call that answered.
+		let removed = self
 			.peer
 			.inner
 			.pending
 			.lock()
 			.expect("pending lock")
 			.as_mut()
-		{
-			pending.remove(&self.id);
+			.is_some_and(|pending| pending.remove(&self.id).is_some());
+		if removed {
+			let _ = self.peer.notify("cancel", json!({ "id": self.id }));
 		}
 	}
 }
