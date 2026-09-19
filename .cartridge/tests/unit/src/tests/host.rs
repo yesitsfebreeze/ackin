@@ -631,7 +631,7 @@ async fn a_glob_in_needs_names_what_the_others_listen_to() {
 	active(&host, "user");
 	assert_eq!(
 		host.bail("which", json!(null)).await.unwrap(),
-		Some(json!(["tool.a", "tool.b", "greet"]))
+		Some(json!(["tool.a", "tool.asp", "tool.b", "greet"]))
 	);
 	host.stop().await;
 }
@@ -657,7 +657,7 @@ async fn two_cartridges_that_need_each_other_both_start_when_one_asks_with_a_que
 	// starting, and the worker's `tool.*` still binds the voice's own tool.
 	active(&host, "voice");
 	let worker = active(&host, "worker");
-	assert_eq!(worker.needs, vec!["tool.speak".to_owned()]);
+	assert_eq!(worker.needs, ["tool.asp", "tool.speak"]);
 	assert_eq!(
 		host.bail("tool.speak", json!(null)).await.unwrap(),
 		Some(json!("worked")),

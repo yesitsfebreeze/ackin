@@ -93,7 +93,19 @@ REACHING IT
   cartridge call asp '{"op":"expand","entity":"file:src/a.rs"}'
   cartridge.host("asp", { op = "types" })       from a cartridge's init.lua
 
-`asp` is the base's own service key, so no cartridge may need or listen to it.
+  tool.asp {op: "describe" | "call", input}     the agent's tool, among its other tools
+
+`asp` is the base's own service key, so no cartridge may declare it as an event.
+`tool.asp` is an event the base itself owns and listens to: a cartridge that
+needs `tool.*` or `tool.asp` gets it like any other tool, and `cartridge.events()`
+names `host` as its owner. It speaks the tool envelope (`describe`, `call`,
+`cancel`) and answers `{content, error}`, where `content` is the ASP answer as
+JSON text.
+
+Only the command line may `act`. A cartridge that asks `act` through
+`cartridge.host` or `tool.asp` is refused, because an action names a tool, and
+an agent runs tools through its own dispatch, where policy is asked. ASP tells
+the agent which tool and which arguments; it never becomes a way around policy.
 
 RANKING
 

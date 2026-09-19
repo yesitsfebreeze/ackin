@@ -49,6 +49,36 @@ impl Plan {
 	}
 }
 
+/// The id the base takes as a participant of its own composition.
+pub(crate) const HOST: &str = "host";
+
+/// The base as a participant: it owns and listens to the agent's ASP tool, so
+/// every cartridge that needs `tool.*` finds ASP beside the other tools.
+pub(crate) fn host_plan() -> Arc<Plan> {
+	let event = Event {
+		description: Some(
+			"ASP, the agent's one interface to the world: {op: describe | call, input}".into(),
+		),
+		..Event::default()
+	};
+	Arc::new(Plan {
+		id: HOST.into(),
+		name: HOST.into(),
+		root: PathBuf::new(),
+		entry: PathBuf::new(),
+		entry_sha256: String::new(),
+		events: BTreeMap::from([(crate::asp::TOOL.to_owned(), event)]),
+		needs: Vec::new(),
+		optional: Vec::new(),
+		listen: vec![crate::asp::TOOL.to_owned()],
+		asp: Default::default(),
+		config: serde_json::Value::Null,
+		grant: Grant::default(),
+		sources: Vec::new(),
+		listener: None,
+	})
+}
+
 fn exact(keys: &[String]) -> Result<()> {
 	for key in keys {
 		if key.trim().is_empty() || key.contains('*') {
@@ -127,7 +157,7 @@ impl Host {
 			})
 			.collect();
 		if needs.iter().any(|k| k.ends_with('*')) {
-			let mut listened = Vec::new();
+			let mut listened = host_plan().listen.clone();
 			for other in self
 				.entries()?
 				.iter()
@@ -352,7 +382,10 @@ pub(crate) fn directory(
 				.filter(|p| p.listen.iter().any(|n| n == name))
 				.map(|listener| Address {
 					cartridge: listener.id.clone(),
-					socket: host.socket(&listener.id),
+					socket: match listener.id == HOST {
+						true => host.socket_path(),
+						false => host.socket(&listener.id),
+					},
 					token: host.token(&plan.id, Some(&listener.id)),
 				})
 				.collect();

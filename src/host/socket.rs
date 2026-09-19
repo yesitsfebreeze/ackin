@@ -435,7 +435,7 @@ async fn answer(
 		(Caller::Host, _)
 			| (
 				Caller::Cartridge,
-				"status" | "snapshot" | "cartridges" | "asp"
+				"status" | "snapshot" | "cartridges" | "asp" | "event"
 			)
 	);
 	if !granted {
@@ -446,7 +446,18 @@ async fn answer(
 		"status" => request.reply(Ok(json!(host.status()))),
 		"snapshot" => request.reply(Ok(host.snapshot())),
 		"cartridges" => request.reply(Ok(host.cartridges())),
+		// A cartridge asks ASP what it may know. Running an action is a tool
+		// call, and a cartridge makes those through its own dispatch, where
+		// policy is asked; only the command line runs one from here.
+		"asp" if caller == Caller::Cartridge && params["op"] == "act" => request.reply(Err(
+			rpc::Error::new(rpc::UNAUTHORIZED, "`act` is not granted to this token"),
+		)),
 		"asp" => request.reply(host.asp(params).await.map_err(application)),
+		"event" if params["name"] == crate::asp::TOOL => request.reply(
+			host.asp_tool(params["data"].clone())
+				.await
+				.map_err(application),
+		),
 		"bail" => {
 			let name = params["name"].as_str().unwrap_or_default().to_owned();
 			let result = host.bail(&name, params["data"].clone()).await;

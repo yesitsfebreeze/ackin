@@ -25,6 +25,8 @@ A cartridge may send exactly the events it defines and the events it needs.
 
 A tool is an event its owner listens to: fs declares `tool.read` with its input
 schema and listens to it; anyone sends `tool.read` and takes the answer.
+The base owns and listens to one event itself, `tool.asp` (asp.txt); its owner
+reads `host`.
 
 CHECKS
 

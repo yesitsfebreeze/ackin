@@ -373,10 +373,15 @@ impl Host {
 	async fn rewire(self: &Arc<Self>) {
 		let updates: Vec<(Peer, Directory)> = {
 			let mut slots = self.slots.lock();
-			let all: Vec<Arc<Plan>> = slots
-				.iter()
-				.filter(|s| s.state != State::Failed || s.running.is_some())
-				.filter_map(|s| s.plan.clone())
+			// The base comes first, so a cartridge that declares the base's
+			// own event is the one that clashes.
+			let all: Vec<Arc<Plan>> = std::iter::once(plan::host_plan())
+				.chain(
+					slots
+						.iter()
+						.filter(|s| s.state != State::Failed || s.running.is_some())
+						.filter_map(|s| s.plan.clone()),
+				)
 				.collect();
 			let (catalogue, clashes) = plan::catalogue(&all);
 			for slot in slots.iter_mut().filter(|s| s.running.is_none()) {
@@ -395,10 +400,13 @@ impl Host {
 					slot.error = Some(why);
 				}
 			}
-			let plans: Vec<Arc<Plan>> = slots
-				.iter()
-				.filter(|s| s.state != State::Failed || s.running.is_some())
-				.filter_map(|s| s.plan.clone())
+			let plans: Vec<Arc<Plan>> = std::iter::once(plan::host_plan())
+				.chain(
+					slots
+						.iter()
+						.filter(|s| s.state != State::Failed || s.running.is_some())
+						.filter_map(|s| s.plan.clone()),
+				)
 				.collect();
 			let (catalogue, _) = plan::catalogue(&plans);
 			let mut updates = Vec::new();
@@ -435,6 +443,7 @@ impl Host {
 					.iter()
 					.filter(|s| s.state == State::Active)
 					.map(|s| s.entry.id.clone())
+					.chain([plan::HOST.to_owned()])
 					.collect();
 				let mut ready = Vec::new();
 				for slot in slots.iter_mut().filter(|s| s.state == State::Waiting) {
@@ -847,6 +856,9 @@ impl Host {
 		if name == crate::asp::SERVICE {
 			return self.asp(data).await.map(Some);
 		}
+		if name == crate::asp::TOOL {
+			return self.asp_tool(data).await.map(Some);
+		}
 		let ctx = self.sender(name, &data)?;
 		// Shared with other requests that may swap it between `sender`'s set
 		// and this read, so never index it: unknown or empty both mean nobody
@@ -873,7 +885,9 @@ impl Host {
 		self.tokens
 			.lock()
 			.iter()
-			.find(|((_, to), issued)| to.is_none() && *issued == token)
+			.find(|((_, to), issued)| {
+				to.as_deref().is_none_or(|to| to == plan::HOST) && *issued == token
+			})
 			.map(|((id, _), _)| id.clone())
 	}
 
