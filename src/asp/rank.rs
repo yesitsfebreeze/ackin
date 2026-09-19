@@ -20,6 +20,11 @@ fn tokens(text: &str) -> BTreeSet<String> {
 		.collect()
 }
 
+/// Whether any word of the query is a word of the text.
+pub fn matches(query: &str, text: &str) -> bool {
+	!tokens(query).is_disjoint(&tokens(text))
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Hit {
 	pub node: Node,

@@ -25,6 +25,9 @@ pub const SERVICE: &str = "asp";
 /// The event the base owns and listens to, so ASP is one of the agent's tools.
 pub const TOOL: &str = "tool.asp";
 
+/// The id the base contributes under.
+const HOST: &str = "host";
+
 const DEPTH: u64 = 1;
 const MAX_DEPTH: u64 = 4;
 const LIMIT: usize = 256;
@@ -47,10 +50,14 @@ impl Registry {
 			.iter()
 			.filter(|plan| !plan.asp.is_empty())
 			.filter_map(|plan| {
-				let event = plan.listen.iter().find(|k| k.starts_with("asp."))?;
+				// The base answers in process, so it has no event to be asked on.
+				let event = match plan.id == HOST {
+					true => "",
+					false => plan.listen.iter().find(|k| k.starts_with("asp."))?,
+				};
 				Some(Provider {
 					id: plan.id.clone(),
-					event: event.clone(),
+					event: event.to_owned(),
 					declared: plan.asp.clone(),
 				})
 			})
@@ -73,7 +80,19 @@ impl Registry {
 			.collect()
 	}
 
-	fn types(&self) -> Value {
+	/// The registry, and with it every declared event: an event is a type of
+	/// the same world, declared in the same manifest.
+	fn types(&self, plans: &[Arc<Plan>]) -> Value {
+		let events: BTreeMap<&str, Value> = plans
+			.iter()
+			.flat_map(|plan| {
+				plan.events.iter().map(move |(name, event)| {
+					let mut entry = json!(event);
+					entry["owner"] = json!(plan.id);
+					(name.as_str(), entry)
+				})
+			})
+			.collect();
 		let mut schemes: BTreeMap<&str, Value> = BTreeMap::new();
 		let mut edges: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
 		let mut attributes: BTreeMap<&str, &str> = BTreeMap::new();
@@ -120,6 +139,7 @@ impl Registry {
 			"attributes": attributes,
 			"actions": actions,
 			"search": self.providers.iter().filter(|p| p.declared.search).map(|p| &p.id).collect::<Vec<_>>(),
+			"events": events,
 			"clashes": clashes,
 		})
 	}
@@ -148,6 +168,76 @@ impl Registry {
 		}
 		bound
 	}
+}
+
+/// What the base itself adds to the world: every loaded cartridge and every
+/// tool event, which only the base knows in full.
+pub(crate) fn own_types() -> Declaration {
+	let scheme = |description: &str| protocol::Scheme {
+		description: Some(description.to_owned()),
+		owner: true,
+	};
+	Declaration {
+		schemes: BTreeMap::from([
+			(
+				"cartridge".to_owned(),
+				scheme("a loaded cartridge, by its id"),
+			),
+			(
+				"tool".to_owned(),
+				scheme("a tool event, by its name without the `tool.` prefix"),
+			),
+		]),
+		edges: BTreeMap::from([(
+			"provides".to_owned(),
+			protocol::Described {
+				description: Some("the cartridge owns the tool event".to_owned()),
+			},
+		)]),
+		search: true,
+		..Declaration::default()
+	}
+}
+
+/// The base's own answer to an expand or a search.
+fn own_answer(plans: &[Arc<Plan>], request: &Value) -> Value {
+	let tools = plans.iter().flat_map(|plan| {
+		plan.events.iter().filter_map(move |(name, event)| {
+			let key = name.strip_prefix("tool.")?;
+			Some((
+				plan.id.as_str(),
+				key,
+				event.description.clone().unwrap_or_default(),
+			))
+		})
+	});
+	let subject = request["entity"].as_str().unwrap_or_default();
+	let query = request["query"].as_str().unwrap_or_default();
+	let searching = request["op"] == "search";
+	let mut nodes = Vec::new();
+	let mut edges = Vec::new();
+	for (owner, key, description) in tools {
+		let (tool, cartridge) = (format!("tool:{key}"), format!("cartridge:{owner}"));
+		let node = json!({ "id": tool, "name": key, "description": description, "tags": ["tool"] });
+		if searching {
+			if rank::matches(query, &format!("{key} {description}")) {
+				nodes.push(node);
+			}
+		} else if subject == tool || subject == cartridge {
+			nodes.push(node);
+			nodes.push(json!({ "id": cartridge, "name": owner, "tags": ["cartridge"] }));
+			edges.push(json!({ "from": cartridge, "to": tool, "kind": "provides" }));
+		}
+	}
+	if !searching && nodes.is_empty() {
+		if let Some(plan) = plans
+			.iter()
+			.find(|p| format!("cartridge:{}", p.id) == subject)
+		{
+			nodes.push(json!({ "id": subject, "name": plan.id, "tags": ["cartridge"] }));
+		}
+	}
+	json!({ "nodes": nodes, "edges": edges })
 }
 
 fn bind(args: &Value, entity: &str, key: &str) -> Value {
@@ -307,7 +397,7 @@ impl World {
 impl Host {
 	/// The `asp` service: `{op: types | expand | search | actions | act}`.
 	pub async fn asp(&self, request: Value) -> Result<Value> {
-		let registry = Registry::of(&self.active_plans());
+		let registry = Registry::of(&self.participants());
 		let entity = || {
 			let id = request["entity"].as_str().unwrap_or_default();
 			match scheme_of(id) {
@@ -318,7 +408,7 @@ impl Host {
 			}
 		};
 		match request["op"].as_str() {
-			Some("types") => Ok(registry.types()),
+			Some("types") => Ok(registry.types(&self.participants())),
 			Some("expand") => {
 				let depth = request["depth"]
 					.as_u64()
@@ -400,11 +490,12 @@ impl Host {
 	}
 
 	async fn asp_ask(&self, providers: &[&Provider], request: &Value) -> Vec<Result<Value>> {
-		futures::future::join_all(
-			providers
-				.iter()
-				.map(|p| self.send_to(&p.id, &p.event, request.clone())),
-		)
+		futures::future::join_all(providers.iter().map(|p| async move {
+			match p.id == HOST {
+				true => Ok(own_answer(&self.participants(), request)),
+				false => self.send_to(&p.id, &p.event, request.clone()).await,
+			}
+		}))
 		.await
 	}
 

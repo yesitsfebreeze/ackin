@@ -65,6 +65,15 @@ ASP holds every answer against the provider's declaration. A node of a scheme
 it did not declare, an attribute it did not declare or an edge kind it did not
 declare refuses the provider's whole answer, and the refusal names it.
 
+WHAT THE BASE CONTRIBUTES
+
+The base is a provider too, under the name `host`, for what only it knows in
+full: `cartridge:<id>` for every loaded cartridge, `tool:<name>` for every
+`tool.<name>` event, and a `provides` edge from the cartridge to its tool. Its
+search matches a tool by its name and description. `types` also lists every
+declared event under `events`, with its owner, description and schema: an
+event is a type of the same world, declared in the same manifest.
+
 REQUESTS
 
   {op: "types"}                         the registry: schemes with owner and

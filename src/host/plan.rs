@@ -71,7 +71,7 @@ pub(crate) fn host_plan() -> Arc<Plan> {
 		needs: Vec::new(),
 		optional: Vec::new(),
 		listen: vec![crate::asp::TOOL.to_owned()],
-		asp: Default::default(),
+		asp: crate::asp::own_types(),
 		config: serde_json::Value::Null,
 		grant: Grant::default(),
 		sources: Vec::new(),

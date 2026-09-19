@@ -841,14 +841,14 @@ impl Host {
 		}
 	}
 
-	/// The plans of the cartridges serving right now.
-	pub(crate) fn active_plans(&self) -> Vec<Arc<Plan>> {
-		self.slots
-			.lock()
+	/// The base's own plan, then the plans of the cartridges serving right now.
+	pub(crate) fn participants(&self) -> Vec<Arc<Plan>> {
+		let slots = self.slots.lock();
+		let active = slots
 			.iter()
 			.filter(|s| s.state == State::Active)
-			.filter_map(|s| s.plan.clone())
-			.collect()
+			.filter_map(|s| s.plan.clone());
+		std::iter::once(plan::host_plan()).chain(active).collect()
 	}
 
 	pub async fn bail(&self, name: &str, data: Value) -> Result<Option<Value>> {
