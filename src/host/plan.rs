@@ -156,6 +156,14 @@ impl Host {
 				None => key.clone(),
 			})
 			.collect();
+		if let Some(key) = optional
+			.iter()
+			.find(|key| key.trim().is_empty() || key.contains('*'))
+		{
+			return Err(Error::Descriptor(format!(
+				"optional need `{key}?` must be a nonempty exact event name"
+			)));
+		}
 		if needs.iter().any(|k| k.ends_with('*')) {
 			let mut listened = host_plan().listen.clone();
 			for other in self
@@ -325,8 +333,14 @@ pub(crate) fn unmatched(
 	plan: &Plan,
 	catalogue: &BTreeMap<String, (String, Event)>,
 ) -> Option<String> {
-	for (what, names) in [("listens to", &plan.listen), ("needs", &plan.needs)] {
-		if let Some(name) = names.iter().find(|name| !catalogue.contains_key(*name)) {
+	let required = plan.needs.iter().filter(|name| plan.waits_for(name));
+	for (what, name) in plan
+		.listen
+		.iter()
+		.map(|name| ("listens to", name))
+		.chain(required.map(|name| ("needs", name)))
+	{
+		if !catalogue.contains_key(name) {
 			return Some(format!("{what} `{name}`, which no cartridge declares"));
 		}
 	}

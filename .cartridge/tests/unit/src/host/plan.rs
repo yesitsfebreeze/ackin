@@ -160,3 +160,167 @@ fn a_private_host_keeps_its_socket_and_ports_to_itself() {
 		"the project's memo stays the daemon's: {memo}"
 	);
 }
+
+fn need_fixture(dir: &std::path::Path, id: &str, manifest: serde_json::Value, code: &str) {
+	crate::tests::write(dir, &format!("{id}/cartridge.json"), &manifest.to_string());
+	crate::tests::write(dir, &format!("{id}/init.lua"), code);
+}
+
+async fn need_host(dir: &std::path::Path, ids: &[&str]) -> (Arc<Host>, Result<()>) {
+	static BIN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+	let bin = BIN.get_or_init(|| crate::tests::built(&["--bin", "cartridge"]));
+	std::env::set_var(crate::host::NODE_BIN_ENV, bin);
+	let entries: Vec<_> = ids
+		.iter()
+		.map(|id| format!("{{id={id:?}, path={id:?}}}"))
+		.collect();
+	crate::tests::write(
+		dir,
+		".cartridge/init.lua",
+		&format!("return {{{}}}", entries.join(",")),
+	);
+	crate::tests::home();
+	crate::trust::record(dir).unwrap();
+	let host = Host::new(dir, dir.join(".cartridge")).unwrap();
+	let result = host.reconcile().await;
+	(host, result)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn optional_need_without_provider_loads_and_answers() {
+	use crate::host::State;
+	use serde_json::json;
+
+	for provided in [false, true] {
+		let dir = tempfile::tempdir().unwrap();
+		need_fixture(
+			dir.path(),
+			"consumer",
+			json!({
+				"name":"consumer", "entry":"init.lua", "events":{"answer":{}},
+				"listen":["answer"], "needs":["tool.missing?"]
+			}),
+			if provided {
+				r#"cartridge.listen("answer", function() return cartridge.bail("tool.missing", {}) end)"#
+			} else {
+				r#"cartridge.listen("answer", function() return "without provider" end)"#
+			},
+		);
+		need_fixture(
+			dir.path(),
+			"hard",
+			json!({
+				"name":"hard", "entry":"init.lua", "needs":["tool.missing"]
+			}),
+			"",
+		);
+		need_fixture(
+			dir.path(),
+			"stray",
+			json!({
+				"name":"stray", "entry":"init.lua", "listen":["nobody.declares"],
+				"needs":["nobody.declares?"]
+			}),
+			"",
+		);
+		let mut ids = vec!["consumer", "hard", "stray"];
+		if provided {
+			need_fixture(
+				dir.path(),
+				"provider",
+				json!({
+					"name":"provider", "entry":"init.lua", "events":{"tool.missing":{}},
+					"listen":["tool.missing"]
+				}),
+				r#"cartridge.listen("tool.missing", function() return "with provider" end)"#,
+			);
+			ids.push("provider");
+		}
+		let (host, reconciled) = need_host(dir.path(), &ids).await;
+		let statuses = host.status();
+		let answer = host.bail("answer", json!(null)).await;
+		host.stop().await;
+		reconciled.unwrap();
+		let status = |id: &str| statuses.iter().find(|s| s.id == id).unwrap();
+		assert_eq!(
+			status("consumer").state,
+			State::Active,
+			"{:?}",
+			status("consumer").error
+		);
+		assert_eq!(
+			answer.unwrap(),
+			Some(json!(if provided {
+				"with provider"
+			} else {
+				"without provider"
+			}))
+		);
+		assert_eq!(status("stray").state, State::Failed);
+		assert!(status("stray")
+			.error
+			.as_deref()
+			.unwrap()
+			.contains("listens to `nobody.declares`, which no cartridge declares"));
+		if provided {
+			assert_eq!(status("hard").state, State::Active);
+		} else {
+			assert_eq!(status("hard").state, State::Failed);
+			assert!(status("hard")
+				.error
+				.as_deref()
+				.unwrap()
+				.contains("needs `tool.missing`, which no cartridge declares"));
+		}
+	}
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn optional_glob_is_refused_without_losing_optionality() {
+	use crate::host::State;
+	use serde_json::json;
+
+	for provided in [false, true] {
+		let dir = tempfile::tempdir().unwrap();
+		need_fixture(
+			dir.path(),
+			"consumer",
+			json!({
+				"name":"consumer", "entry":"init.lua", "needs":["fixture.*?"]
+			}),
+			"",
+		);
+		let mut ids = vec!["consumer"];
+		if provided {
+			need_fixture(
+				dir.path(),
+				"provider",
+				json!({
+					"name":"provider", "entry":"init.lua", "events":{"fixture.answer":{}},
+					"listen":["fixture.answer"]
+				}),
+				r#"cartridge.listen("fixture.answer", function() return 42 end)"#,
+			);
+			ids.push("provider");
+		}
+		let (host, reconciled) = need_host(dir.path(), &ids).await;
+		let statuses = host.status();
+		host.stop().await;
+		reconciled.unwrap();
+		let consumer = statuses.iter().find(|s| s.id == "consumer").unwrap();
+		assert_eq!(
+			consumer.state,
+			State::Failed,
+			"optional glob accepted (provided={provided})"
+		);
+		assert!(
+			consumer
+				.error
+				.as_deref()
+				.unwrap()
+				.contains("optional need `fixture.*?` must be a nonempty exact event name"),
+			"{:?}",
+			consumer.error
+		);
+	}
+}
