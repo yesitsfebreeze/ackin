@@ -47,21 +47,25 @@ counts unchanged; reading activity itself never records another use.
 prints a snapshot. The default launcher uses uv with pinned dependencies;
 `--python /path/to/python` uses an existing Python 3.11+ environment.
 The preview sits above the centered input and result list in a 50/50 split.
-F4 switches the preview between detail and waterfall. [Browser and extension contract](../ui/README.md) covers controls
+Ctrl-Space `vw` switches the preview between detail and waterfall. [Browser and extension contract](../ui/README.md) covers controls
 and the `<owner>.scope` summary and `scope.detail.<scheme>` events.
 
-The center input accepts natural ASP filters such as `memo jev`. Ctrl-Space
+The center input accepts natural ASP filters such as `memo jev`. Ctrl-Space `aa`
 switches to a real host agent conversation; `/agent`, `/ask memo jev`, and
 `/list` offer the same flow. The list keeps at most 300 rows in a moving
 100-item block window. Colors inherit the terminal palette, with only the
 focused selection inverted.
 
 Finder-style chains compose ASP and disk results: `Files src > Grep TODO`.
-Tab completes or chains, Shift-Tab returns to the preceding stage, and Ctrl-T
-marks results. Ctrl-E opens the preview editor; Ctrl-S saves through the owner
-tool and its normal update events. F6 uses `$VISUAL`/`$EDITOR` for the draft.
+Tab completes or chains, Shift-Tab returns to the preceding stage, and Ctrl-Space `sm`
+marks results. Ctrl-Space `ee` opens the preview editor; Ctrl-Space `es` saves through the owner
+tool and its normal update events. Ctrl-Space `ex` uses `$VISUAL`/`$EDITOR` for the draft.
 The default launcher installs Textual 8.2.8 and RapidFuzz 3.14.3 through uv.
 
-F5 refreshes the active finder chain. Switching away from the editor keeps its
-unsaved draft until Scope exits; Ctrl-E restores the draft and its original
+Ctrl-Space `vr` refreshes the active finder chain. Switching away from the editor keeps its
+unsaved draft until Scope exits; Ctrl-Space `ee` restores the draft and its original
 revision guard. Agent-provided chains run through the same search engine.
+
+Ctrl-Space opens a discoverable command tree: `ff` finds files, `fa` searches ASP,
+`aa` opens the agent and `ee` edits the selected item. Type a sequence or search
+by command name. Escape cancels; Backspace returns to the preceding group.

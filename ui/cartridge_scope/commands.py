@@ -19,7 +19,7 @@ class Commands:
         entry = self.query_one("#search", Input)
         with entry.prevent(Input.Changed):
             entry.value = self.agent_draft if agent else self.filter_query
-        entry.placeholder = "AGENT · Ask about this context · /list to return · /cancel to stop" if agent else "FILTER · memo jev · /agent to talk · Ctrl-Space switches"
+        entry.placeholder = "AGENT · Ask about this context · /list to return · /cancel to stop" if agent else "FILTER · memo jev · /agent to talk · Ctrl-Space commands"
         entry.border_title = "Agent" if agent else "Filter"
         entry.focus()
 
@@ -51,7 +51,7 @@ class Commands:
             self.control_agent(command[1:])
         elif command == "/help":
             self.set_mode(True)
-            self.chat("Scope", "Type memo jev to filter. /agent or Ctrl-Space opens conversation; Enter sends. /list returns to results. /ask asks the agent to interpret your search. /cancel stops a turn. /allow and /deny answer a displayed tool approval.")
+            self.chat("Scope", "Type memo jev to filter. Ctrl-Space aa opens conversation; Enter sends. /list returns to results. /ask asks the agent to interpret your search. /cancel stops a turn. /allow and /deny answer a displayed tool approval.")
         elif command == "/find":
             self.set_mode(False)
             self.query_one("#search", Input).value = tail or "All "

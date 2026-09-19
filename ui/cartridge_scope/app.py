@@ -19,30 +19,16 @@ from .commands import Commands
 from .finder_input import Finder, FinderInput
 from .search_engine import SearchEngine
 from .editor import Editing
+from .leader import Leader
 
 
-class Scope(Editing, Finder, Commands, App):
+class Scope(Leader, Editing, Finder, Commands, App):
     TITLE = "Scope · ASP"
     CSS_PATH = "scope.tcss"
     ENABLE_COMMAND_PALETTE = False
-    BINDINGS = [Binding("ctrl+q", "quit", "Quit", priority=True),
-                Binding("ctrl+space", "mode", "List / agent", priority=True),
-                Binding("ctrl+f", "search", "Search", priority=True),
-                Binding("ctrl+e", "edit", "Edit", priority=True),
-                Binding("ctrl+s", "save", "Save", priority=True),
-                Binding("f6", "external_editor", "External editor", priority=True),
-                Binding("ctrl+p", "pause", "Pause", priority=True),
-                Binding("f2", "used", "Used / all"),
-                Binding("f3", "zoom_pane", "Enlarge pane"),
-                Binding("f4", "preview_mode", "Detail / waterfall"),
-                Binding("f5", "refresh", "Refresh"),
-                Binding("alt+left", "back", "Back"),
-                Binding("ctrl+left", "pan(-1)", "Earlier"),
-                Binding("ctrl+right", "pan(1)", "Later"),
-                Binding("ctrl+up", "scale(0.5)", "Zoom in"),
-                Binding("ctrl+down", "scale(2)", "Zoom out"),
-                Binding("ctrl+l", "follow", "Follow"),
-                Binding("escape", "clear", "Clear", priority=True)]
+    BINDINGS = [Binding("ctrl+space", "leader", "Commands", priority=True),
+                Binding("ctrl+@", "leader", "Commands", show=False, priority=True),
+                Binding("escape", "clear", "Back")]
 
     def __init__(self, project, client=None, context=None, live=True):
         super().__init__(ansi_color=True)

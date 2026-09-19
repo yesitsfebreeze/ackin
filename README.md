@@ -151,23 +151,27 @@ counts unchanged; reading activity itself never records another use.
 `cartridge scope` opens the base-owned Textual browser: one searchable list, a
 usage waterfall and a type-specific detail pane. The preview occupies the upper
 half, the search input sits in the center, and results occupy the lower half.
-F4 switches between detail and waterfall. Plugins publish row summaries and detail documents.
+Ctrl-Space `vw` switches between detail and waterfall. Plugins publish row summaries and detail documents.
 The launcher uses uv to supply its pinned Python dependency, or accepts
 `--python /path/to/python`. See [Scope](ui/README.md) for controls, installation
 and the plugin contract.
 
-The center input accepts natural ASP filters such as `memo jev`. Ctrl-Space
+The center input accepts natural ASP filters such as `memo jev`. Ctrl-Space `aa`
 switches to a real host agent conversation; `/agent`, `/ask memo jev`, and
 `/list` offer the same flow. The list keeps at most 300 rows in a moving
 100-item block window. Colors inherit the terminal palette, with only the
 focused selection inverted.
 
 Finder-style chains compose ASP and disk results: `Files src > Grep TODO`.
-Tab completes or chains, Shift-Tab returns to the preceding stage, and Ctrl-T
-marks results. Ctrl-E opens the preview editor; Ctrl-S saves through the owner
-tool and its normal update events. F6 uses `$VISUAL`/`$EDITOR` for the draft.
+Tab completes or chains, Shift-Tab returns to the preceding stage, and Ctrl-Space `sm`
+marks results. Ctrl-Space `ee` opens the preview editor; Ctrl-Space `es` saves through the owner
+tool and its normal update events. Ctrl-Space `ex` uses `$VISUAL`/`$EDITOR` for the draft.
 The default launcher installs Textual 8.2.8 and RapidFuzz 3.14.3 through uv.
 
-F5 refreshes the active finder chain. Switching away from the editor keeps its
-unsaved draft until Scope exits; Ctrl-E restores the draft and its original
+Ctrl-Space `vr` refreshes the active finder chain. Switching away from the editor keeps its
+unsaved draft until Scope exits; Ctrl-Space `ee` restores the draft and its original
 revision guard. Agent-provided chains run through the same search engine.
+
+Ctrl-Space opens a discoverable command tree: `ff` finds files, `fa` searches ASP,
+`aa` opens the agent and `ee` edits the selected item. Type a sequence or search
+by command name. Escape cancels; Backspace returns to the preceding group.

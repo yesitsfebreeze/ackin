@@ -132,7 +132,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
             await app.load_detail("scope.detail.memo", app.context.nodes["memo:alpha"], {"width": 40, "height": 10}, app.detail_token, generic).wait()
             await pilot.pause()
             self.assertEqual(tree.last_document[1]["sections"][0]["label"], "Renderer unavailable")
-            await pilot.press("ctrl+f")
+            await pilot.press("ctrl+space", 'f', 's')
             self.assertEqual(app.focused.id, "search")
 
     async def test_40_by_12_can_reach_every_pane(self):

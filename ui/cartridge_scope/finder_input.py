@@ -11,19 +11,13 @@ class FinderInput(Input):
         app = self.app
         if app.agent_mode or self.value.startswith("/"):
             return
-        if event.key in ("tab", "shift+tab", "ctrl+n", "ctrl+k", "up", "down", "ctrl+t", "ctrl+w", "ctrl+x"):
+        if event.key in ("tab", "shift+tab", "up", "down"):
             event.stop(); event.prevent_default()
             if event.key == "tab": app.finder_forward()
             elif event.key == "shift+tab": app.finder_back()
-            elif event.key == "ctrl+t": app.finder_mark()
-            elif event.key in ("ctrl+w", "ctrl+x"):
-                key = "word" if event.key == "ctrl+w" else "regex"
-                app.engine.options[key] = not app.engine.options[key]
-                app.search_revision += 1
-                app.run_finder(self.value, app.search_revision)
             else:
                 app.finder_selected = True
-                app.move_item(app.item_indices.get(app.selected, 0) + (1 if event.key in ("ctrl+n", "down") else -1))
+                app.move_item(app.item_indices.get(app.selected, 0) + (1 if event.key == "down" else -1))
         elif event.key == "backspace" and self.cursor_position == 0 and ">" in self.value:
             event.stop(); event.prevent_default(); app.finder_back()
 

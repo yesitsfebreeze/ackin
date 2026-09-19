@@ -45,17 +45,14 @@ class Editing:
             self.query_one("#conversation").display = False
             area = self.query_one("#editor", TextArea)
             area.display = True; area.load_text(text); area.focus()
-            self.query_one("#chain", Static).update("EDIT · Ctrl-S saves through the owner tool · Ctrl-E focuses · Esc keeps draft · F6 opens $VISUAL/$EDITOR")
+            self.query_one("#chain", Static).update("EDIT · Ctrl-Space: es save · ex external editor · ec keep draft and close")
         except (OSError, ValueError, KeyError, asyncio.TimeoutError) as error:
             self.query_one("#status", Static).update("Cannot edit: " + str(error))
 
     @work(exclusive=True, group="save")
     async def action_save(self):
         if not self.editing:
-            if self.finder_active(self.filter_query):
-                self.engine.options["case"] = not self.engine.options["case"]
-                self.search_revision += 1
-                self.run_finder(self.filter_query, self.search_revision)
+            self.query_one("#status", Static).update("Open an item for editing first: Ctrl-Space ee")
             return
         text = self.query_one("#editor", TextArea).text
         try:
@@ -101,7 +98,7 @@ class Editing:
             if code == 0:
                 if path.stat().st_size > 65536: raise ValueError("Edited document exceeds 64 KiB")
                 area.load_text(path.read_text())
-                self.query_one("#chain", Static).update("Editor returned · Ctrl-S publishes through the owner tool")
+                self.query_one("#chain", Static).update("Editor returned · Ctrl-Space es publishes through the owner tool")
         except (OSError, ValueError) as error:
             self.query_one("#status", Static).update("Editor unavailable: " + str(error))
         finally:

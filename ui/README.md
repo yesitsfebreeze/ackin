@@ -2,7 +2,7 @@
 
 Scope is the base cartridge's search and editing interface over ASP and disk.
 The upper half previews the selected item, the input sits in the center, and
-the lower half contains the result list. F4 switches the preview between detail
+the lower half contains the result list. Ctrl-Space `vw` switches the preview between detail
 and the usage waterfall. The agent conversation and editor use the upper half.
 Plugins supply data, summaries and detail documents through declared events.
 
@@ -64,37 +64,39 @@ feed currently publishes call timestamps, not execution durations or payloads.
 Opening Scope and fetching detail documents do not create usage observations.
 
 Preview and results split the available height evenly at every width, with the
-input and filter-chain bar between them. F4 selects the waterfall preview; F3
+input and filter-chain bar between them. Ctrl-Space `vw` selects the waterfall preview; Ctrl-Space `vz`
 enlarges the focused results or preview. Resizing retains selection and the
 chain. Colors inherit the terminal palette. Only the focused selection is
 inverted; pane backgrounds, fixed columns and footer keys remain unfilled.
 
 | Key | Action |
 | --- | --- |
-| Ctrl-Space | Switch between list and agent conversation, preserving both. |
-| Page Up / Page Down | Move 100 list items. |
-| Ctrl-Home / Ctrl-End | First / last list item. |
-| Ctrl-F | Focus the shared search field. |
-| Tab / Shift-Tab | In the input: complete or chain / remove the current stage. Elsewhere: change focus. |
-| Up / Down, Ctrl-K / Ctrl-N | Select results while keeping the input focused. |
-| Ctrl-T | Mark or unmark a result; Tab passes marked results. |
-| F4 | Switch detail and waterfall in the upper preview. |
-| Ctrl-E | Edit the preview in the upper half. |
-| Ctrl-S | Save an edit; in a filter chain, toggle case sensitivity. |
-| Ctrl-W / Ctrl-X | In the filter input, toggle whole-word / regex grep. |
-| F6 | Open the draft with $VISUAL, $EDITOR or micro. |
-| Arrow keys | Select a row or field; navigate detail values. |
-| Enter | Inspect a list cell, expand a detail value or follow an entity link. |
-| Alt-Left | Return from an entity link to the previous item and filter. |
-| F2 | Toggle all items and items with observed use. This is not an active-now filter. |
-| F3 | Enlarge or restore the focused pane. |
-| F5 | Refresh graph, search, usage and selected item. |
-| Ctrl-Left / Ctrl-Right | Pan the timeline. |
-| Ctrl-Up / Ctrl-Down | Zoom the timeline. |
-| Ctrl-L | Follow current time. |
-| Ctrl-P | Freeze the displayed context while collection continues. |
-| Escape | Restore an enlarged pane, or clear the search. |
-| Ctrl-Q | Quit and restore the terminal. |
+| Ctrl-Space | Open the command tree. Type a sequence below or search its name. |
+| `ff` / `fd` | Find files / directories. |
+| `fa` / `fu` / `fg` / `fm` | Find ASP / ASP and disk / text / memos. |
+| `fs` | Focus the current search. |
+| `aa` / `al` / `as` | Agent conversation / list / ask about current search. |
+| `ac` / `ay` / `an` | Cancel turn / allow pending action / deny pending action. |
+| `vw` / `vz` / `vr` | Switch detail and waterfall / enlarge pane / refresh. |
+| `vu` / `vp` / `vb` | Used items / pause updates / back to previous item. |
+| `ee` / `es` / `ex` / `ec` | Edit / save / external editor / close and keep draft. |
+| `sc` / `sw` / `sr` / `sm` | Case sensitivity / whole words / regex / mark result. |
+| `tl` / `tr` / `ti` / `to` / `tf` | Timeline earlier / later / zoom in / zoom out / follow. |
+| `q` | Quit Scope and restore the terminal. |
+| Up / Down | Select results while keeping the search input focused. |
+| Tab / Shift-Tab | Complete or chain filters / return to the preceding stage. |
+| Page Up / Page Down | Move through 100-item blocks. |
+| Enter | Inspect a result or run the selected command. |
+| Escape | Cancel the command menu or close the editor while retaining its draft. |
+
+Every letter sequence is entered after Ctrl-Space. For example, Ctrl-Space,
+then `f`, then `f` starts file finding. After `f`, the menu shows `ff`, `fd`
+and the other find commands. Search names such as `waterfall` and press Enter
+when you do not remember a sequence. Backspace backs out of a group. Escape
+or Ctrl-Space cancels without changing the current query or editor text.
+The command tree follows [LeaderMode](https://github.com/michaelgriscom/LeaderMode).
+Ctrl-Space is the only application command chord; ordinary navigation, text
+editing and Tab-based filter composition remain available.
 
 ## Plugin contract
 
@@ -138,7 +140,7 @@ remain visible without erasing the last successful context.
 
 ## Agent conversation
 
-Type `/agent` or press Ctrl-Space to switch the same center input into an
+Type `/agent` or use Ctrl-Space `aa` to switch the same center input into an
 actual host agent session. Enter sends the question. `/list` returns to the
 three panes. `/ask memo jev` asks the agent to interpret that search, retrieve
 ASP evidence and return the items that fit. Normal filter typing never starts
@@ -179,12 +181,12 @@ narrows labels and matched line content, `Type` narrows schemes, and `Expand`
 loads ASP neighborhoods. Quotes preserve literal `>` characters in a query.
 Only compatible filters appear after Tab. Type a filter prefix and Tab to
 complete it. Tab after a query captures its result set for the next stage;
-select with arrows first to pass one item, or mark several with Ctrl-T.
+select with arrows first to pass one item, or mark several with Ctrl-Space `sm`.
 Shift-Tab removes a stage; Backspace at the start of the input goes back.
 Editing an earlier stage invalidates its downstream captured scope.
 
 Path enumeration is cached for ten seconds and honors ignore files, including
-outside Git repositories. F5 invalidates it immediately. Ripgrep does content
+outside Git repositories. Ctrl-Space `vr` invalidates it immediately. Ripgrep does content
 search asynchronously and is killed and reaped on cancellation. Fuzzy matching
 uses RapidFuzz's native subsequence candidate filtering and boundary/contiguity
 ranking off the UI thread. Regex, case and word flags are visible in the chain
@@ -196,11 +198,11 @@ is used as the document to save.
 
 ## Editing and update events
 
-Ctrl-E opens a complete text document up to 64 KiB in the upper editor. Ctrl-S
-saves, and Escape returns to the preview. F6 hands a temporary draft to the
+Ctrl-Space `ee` opens a complete text document up to 64 KiB in the upper editor. Ctrl-Space `es`
+saves, and Escape returns to the preview. Ctrl-Space `ex` hands a temporary draft to the
 user's `$VISUAL` or `$EDITOR`, falling back to `micro`; this external application
 uses the terminal until it exits. Its draft returns to the inline editor, where
-Ctrl-S explicitly publishes it. The real file is never handed to an external
+Ctrl-Space `es` explicitly publishes it. The real file is never handed to an external
 editor before the guarded save.
 
 File editing registers a real session, obtains a read observation through
@@ -215,19 +217,19 @@ plus optional `read_text_key` (default `text`) and `write_text_key` (default
 `body`). The tool must belong to the selected entity's ASP owner. Scope reads
 the complete document and passes its revision as `expected_revision` on save.
 Memo supplies this descriptor so its frontmatter and body are validated by
-`tool.memo`. For an item with no direct edit descriptor, Ctrl-E opens an editable
+`tool.memo`. For an item with no direct edit descriptor, Ctrl-Space `ee` opens an editable
 JSON proposal; saving submits the original and proposed information to the
 actual agent, which applies supported changes through the item's owner tools
 and reports the outcome. This is an asynchronous change request, not a direct
 record overwrite.
 
 Closing the editor with Escape or switching to the agent or waterfall keeps an
-unsaved draft for that item during the current UI session. Ctrl-E restores it
+unsaved draft for that item during the current UI session. Ctrl-Space `ee` restores it
 with its original read/revision guard; a concurrent write is still detected.
 Drafts are not persisted after quitting Scope.
 
 Disk searches honor ignore files inside the project. Parent-directory ignore
-files and RIPGREP_CONFIG_PATH do not change Scope results. F5 refreshes the
+files and RIPGREP_CONFIG_PATH do not change Scope results. Ctrl-Space `vr` refreshes the
 current composed chain, including disk enumeration. Agent-returned chains use
 the same finder backend as typed chains.
 

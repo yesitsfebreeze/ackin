@@ -5,6 +5,7 @@ use std::process::{Command, ExitCode};
 use cartridge::{Error, Result};
 
 const FILES: &[(&str, &str)] = &[
+	("leader.py", include_str!("../../ui/cartridge_scope/leader.py")),
 	(
 		"edit_session.py",
 		include_str!("../../ui/cartridge_scope/edit_session.py"),
