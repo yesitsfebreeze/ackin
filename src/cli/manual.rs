@@ -1036,13 +1036,19 @@ mod tests {
 	fn q_and_escape_exit_the_list_instead_of_being_consumed() {
 		assert!(exits(&Key::Quit, ""), "ctrl-c always exits");
 		assert!(exits(&Key::Exit, ""), "esc exits with no filter typed");
-		assert!(exits(&Key::Exit, "shel"), "esc exits in one press even mid-filter");
+		assert!(
+			exits(&Key::Exit, "shel"),
+			"esc exits in one press even mid-filter"
+		);
 		assert!(exits(&Key::Char('q'), ""), "bare q exits an empty filter");
 		assert!(
 			!exits(&Key::Char('q'), "shel"),
 			"q stays literal filter text once a query is underway"
 		);
-		assert!(!exits(&Key::Char('x'), ""), "other characters are never consumed as exit");
+		assert!(
+			!exits(&Key::Char('x'), ""),
+			"other characters are never consumed as exit"
+		);
 	}
 
 	fn run_keys(manual: &Manual, start: &str, keys: &[Key]) -> (std::io::Result<()>, String) {
@@ -1052,8 +1058,17 @@ mod tests {
 			selected: 0,
 		}];
 		let mut it = keys.iter().copied();
-		let result = run(manual, &mut stack, || Ok(it.next().unwrap_or(Key::Quit)), |_, _| Ok(()));
-		let query = stack.last().expect("root level is never popped").query.clone();
+		let result = run(
+			manual,
+			&mut stack,
+			|| Ok(it.next().unwrap_or(Key::Quit)),
+			|_, _| Ok(()),
+		);
+		let query = stack
+			.last()
+			.expect("root level is never popped")
+			.query
+			.clone();
 		(result, query)
 	}
 
@@ -1072,10 +1087,16 @@ mod tests {
 
 		let (result, query) = run_keys(&manual, "", &[Key::Char('s'), Key::Char('q'), Key::Quit]);
 		assert!(result.is_ok());
-		assert_eq!(query, "sq", "q is consumed as filter text once a query is underway");
+		assert_eq!(
+			query, "sq",
+			"q is consumed as filter text once a query is underway"
+		);
 
 		let (result, query) = run_keys(&manual, "", &[Key::Char('s'), Key::Exit]);
 		assert!(result.is_ok());
-		assert_eq!(query, "s", "esc must exit before appending anything of its own");
+		assert_eq!(
+			query, "s",
+			"esc must exit before appending anything of its own"
+		);
 	}
 }
