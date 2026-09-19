@@ -60,7 +60,9 @@ pub enum Effect {
 }
 
 /// A pointer to a tool event the host already serves. `args` is the tool's
-/// payload, where the strings `${entity}` and `${key}` stand for the entity.
+/// input as an agent passes it, not the `{op, input, context}` envelope its
+/// harness wraps around it; the strings `${entity}` and `${key}` stand for
+/// the entity.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Action {

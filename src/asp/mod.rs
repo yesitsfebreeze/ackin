@@ -444,7 +444,10 @@ impl Host {
 					})?;
 				// The tool event is the whole dispatch: whatever answers or
 				// refuses it, policy included, reaches the caller as it is.
-				Ok(Box::pin(self.bail(&action.tool, action.args))
+				// `args` is the tool's input, as an agent would pass it; the
+				// tool event itself takes the envelope every harness sends.
+				let call = json!({ "op": "call", "input": action.args });
+				Ok(Box::pin(self.bail(&action.tool, call))
 					.await?
 					.unwrap_or(Value::Null))
 			}

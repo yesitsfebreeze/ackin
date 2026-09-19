@@ -258,8 +258,8 @@ async fn an_action_runs_through_its_tool_and_a_denial_reaches_the_caller_unchang
 		"guard",
 		json!({"name": "guard", "entry": "init.lua", "events": {"tool.open": {}}, "listen": ["tool.open"]}),
 		r#"cartridge.listen("tool.open", function(args)
-			if args.path == "secret.rs" then error("policy: tool.open is denied for secret.rs", 0) end
-			return "opened " .. args.path
+			if args.input.path == "secret.rs" then error("policy: tool.open is denied for secret.rs", 0) end
+			return "opened " .. args.input.path
 		end)"#,
 	);
 	let host = boot(dir.path(), &["files", "guard"]).await;
@@ -284,7 +284,10 @@ async fn an_action_runs_through_its_tool_and_a_denial_reaches_the_caller_unchang
 		.unwrap_err()
 		.to_string();
 	let direct = host
-		.bail("tool.open", json!({"path": "secret.rs"}))
+		.bail(
+			"tool.open",
+			json!({"op": "call", "input": {"path": "secret.rs"}}),
+		)
 		.await
 		.unwrap_err()
 		.to_string();

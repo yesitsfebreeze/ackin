@@ -41,8 +41,10 @@ DECLARATION
   attributes  the attributes it sets on nodes. Each name starts with the
               cartridge's own name, so two cartridges never collide.
   actions     what an agent can do with an entity of `applies_to`. An action
-              is a pointer to a tool event; in `args`, the strings `${entity}`
-              and `${key}` stand for the entity.
+              is a pointer to a tool event. `args` is that tool's input, as
+              an agent passes it to the tool, never the `{op, input, context}`
+              envelope a harness wraps around it; in `args`, the strings
+              `${entity}` and `${key}` stand for the entity.
   search      whether it answers `{op: "search"}`.
 
 A cartridge with an `asp` block listens to exactly one `asp.<name>` event. The
@@ -87,7 +89,9 @@ REQUESTS
                                         and ranked: hits of {node, score, why},
                                         and the edges between the hits
   {op: "actions", entity}               the actions bound to the entity
-  {op: "act", entity, action}           run one. The tool event is the whole
+  {op: "act", entity, action}           run one, as `{op: "call", input: args}`
+                                        with no caller context, so a tool that
+                                        needs one refuses. The tool event is the whole
                                         dispatch, so whatever answers or
                                         refuses it, policy included, reaches
                                         the caller unchanged
