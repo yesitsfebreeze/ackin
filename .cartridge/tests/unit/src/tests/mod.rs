@@ -1,3 +1,4 @@
+mod composed;
 mod host;
 mod ledger;
 mod node;
