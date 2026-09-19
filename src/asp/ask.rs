@@ -17,7 +17,7 @@ impl Host {
 	) -> Vec<Result<Value>> {
 		futures::future::join_all(providers.iter().map(|p| async move {
 			match p.id == HOST {
-				true => Ok(own_answer(&self.participants(), request)),
+				true => Ok(own_answer(&self.participants(), &self.roster(), request)),
 				false => self.send_to(&p.id, &p.event, request.clone()).await,
 			}
 		}))

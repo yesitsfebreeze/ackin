@@ -34,6 +34,18 @@ async fn the_base_contributes_every_tool_and_cartridge_and_lists_every_event_as_
 	assert_eq!(tool["edges"][0]["contributor"], "host");
 	let owner = expand(&host, "cartridge:reader").await;
 	assert_eq!(owner["edges"][0]["to"], "tool:read");
+	let reader = &owner["nodes"][0];
+	assert_eq!(reader["id"], "cartridge:reader");
+	assert_eq!(reader["attributes"]["host.state"], "active");
+	let started = reader["contributors"][0]["revision"].clone();
+	assert_eq!(started, "1", "the first start is generation 1");
+
+	host.replace("reader").await.unwrap();
+	let restarted = expand(&host, "cartridge:reader").await;
+	assert_ne!(
+		restarted["nodes"][0]["contributors"][0]["revision"], started,
+		"a restart moves the cartridge's revision"
+	);
 
 	let found = host
 		.asp(json!({"op": "search", "query": "read a workspace file"}))

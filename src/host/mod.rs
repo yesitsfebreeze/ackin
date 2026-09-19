@@ -851,6 +851,21 @@ impl Host {
 		std::iter::once(plan::host_plan()).chain(active).collect()
 	}
 
+	/// Every cartridge in the profile as ASP describes it: its id, its
+	/// lifecycle state, how many times it has started, and why it failed.
+	pub(crate) fn roster(&self) -> Vec<crate::asp::own::Member> {
+		self.slots
+			.lock()
+			.iter()
+			.map(|s| crate::asp::own::Member {
+				id: s.entry.id.clone(),
+				state: serde_json::to_value(s.state).unwrap_or_default(),
+				generation: s.generation,
+				error: s.error.clone(),
+			})
+			.collect()
+	}
+
 	pub async fn bail(&self, name: &str, data: Value) -> Result<Option<Value>> {
 		// ASP is the host's own service, so it has no listener to find.
 		if name == crate::asp::SERVICE {

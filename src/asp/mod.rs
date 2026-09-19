@@ -6,7 +6,7 @@
 mod admit;
 mod ask;
 mod expand;
-mod own;
+pub(crate) mod own;
 pub mod protocol;
 pub mod rank;
 mod registry;
