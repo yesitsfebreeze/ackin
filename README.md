@@ -1,7 +1,9 @@
-# Cartridge
+# Ackin
 
-Cartridge is a modular application runtime that composes independent components
+Ackin is a modular application runtime that composes independent components
 through declared events, isolated processes, and managed lifecycles.
+
+The name stems from `acknowledged integration` and `akin`.
 
 ```lua
 local fs = cartridge.load("fs")
