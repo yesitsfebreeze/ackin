@@ -832,7 +832,21 @@ impl Host {
 		}
 	}
 
+	/// The plans of the cartridges serving right now.
+	pub(crate) fn active_plans(&self) -> Vec<Arc<Plan>> {
+		self.slots
+			.lock()
+			.iter()
+			.filter(|s| s.state == State::Active)
+			.filter_map(|s| s.plan.clone())
+			.collect()
+	}
+
 	pub async fn bail(&self, name: &str, data: Value) -> Result<Option<Value>> {
+		// ASP is the host's own service, so it has no listener to find.
+		if name == crate::asp::SERVICE {
+			return self.asp(data).await.map(Some);
+		}
 		let ctx = self.sender(name, &data)?;
 		// Shared with other requests that may swap it between `sender`'s set
 		// and this read, so never index it: unknown or empty both mean nobody

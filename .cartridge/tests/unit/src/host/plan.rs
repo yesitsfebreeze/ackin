@@ -24,6 +24,7 @@ fn plan(id: &str, events: &[(&str, Option<u64>)], needs: &[&str], listen: &[&str
 		needs: strings(needs),
 		optional: Vec::new(),
 		listen: strings(listen),
+		asp: Default::default(),
 		config: serde_json::Value::Null,
 		grant: Grant::default(),
 		sources: Vec::new(),

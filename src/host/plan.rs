@@ -23,6 +23,7 @@ pub struct Plan {
 	/// both start when one side asks optionally.
 	pub optional: Vec<String>,
 	pub listen: Vec<String>,
+	pub asp: crate::asp::protocol::Declaration,
 	pub config: serde_json::Value,
 	pub grant: Grant,
 	pub sources: Vec<PathBuf>,
@@ -163,6 +164,7 @@ impl Host {
 			needs,
 			optional,
 			listen,
+			asp: declared.asp.clone(),
 			config,
 			grant,
 			sources: declared.sources.clone(),

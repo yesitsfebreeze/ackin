@@ -15,11 +15,13 @@ sandboxed node with the `cartridge` global injected.
 - `cartridge run <event> '<json>'`: start the descriptor, send one event, print the first answer, stop.
 - `cartridge daemon`, then `cartridge status`, `call`, `send`, `follow`, `reload`, `stop`.
 - `cartridge verify [<id>]`: run declared contracts.
+- `cartridge call asp '{"op":"expand","entity":"file:src/a.rs"}'`: ask ASP, the base's own service, about an entity. ASP is the fabric with a better protocol: one world merged from every cartridge that declares an `asp` block. Ops: `types`, `expand`, `search`, `actions`, `act`.
 
 ## Read next
 
 - [Architecture](../docs/architecture.txt)
 - [Transport](../docs/transport.txt)
+- [ASP](../docs/asp.txt)
 - [Creating cartridges](../docs/creating-cartridges.txt)
 - [Writing good cartridges](../docs/writing-good-cartridges.txt)
 - [Settings](../docs/settings.txt)

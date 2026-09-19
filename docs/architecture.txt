@@ -15,6 +15,7 @@ The base loads and wires; it is not on the path of events.
     watch.rs      restarting on source changes, reconciling on profile changes
     run.rs        `run` and `verify`: start, send, stop
   src/node/       a node: init.lua with the `cartridge` global, native modules, helpers
+  src/asp/        ASP: the world composed from every cartridge's declared types
   src/ledger/     every cartridge installed under the cartridge root
   src/lua/        one Lua state per cartridge and per configuration file, with its limits
   src/trust/      what this machine will evaluate or spawn, by SHA-256

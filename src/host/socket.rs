@@ -432,7 +432,11 @@ async fn answer(
 	let method = request.method.clone();
 	let granted = matches!(
 		(&caller, method.as_str()),
-		(Caller::Host, _) | (Caller::Cartridge, "status" | "snapshot" | "cartridges")
+		(Caller::Host, _)
+			| (
+				Caller::Cartridge,
+				"status" | "snapshot" | "cartridges" | "asp"
+			)
 	);
 	if !granted {
 		let message = format!("`{method}` is not granted to this token");
@@ -442,6 +446,7 @@ async fn answer(
 		"status" => request.reply(Ok(json!(host.status()))),
 		"snapshot" => request.reply(Ok(host.snapshot())),
 		"cartridges" => request.reply(Ok(host.cartridges())),
+		"asp" => request.reply(host.asp(params).await.map_err(application)),
 		"bail" => {
 			let name = params["name"].as_str().unwrap_or_default().to_owned();
 			let result = host.bail(&name, params["data"].clone()).await;

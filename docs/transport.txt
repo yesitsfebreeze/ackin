@@ -67,7 +67,7 @@ The base injects `cartridge` into every init.lua:
                                   watch another cartridge's channel; fn(envelope)
   cartridge.needs()               the events this cartridge needs, all covered
   cartridge.events()              every event: name -> {owner, description, schema}
-  cartridge.host(method, params)  status, snapshot, cartridges
+  cartridge.host(method, params)  status, snapshot, cartridges, asp (asp.txt)
   cartridge.on_dispose(fn)        runs when the cartridge stops
   cartridge.load(name)            a native Lua module shipped by this cartridge
   cartridge.spawn(cmd, opts)      a helper program: :request(v), :send(v), :on_line(fn), :kill()

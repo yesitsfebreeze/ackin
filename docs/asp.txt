@@ -1,0 +1,104 @@
+# ASP: the agent's one interface to the world
+
+ASP (Agent Server Protocol) is the fabric with a better protocol. The fabric
+was one graph of everything the composition can reach, ranked by how well a
+node matches and how much it is used. ASP is that graph, served by the base
+itself, and it adds what the fabric's protocol lacked: a typed identity for
+every node, a registry of the types each cartridge declares, a contributor and
+a revision on every fact, staleness, and actions. An agent asks ASP about an
+entity and gets one merged answer from every loaded cartridge that knows
+something about it.
+
+ASP keeps no store. It asks the live providers on every request. Installing a
+cartridge adds its types and its facts; removing it removes both, and nothing
+has to be retracted.
+
+ENTITIES
+
+An entity is `scheme:key`, for example `file:src/a.rs` or
+`symbol:src/a.rs#main`. One cartridge owns a scheme. The owner defines the
+canonical key, and every other cartridge uses that form. An entity exists
+while at least one loaded cartridge asserts it.
+
+DECLARATION
+
+  "events": { "asp.files": {} },
+  "listen": ["asp.files"],
+  "asp": {
+    "schemes":    { "file": { "description": "a workspace file", "owner": true } },
+    "edges":      { "contains": { "description": "the file holds the symbol" } },
+    "attributes": { "files.bytes": {} },
+    "actions":    [ { "name": "open", "applies_to": "file", "effect": "read",
+                      "tool": "tool.read", "args": { "path": "${key}" } } ],
+    "search":     true
+  }
+
+  schemes     the schemes this cartridge asserts nodes of. ASP sends it every
+              expand of an entity in one of them. `owner: true` makes it the
+              scheme's owner; the first loaded owner wins, and `types` reports
+              a second one under `clashes`.
+  edges       the edge kinds it asserts.
+  attributes  the attributes it sets on nodes. Each name starts with the
+              cartridge's own name, so two cartridges never collide.
+  actions     what an agent can do with an entity of `applies_to`. An action
+              is a pointer to a tool event; in `args`, the strings `${entity}`
+              and `${key}` stand for the entity.
+  search      whether it answers `{op: "search"}`.
+
+A cartridge with an `asp` block listens to exactly one `asp.<name>` event. The
+base refuses the manifest otherwise, and refuses a scheme or edge kind that is
+not lowercase letters, digits and `-`.
+
+WHAT A PROVIDER ANSWERS
+
+ASP sends `{op: "expand", entity}` or `{op: "search", query, limit}` to the
+provider's `asp.<name>` event. The provider answers
+
+  { nodes: [ { id, revision?, name?, description?, when?, tags?, attributes? } ],
+    edges: [ { from, to, kind, revision? } ] }
+
+or nil when it has nothing. `revision` is the revision of the expanded entity
+the fact was computed against: a content hash, a commit. `name`,
+`description`, `when` and `tags` are what search matches and ranks.
+
+ASP holds every answer against the provider's declaration. A node of a scheme
+it did not declare, an attribute it did not declare or an edge kind it did not
+declare refuses the provider's whole answer, and the refusal names it.
+
+REQUESTS
+
+  {op: "types"}                         the registry: schemes with owner and
+                                        contributors, edge kinds, attributes,
+                                        actions, search providers, clashes
+  {op: "expand", entity, depth?, limit?}
+                                        nodes, edges, actions and sources.
+                                        depth 1 to 4 (default 1) follows edges;
+                                        limit caps nodes at 256
+  {op: "search", query, limit?}         every search provider's nodes, merged
+                                        and ranked: hits of {node, score, why}
+  {op: "actions", entity}               the actions bound to the entity
+  {op: "act", entity, action}           run one. The tool event is the whole
+                                        dispatch, so whatever answers or
+                                        refuses it, policy included, reaches
+                                        the caller unchanged
+
+Every node lists its `contributors`, and every edge names its `contributor`,
+each with the `revision` it answered against. When the scheme owner's revision
+of the expanded entity differs, the fact comes back with `stale: true`; it is
+never dropped. `sources` names every provider asked and its state: `available`,
+`unavailable` (it failed or timed out; its facts are absent) or `refused`.
+
+REACHING IT
+
+  cartridge call asp '{"op":"expand","entity":"file:src/a.rs"}'
+  cartridge.host("asp", { op = "types" })       from a cartridge's init.lua
+
+`asp` is the base's own service key, so no cartridge may need or listen to it.
+
+RANKING
+
+Search ranks with the fabric's formula: matched words in a node's name and id
+(weight 3), `when` (3), `tags` (2) and description (1), times a standing of
+1 + ln(1 + uses). A node whose words do not match keeps its provider's order
+below every node that matched. Use counts come from the event ring; until the
+ring indexes events by entity, every standing is 1.

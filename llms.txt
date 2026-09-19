@@ -7,6 +7,8 @@ documents. Then read what the task needs:
 
 - [Transport](docs/transport.txt): the event model, the declarations, the checks
   the base makes, and the `cartridge` global every init.lua gets.
+- [ASP](docs/asp.txt): the agent's one interface to the world, the fabric with a
+  better protocol: entities, the types a cartridge declares, expand, search, actions.
 - [Creating cartridges](docs/creating-cartridges.txt): a Lua cartridge, a Rust
   cartridge as a native module, a helper program, manifest fields, contracts.
 - [Architecture](docs/architecture.txt): what the base does, lifecycle, nodes,

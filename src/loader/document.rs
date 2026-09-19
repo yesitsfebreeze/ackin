@@ -28,6 +28,10 @@ pub struct Cartridge {
 	pub needs: Vec<String>,
 	#[serde(default)]
 	pub listen: Vec<String>,
+	/// The ASP types this cartridge adds to the world, and with them the
+	/// promise to answer on its one `asp.<name>` event.
+	#[serde(default)]
+	pub asp: crate::asp::protocol::Declaration,
 	#[serde(default)]
 	pub grant: Grant,
 	/// A dotted config key naming a `host:port` the host binds once and keeps
@@ -176,6 +180,9 @@ impl Cartridge {
 		};
 		for (name, event) in &self.events {
 			key("events", name)?;
+			if name == crate::asp::SERVICE {
+				return Err(at("`events.asp` is the base's own service key"));
+			}
 			if event.timeout_ms == Some(0) {
 				return Err(at(&format!(
 					"`events.{name}.timeout_ms` must be at least 1"
@@ -200,6 +207,9 @@ impl Cartridge {
 			if !asked.insert(k.as_str()) {
 				return Err(at(&format!("duplicate needs declaration `{k}`")));
 			}
+		}
+		if let Some(problem) = self.asp.problem(&self.name, &self.listen) {
+			return Err(at(&problem));
 		}
 		let named = self.contracts.iter().map(|k| ("contracts", k));
 		let named = named.chain(
@@ -276,6 +286,7 @@ pub(crate) struct Declared {
 	pub(crate) events: std::collections::BTreeMap<String, Event>,
 	pub(crate) needs: Vec<String>,
 	pub(crate) listen: Vec<String>,
+	pub(crate) asp: crate::asp::protocol::Declaration,
 	pub(crate) config: serde_json::Value,
 	pub(crate) settings: crate::settings::Specs,
 	pub(crate) grant: Grant,
@@ -315,6 +326,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 			events: Default::default(),
 			needs: Vec::new(),
 			listen: Vec::new(),
+			asp: Default::default(),
 			config: serde_json::Value::Null,
 			settings: Default::default(),
 			grant: Grant::default(),
@@ -333,6 +345,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		events: manifest.events,
 		needs: manifest.needs,
 		listen: manifest.listen,
+		asp: manifest.asp,
 		config: manifest.config,
 		settings: manifest.settings,
 		grant: manifest.grant,

@@ -147,6 +147,8 @@ separator, `..` or the name `.cartridge` is refused rather than placed.
   needs           events that must have a listener before this cartridge starts;
                   `tool.*` names every event with that prefix another enabled
                   cartridge listens to, and nothing when there is none
+  asp             {schemes, edges, attributes, actions, search}: the ASP types this
+                  cartridge adds to the world; see asp.txt
   grant           {read, write, net, exec, env}; absent grants nothing.
                   `env` names variables a node inherits from the base's shell,
                   exact or `PREFIX*`; a bare `*` is refused
