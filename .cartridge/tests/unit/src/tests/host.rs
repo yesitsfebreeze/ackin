@@ -1423,3 +1423,53 @@ async fn a_rewritten_native_module_restarts_only_on_reload() {
 	watcher.abort();
 	host.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_event_runs_while_a_yielding_listener_waits_on_another_cartridge() {
+	let dir = tempfile::tempdir().unwrap();
+	cartridge(
+		dir.path(),
+		"provider",
+		json!({"name": "provider", "entry": "init.lua",
+			"events": {"provider.slow": {}}, "listen": ["provider.slow"]}),
+		r#"cartridge.listen("provider.slow", function()
+			local stop = os.clock() + 1.2
+			while os.clock() < stop do end
+			return "slow"
+		end)"#,
+	);
+	cartridge(
+		dir.path(),
+		"caller",
+		json!({"name": "caller", "entry": "init.lua",
+			"events": {"caller.relay": {}, "caller.quick": {}},
+			"listen": ["caller.relay", "caller.quick"], "needs": ["provider.slow"]}),
+		r#"cartridge.listen("caller.relay", function() return cartridge.bail("provider.slow", {}) end)
+		cartridge.listen("caller.quick", function() return "quick" end)"#,
+	);
+	descriptor(dir.path(), &["provider", "caller"]);
+	let host = boot(dir.path()).await;
+	let relay = tokio::spawn({
+		let host = host.clone();
+		async move { host.bail("caller.relay", json!(null)).await }
+	});
+	tokio::time::sleep(Duration::from_millis(300)).await;
+	assert!(
+		!relay.is_finished(),
+		"the relay answered before the second event was sent"
+	);
+	let started = std::time::Instant::now();
+	let answer = host.bail("caller.quick", json!(null)).await.unwrap();
+	let waited = started.elapsed();
+	assert!(
+		!relay.is_finished(),
+		"the relay answered before the second event did"
+	);
+	assert_eq!(answer, Some(json!("quick")));
+	assert!(
+		waited < Duration::from_millis(250),
+		"the second event did not run while the first was parked: {waited:?}"
+	);
+	assert_eq!(relay.await.unwrap().unwrap(), Some(json!("slow")));
+	host.stop().await;
+}

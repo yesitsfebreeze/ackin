@@ -978,6 +978,10 @@ async fn handle(
 			// the worker whose queue carries that very reply. The cancel is raced
 			// against the listener *inside* this same spawn_blocking/block_on, so
 			// the listener never moves onto a worker and nothing is aborted.
+			// Running off the workers is about worker starvation; it does not
+			// serialize a node. Whether two events on one node run concurrently
+			// is decided by whether the handler yields, at `EITHER` in
+			// `src/node/mod.rs`.
 			let (trace, data) = (trace_of(&params), params["data"].clone());
 			let runtime = tokio::runtime::Handle::current();
 			let raced = tokio::task::spawn_blocking(move || {

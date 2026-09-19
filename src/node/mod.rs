@@ -45,6 +45,12 @@ fn json(lua: &Lua, value: mlua::Value) -> mlua::Result<Value> {
 	serde_json::from_str(&text).map_err(mlua::Error::external)
 }
 
+// The rule this chunk decides: a caller that can yield releases the node's Lua
+// state for the whole wait, so unrelated events on the same node keep being
+// served; a caller that cannot yield (a native module's synchronous call, or
+// Lua inside a C-boundary callback such as a `string.gsub` replacement) takes
+// `wait()` and holds the state until the reply arrives. The first half is
+// locked by `a_second_event_runs_while_a_yielding_listener_waits_on_another_cartridge`.
 const EITHER: &str = r#"local yielding, blocking, yieldable = ...
 return function(...)
 	if yieldable() then return yielding(...) end

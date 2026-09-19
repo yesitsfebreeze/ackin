@@ -6,6 +6,10 @@ naming it in `.cartridge/init.lua`. Everything between cartridges is an event,
 declared with a schema and checked by the base; each cartridge runs as its own
 sandboxed node with the `cartridge` global injected.
 
+A node keeps answering other events while a handler waits on another
+cartridge, as long as the handler yields; a handler that cannot yield, such as
+a native module's synchronous call, holds its node for the whole call.
+
 ## Use
 
 - `cartridge setup`: make this directory a project; `cartridge doctor`: ask each cartridge whether it is healthy.
