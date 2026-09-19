@@ -590,8 +590,16 @@ impl Host {
 		let mut order = Vec::new();
 		for (provider, answer) in providers.iter().zip(answers) {
 			match taken(provider, answer) {
-				Ok((nodes, _)) => {
+				Ok((nodes, edges)) => {
 					world.source(&provider.id, Availability::Available, None);
+					for edge in edges {
+						let assertion = Assertion {
+							contributor: provider.id.clone(),
+							revision: edge.revision.clone(),
+							stale: false,
+						};
+						world.link(edge, assertion);
+					}
 					for node in nodes {
 						let owns = scheme_of(&node.id).and_then(|s| registry.owner(s))
 							== Some(provider.id.as_str());
@@ -617,9 +625,16 @@ impl Host {
 		// event ring supplies them once it indexes events by entity id.
 		let mut hits = rank::rank(query, nodes, &BTreeMap::new());
 		hits.truncate(limit);
+		// An edge is kept while both of its ends are among the hits: a match
+		// is a range, and the edge is what says which file holds it.
+		let kept: BTreeSet<&str> = hits.iter().map(|hit| hit.node.id.as_str()).collect();
+		world
+			.edges
+			.retain(|e| kept.contains(e.from.as_str()) && kept.contains(e.to.as_str()));
 		Ok(json!({
 			"query": query,
 			"hits": hits,
+			"edges": world.edges,
 			"sources": world.sources.into_values().collect::<Vec<_>>(),
 		}))
 	}

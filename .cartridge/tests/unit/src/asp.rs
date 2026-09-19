@@ -51,6 +51,7 @@ fn files(dir: &Path) {
 			"listen": ["asp.files", "bump"],
 			"asp": {
 				"schemes": {"file": {"description": "a workspace file", "owner": true}},
+				"edges": {"imports": {}},
 				"attributes": {"files.bytes": {}},
 				"actions": [{"name": "open", "applies_to": "file", "effect": "read",
 					"tool": "tool.open", "args": {"path": "${key}"}}],
@@ -61,7 +62,10 @@ fn files(dir: &Path) {
 		cartridge.listen("bump", function() revision = "r2" return revision end)
 		cartridge.listen("asp.files", function(request)
 			if request.op == "search" then
-				return { nodes = { { id = "file:src/zeta.rs", name = "zeta.rs" }, { id = "file:src/alpha.rs", name = "alpha.rs" } } }
+				return {
+					nodes = { { id = "file:src/zeta.rs", name = "zeta.rs" }, { id = "file:src/alpha.rs", name = "alpha.rs" } },
+					edges = { { from = "file:src/zeta.rs", to = "file:src/alpha.rs", kind = "imports" } },
+				}
 			end
 			return { nodes = { { id = request.entity, revision = revision, name = "a.rs", attributes = { ["files.bytes"] = 12 } } } }
 		end)"#,
@@ -303,6 +307,8 @@ async fn search_ranks_what_the_providers_found_with_the_fabrics_formula() {
 	assert!(hits[0]["score"].as_f64().unwrap() > 0.0);
 	assert_eq!(hits[1]["node"]["id"], "file:src/zeta.rs");
 	assert_eq!(hits[1]["why"], "provider match");
+	assert_eq!(answer["edges"][0]["kind"], "imports", "{answer}");
+	assert_eq!(answer["edges"][0]["contributor"], "files");
 	host.stop().await;
 }
 

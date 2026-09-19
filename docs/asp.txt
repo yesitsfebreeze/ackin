@@ -84,7 +84,8 @@ REQUESTS
                                         depth 1 to 4 (default 1) follows edges;
                                         limit caps nodes at 256
   {op: "search", query, limit?}         every search provider's nodes, merged
-                                        and ranked: hits of {node, score, why}
+                                        and ranked: hits of {node, score, why},
+                                        and the edges between the hits
   {op: "actions", entity}               the actions bound to the entity
   {op: "act", entity, action}           run one. The tool event is the whole
                                         dispatch, so whatever answers or
