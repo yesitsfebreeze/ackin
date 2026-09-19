@@ -163,6 +163,7 @@ struct State {
 	connections: Mutex<Vec<Peer>>,
 	next: AtomicU64,
 	stop: CancellationToken,
+	recorder: RwLock<Option<crate::trace::activity::Recorder>>,
 }
 
 #[derive(Default)]
@@ -194,12 +195,37 @@ impl Ctx {
 				connections: Mutex::default(),
 				next: AtomicU64::new(1),
 				stop: CancellationToken::new(),
+				recorder: RwLock::default(),
 			}),
 		}
 	}
 
 	pub fn name(&self) -> String {
 		self.state.name.read().expect("name lock").clone()
+	}
+
+	pub(crate) fn record_into(&self, recorder: crate::trace::activity::Recorder) {
+		*self.state.recorder.write().expect("recorder lock") = Some(recorder);
+	}
+
+	pub(crate) fn record(&self, name: &str, mut record: Value) {
+		if name == "trace"
+			|| name.starts_with("asp.")
+			|| name == "tool.asp"
+			|| !self
+				.state
+				.directory
+				.read()
+				.expect("directory lock")
+				.events
+				.contains_key("trace")
+		{
+			return;
+		}
+		record["event"] = json!(name);
+		if let Some(recorder) = self.state.recorder.read().expect("recorder lock").as_ref() {
+			recorder.record(record);
+		}
 	}
 
 	pub fn directory(&self) -> Directory {
@@ -358,6 +384,11 @@ impl Ctx {
 		data: Value,
 		prepared: &Prepared,
 	) -> Outcome {
+		let data = if name == "trace" {
+			crate::trace::activity::writer_request(data)
+		} else {
+			data
+		};
 		let from = address.cartridge.clone();
 		let call = async {
 			let peer = match self.client(address).await {
@@ -476,6 +507,10 @@ impl Ctx {
 		let entry = channels.entry(channel.to_owned()).or_default();
 		entry.seq += 1;
 		let envelope = json!({ "channel": channel, "seq": entry.seq, "kind": kind, "data": data });
+		self.record(
+			channel,
+			json!({"kind":"published", "correlation":trace(), "envelope":envelope}),
+		);
 		entry.history.push_back(envelope.clone());
 		if entry.history.len() > HISTORY {
 			entry.history.pop_front();
@@ -983,6 +1018,14 @@ async fn handle(
 			// is decided by whether the handler yields, at `EITHER` in
 			// `src/node/mod.rs`.
 			let (trace, data) = (trace_of(&params), params["data"].clone());
+			let observed = name != "memory" || data["op"] != "trace";
+			let correlation = trace.clone();
+			if observed {
+				ctx.record(
+					&name,
+					json!({"kind":"started", "correlation":correlation, "request":data}),
+				);
+			}
 			let runtime = tokio::runtime::Handle::current();
 			let raced = tokio::task::spawn_blocking(move || {
 				runtime.block_on(async {
@@ -994,6 +1037,17 @@ async fn handle(
 			})
 			.await
 			.unwrap_or_else(|error| Raced::Answered(Err(format!("listener panicked: {error}"))));
+			if observed {
+				let outcome = match &raced {
+					Raced::Answered(Ok(answer)) => json!({"state":"answered", "response":answer}),
+					Raced::Answered(Err(error)) => json!({"state":"failed", "error":error}),
+					Raced::Cancelled => json!({"state":"cancelled"}),
+				};
+				ctx.record(
+					&name,
+					json!({"kind":"finished", "correlation":correlation, "outcome":outcome}),
+				);
+			}
 			match raced {
 				Raced::Answered(Ok(answer)) => request.reply(Ok(answer)),
 				Raced::Answered(Err(error)) => {

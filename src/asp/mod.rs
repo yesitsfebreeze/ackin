@@ -50,6 +50,18 @@ impl Host {
 		let entity = request["entity"].as_str().map(str::to_owned);
 		let answer = self.asp_answer(request).await?;
 		if observe && matches!(op.as_str(), "search" | "expand" | "actions" | "act") {
+			let activity = json!({"kind":"asp", "operation":op, "entity":entity, "origin":"host"});
+			if self
+				.participants()
+				.iter()
+				.any(|p| p.events.contains_key("trace"))
+			{
+				if let Err(error) =
+					Box::pin(self.bail("trace", crate::trace::activity::append(activity))).await
+				{
+					tracing::warn!(target:"cartridge", "ASP trace append failed: {error}");
+				}
+			}
 			self.asp_activity
 				.record(&op, entity.into_iter().collect(), Some(&answer));
 		}
@@ -61,6 +73,20 @@ impl Host {
 
 	async fn asp_answer(&self, request: Value) -> Result<Value> {
 		let registry = Registry::of(&self.participants());
+		let deadline = match request.get("provider_timeout_ms") {
+			None => None,
+			Some(value) => {
+				let ms = value
+					.as_u64()
+					.filter(|ms| (1..=30000).contains(ms))
+					.ok_or_else(|| {
+						Error::Argument(
+							"provider_timeout_ms must be an integer from 1 to 30000".into(),
+						)
+					})?;
+				Some(tokio::time::Instant::now() + std::time::Duration::from_millis(ms))
+			}
+		};
 		let entity = || {
 			let id = request["entity"].as_str().unwrap_or_default();
 			match scheme_of(id) {
@@ -81,7 +107,8 @@ impl Host {
 				let limit = request["limit"]
 					.as_u64()
 					.map_or(LIMIT, |n| (n as usize).clamp(1, LIMIT));
-				self.asp_expand(&registry, entity()?, depth, limit).await
+				self.asp_expand(&registry, entity()?, depth, limit, deadline)
+					.await
 			}
 			Some("search") => {
 				let query = request["query"].as_str().unwrap_or_default();
@@ -91,7 +118,7 @@ impl Host {
 				let limit = request["limit"]
 					.as_u64()
 					.map_or(LIMIT, |n| (n as usize).clamp(1, LIMIT));
-				self.asp_search(&registry, query, limit).await
+				self.asp_search(&registry, query, limit, deadline).await
 			}
 			Some("actions") => Ok(json!({ "actions": registry.actions(entity()?) })),
 			Some("act") => {

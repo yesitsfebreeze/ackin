@@ -53,3 +53,39 @@ async fn agent_activity_schema_and_monitoring_preserve_observed_uses() {
 	host.stop().await;
 	served.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn asp_observation_reaches_writer_with_stable_top_level_timestamp() {
+	let dir = tempfile::tempdir().unwrap();
+	files(dir.path());
+	cartridge(
+		dir.path(),
+		"writer",
+		json!({"name":"writer","entry":"init.lua","events":{"trace":{"description":"writer","schema":{"type":"object"}},"trace_status":{"description":"inspect","schema":{"type":"object"}}},"listen":["trace","trace_status"]}),
+		r#"
+ local observed = {}
+ cartridge.listen("trace", function(args)
+  if args.activity and args.activity.kind == "asp" then observed = args end
+  return {saved=true}
+ end)
+ cartridge.listen("trace_status", function() return observed end)
+ "#,
+	);
+	let host = boot(dir.path(), &["files", "writer"]).await;
+	let served = tokio::spawn(crate::host::socket::serve(host.clone()));
+	host.asp(json!({"op":"expand","entity":"file:src/a.rs"}))
+		.await
+		.unwrap();
+	let saved = host.bail("trace_status", json!({})).await.unwrap().unwrap();
+	assert!(saved["ts"].as_u64().unwrap() > 0);
+	assert_eq!(saved["ts"], saved["activity"]["ts"]);
+	assert_eq!(saved["activity"]["operation"], "expand");
+	host.bail("trace",json!({"action":"append","ts":111,"activity":{"kind":"asp","operation":"direct","request":"x".repeat(100000)}})).await.unwrap();
+	let direct = host.bail("trace_status", json!({})).await.unwrap().unwrap();
+	assert!(direct.to_string().len() < 65536);
+	assert_eq!(direct["ts"], 111);
+	assert_eq!(direct["activity"]["writer_truncation"]["truncated"], true);
+
+	host.stop().await;
+	served.abort();
+}

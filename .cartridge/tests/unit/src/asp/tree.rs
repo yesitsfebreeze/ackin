@@ -102,10 +102,25 @@ async fn lua_extends_the_tree_and_records_event_activity() {
 		host.bail("ping", json!({"value":42})).await.unwrap(),
 		Some(json!(42))
 	);
-	let activity = host.asp(json!({"op":"activity"})).await.unwrap();
-	assert!(activity["records"].as_array().unwrap().iter().any(|record| {
-		record["operation"] == "dispatch" && record["entities"].as_array().unwrap().contains(&json!("event:ping"))
-	}));
+	tokio::time::timeout(std::time::Duration::from_secs(5), async {
+		loop {
+			let trace = host
+				.asp(json!({"op":"expand","entity":"trace:root","observe":false}))
+				.await
+				.unwrap();
+			let rows = &trace["nodes"][0]["attributes"]["history.rows"];
+			if rows.as_array().is_some_and(|rows| {
+				rows.iter().any(|r| {
+					r["event"] == "ping" && r["kind"] == "finished" && r["origin"] == "worker"
+				}) && rows.iter().any(|r| r["event"] == "pulse")
+			}) {
+				break;
+			}
+			tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+		}
+	})
+	.await
+	.expect("activity reached the trace provider");
 	descriptor(dir.path(), &["history"]);
 	host.reconcile().await.unwrap();
 	let types = host.asp(json!({"op":"types"})).await.unwrap();

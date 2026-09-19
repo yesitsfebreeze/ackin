@@ -2,6 +2,7 @@ mod plan;
 mod process;
 mod run;
 pub mod socket;
+mod trace;
 mod watch;
 
 use std::collections::{HashMap, HashSet};
@@ -93,6 +94,7 @@ fn unix_time() -> u64 {
 }
 
 pub struct Host {
+	trace_queue: std::sync::OnceLock<crate::trace::activity::Recorder>,
 	pub(crate) asp_activity: crate::asp::activity::Activity,
 	pub(crate) dir: PathBuf,
 	pub(crate) descriptor: PathBuf,
@@ -145,6 +147,7 @@ impl Host {
 		let descriptor = descriptor.canonicalize().unwrap_or(descriptor);
 		let host_token = crate::transport::token();
 		Ok(Arc::new(Self {
+			trace_queue: std::sync::OnceLock::new(),
 			asp_activity: Default::default(),
 			sockets: socket::run_dir(&descriptor)?,
 			nodes: socket::host_dir(&descriptor)?,
@@ -242,6 +245,12 @@ impl Host {
 	}
 
 	fn publish(&self, slot: &Slot) {
+		if let Some(recorder) = self.trace_queue.get() {
+			recorder.record(
+				json!({"kind":"lifecycle", "origin":"host", "cartridge":slot.entry.id,
+				"state":slot.state, "error":slot.error}),
+			);
+		}
 		let _ = self.lifecycle.send(json!({
 			"id": slot.entry.id,
 			"state": slot.state,
@@ -824,7 +833,6 @@ impl Host {
 	}
 
 	pub async fn send_to(&self, id: &str, name: &str, data: Value) -> Result<Value> {
-		self.asp_activity.dispatch(&self.dir, name, &data);
 		let ctx = self.sender(name, &data)?;
 		let outcome = ctx
 			.ask(id, name, data)
@@ -896,7 +904,6 @@ impl Host {
 	}
 
 	pub async fn gather(&self, name: &str, data: Value) -> Result<Vec<Outcome>> {
-		self.asp_activity.dispatch(&self.dir, name, &data);
 		let ctx = self.sender(name, &data)?;
 		ctx.gather(name, data).await.map_err(Error::Remote)
 	}

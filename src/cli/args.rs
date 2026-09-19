@@ -72,6 +72,10 @@ pub(crate) enum Command {
 		agent: String,
 		#[arg(long, default_value = "auto:code")]
 		model: String,
+		/// Relay the agent's requests through the proxy to its own provider,
+		/// without the router; also accepted as `-ps` after the agent
+		#[arg(long)]
+		passthrough: bool,
 		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
 		args: Vec<String>,
 	},

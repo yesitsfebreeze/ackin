@@ -24,6 +24,7 @@ impl Host {
 		entity: &str,
 		depth: u64,
 		limit: usize,
+		deadline: Option<tokio::time::Instant>,
 	) -> Result<Value> {
 		let scheme = scheme_of(entity).expect("checked by the caller");
 		if registry.expanding(scheme).is_empty() {
@@ -50,7 +51,7 @@ impl Host {
 					let scheme = scheme_of(&subject).expect("admitted ids are scheme:key");
 					let providers = registry.expanding(scheme);
 					let request = json!({ "op": "expand", "entity": subject, "limit":limit });
-					let answers = self.asp_ask(&providers, &request).await;
+					let answers = self.asp_ask(&providers, &request, deadline).await;
 					(subject, providers, answers)
 				})
 				.buffered(PARALLEL)

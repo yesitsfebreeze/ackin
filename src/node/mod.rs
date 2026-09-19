@@ -118,6 +118,7 @@ pub async fn main() -> Result<ExitCode> {
 		.await
 		.map_err(|e| Error::process(entry.display().to_string(), e))?;
 	let ctx = Ctx::new(host_token, timeout);
+	crate::trace::activity::install(&ctx);
 	let memory = std::env::var(LUA_MEMORY_ENV)
 		.ok()
 		.and_then(|v| v.parse().ok())

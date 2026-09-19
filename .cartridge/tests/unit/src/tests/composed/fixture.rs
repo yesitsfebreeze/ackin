@@ -58,7 +58,6 @@ fn short_runtime(name: &str) -> PathBuf {
 impl Lab {
 	pub(crate) fn new(name: &'static str) -> Self {
 		let runtime = short_runtime(name);
-		std::env::set_var("XDG_RUNTIME_DIR", &runtime);
 		let binary = built(&["--bin", "cartridge"]);
 		let base = runtime.join("cartridge");
 		let mut lab = Self {
@@ -104,7 +103,7 @@ impl Lab {
 		Command::new(&self.binary)
 			.args(["trust"])
 			.arg(&root)
-			.env("XDG_RUNTIME_DIR", parent_runtime())
+			.env("XDG_RUNTIME_DIR", self.base.parent().unwrap())
 			.current_dir(&root)
 			.output()
 			.unwrap();
@@ -136,7 +135,7 @@ impl Lab {
 		command
 			.args(args)
 			.current_dir(root)
-			.env("XDG_RUNTIME_DIR", parent_runtime())
+			.env("XDG_RUNTIME_DIR", self.base.parent().unwrap())
 			.env("CARTRIDGE_YOLO", "1");
 		command
 	}
@@ -191,7 +190,7 @@ impl Lab {
 	/// live one level down, in a directory named by the host's own pid; nothing
 	/// about a composition is recorded in the project's own `.cartridge`.
 	pub(crate) fn run_dir(&self, root: &Path) -> PathBuf {
-		let dir = crate::host::socket::run_dir(&root.join(".cartridge")).unwrap();
+		let dir = crate::host::socket::run_dir_at(&self.base, &root.join(".cartridge")).unwrap();
 		assert!(
 			dir.starts_with(&self.base),
 			"run directory {} is not under the lab's own base {}: this suite would be counting, and stopping, hosts that belong to other sessions",
@@ -380,11 +379,6 @@ fn is_socket(entry: &std::fs::DirEntry) -> bool {
 	use std::os::unix::fs::FileTypeExt;
 	entry.file_name().to_string_lossy().ends_with(".sock")
 		&& entry.file_type().is_ok_and(|t| t.is_socket())
-}
-
-/// `trust` and the hosts must see the same runtime directory this lab exported.
-fn parent_runtime() -> PathBuf {
-	PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap())
 }
 
 impl Drop for Lab {

@@ -57,3 +57,29 @@ pub(crate) fn built(args: &[&str]) -> PathBuf {
 		.map(PathBuf::from)
 		.unwrap_or_else(|| panic!("cargo build {args:?} produced no executable"))
 }
+
+/// Environment-dependent assertions run in a dedicated process, never by
+/// changing ambient flags while other libtest threads are evaluating files.
+pub(crate) fn isolated_test(name: &str, yolo: bool) -> bool {
+	const FLAG: &str = "CARTRIDGE_TEST_ISOLATED_CASE";
+	if std::env::var(FLAG).is_ok_and(|value| value == name) {
+		return false;
+	}
+	let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+	command
+		.args(["--exact", name, "--nocapture"])
+		.env(FLAG, name);
+	if yolo {
+		command.env(crate::settings::YOLO_ENV, "1");
+	} else {
+		command.env_remove(crate::settings::YOLO_ENV);
+	}
+	let output = command.output().unwrap();
+	assert!(
+		output.status.success(),
+		"isolated test {name}: {}\n{}",
+		String::from_utf8_lossy(&output.stdout),
+		String::from_utf8_lossy(&output.stderr)
+	);
+	true
+}

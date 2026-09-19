@@ -19,6 +19,7 @@ impl Host {
 		registry: &Registry,
 		query: &str,
 		limit: usize,
+		deadline: Option<tokio::time::Instant>,
 	) -> Result<Value> {
 		let providers: Vec<&Provider> = registry
 			.providers
@@ -26,7 +27,7 @@ impl Host {
 			.filter(|p| p.declared.search)
 			.collect();
 		let request = json!({ "op": "search", "query": query, "limit": limit });
-		let answers = self.asp_ask(&providers, &request).await;
+		let answers = self.asp_ask(&providers, &request, deadline).await;
 		let mut world = World::default();
 		let mut order = Vec::new();
 		for (provider, answer) in providers.iter().zip(answers) {

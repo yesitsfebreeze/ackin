@@ -107,7 +107,18 @@ them next. A folder or `config.lua` the tree already held stays untrusted until
 you review it and run `cartridge trust`.
 
 `cartridge mcp` and `cartridge launch` start the descriptor and hand this terminal
-to the cartridges that listen to `mcp` and `proxy`.
+to the cartridges that listen to `mcp` and `proxy`. `cartridge launch claude --passthrough`
+(or `-ps` after the agent) runs the agent against the proxy with no router in between:
+its requests reach its own provider with its own login, enriched on the way.
+
+Launching in a project without `.cartridge/init.lua` automatically runs setup
+and continues. Setup takes the available cartridges from the cartridge root,
+or from the nearest directory above the executable that contains cartridge
+folders. If no local cartridges are available, it uses the configured catalog.
+It creates the project descriptor and
+records trust for the files it installs. Existing project descriptors and
+configuration are preserved. Background startup creates `.cartridge` before
+opening its daemon log.
 
 `cartridge run|launch|daemon --yolo` asks once to trust the project's files and
 let every cartridge and tool run without further prompts; Enter accepts, and the
@@ -125,7 +136,7 @@ See [docs/creating-cartridges.txt](docs/creating-cartridges.txt).
 
 - [docs/architecture.txt](docs/architecture.txt): the base, lifecycle, nodes, sandbox
 - [docs/transport.txt](docs/transport.txt): events, declarations, checks, the Lua global
-- [docs/asp.txt](docs/asp.txt): ASP, the fabric with a better protocol: entities, declared types, expand, search, actions
+- [docs/asp.txt](docs/asp.txt): ASP composes events, cartridge roots and the activity trace in one extensible tree. Start with `cartridge call asp '{"op":"expand","entity":"asp:root","depth":2}'`. Cartridges declare roots and JSON Schemas, and implement their events and ASP providers in Lua.
 - [docs/creating-cartridges.txt](docs/creating-cartridges.txt): Lua, Rust and helper programs
 - [docs/writing-good-cartridges.txt](docs/writing-good-cartridges.txt): defining, listening, needing
 - [docs/settings.txt](docs/settings.txt): declaring and settling configuration
@@ -136,10 +147,6 @@ See [docs/creating-cartridges.txt](docs/creating-cartridges.txt).
 ## License
 
 MIT
-
-ASP starts at `asp:root` and composes declared cartridge roots and event types.
-Providers declare schemas for their nodes, attributes and edges. See
-[ASP](docs/asp.txt) for the protocol.
 
 Agent tools expose `asp {op:"activity"}` through MCP as well as the native
 `tool.asp` envelope. The answer retains up to 1024 observed uses in the current
@@ -156,6 +163,11 @@ The launcher uses uv to supply its pinned Python dependency, or accepts
 `--python /path/to/python`. See [Scope](ui/README.md) for controls, installation
 and the plugin contract.
 
+The prompt-recall hook installed by setup queries ASP through the running host.
+It attaches at most four bounded evidence descriptions, labels incomplete
+providers and never treats retrieved content as instructions. It does not start
+a second composition or call a separate memo context collector.
+
 The center input accepts natural ASP filters such as `memo jev`. Ctrl-Space `aa`
 switches to a real host agent conversation; `/agent`, `/ask memo jev`, and
 `/list` offer the same flow. The list keeps at most 300 rows in a moving
@@ -167,6 +179,13 @@ Tab completes or chains, Shift-Tab returns to the preceding stage, and Ctrl-Spac
 marks results. Ctrl-Space `ee` opens the preview editor; Ctrl-Space `es` saves through the owner
 tool and its normal update events. Ctrl-Space `ex` uses `$VISUAL`/`$EDITOR` for the draft.
 The default launcher installs Textual 8.2.8 and RapidFuzz 3.14.3 through uv.
+
+
+Trace observations carry a stable Unix-millisecond timestamp in both the activity and writer envelope. Telemetry is redacted and bounded at queue admission and delivery: activities above 48 KiB retain operation, origin, event, timestamp and outcome summaries, with explicit truncation, original byte counts and SHA-256 digests of the redacted data. The complete payload is not retained in these summaries. This leaves room inside the writer's 64 KiB append limit. Permanent size or timestamp rejections are logged and counted as dropped before the next delivery, rather than blocking the queue with retries.
+
+ASP search and expand accept optional `provider_timeout_ms` from 1 to 30000. This shared retrieval deadline retains completed provider evidence and explicitly marks timed-out sources unavailable. Omitting it preserves normal provider deadlines. The budget does not cancel work already running inside a provider.
+
+The same limit applies at direct `trace` event dispatch, including user/assistant exchanges that bypass the telemetry queue. Oversized append envelopes also carry `writer_truncation` with the original redacted envelope byte count and digest.
 
 Ctrl-Space `vr` refreshes the active finder chain. Switching away from the editor keeps its
 unsaved draft until Scope exits; Ctrl-Space `ee` restores the draft and its original

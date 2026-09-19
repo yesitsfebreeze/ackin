@@ -65,6 +65,12 @@ fn a_memory_limit_bounds_what_a_chunk_can_allocate() {
 
 #[test]
 fn each_file_is_evaluated_in_a_state_of_its_own() {
+	if crate::tests::isolated_test(
+		"lua::tests::each_file_is_evaluated_in_a_state_of_its_own",
+		false,
+	) {
+		return;
+	}
 	crate::tests::home();
 	let dir = tempfile::tempdir().unwrap();
 	std::fs::write(

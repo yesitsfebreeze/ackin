@@ -27,6 +27,7 @@ impl Host {
 						"op": { "type": "string", "enum": ["types", "expand", "search", "actions", "activity"] },
 						"entity": { "type": "string", "description": "scheme:key, for example file:src/a.rs" },
 						"query": { "type": "string" },
+						"provider_timeout_ms": { "type": "integer", "minimum": 1, "maximum": 30000, "description": "Optional shared retrieval deadline. Slow providers are reported unavailable; completed evidence is retained." },
 						"observe": { "type": "boolean", "default": true, "description": "Record this lookup as observed use; set false for monitoring. Activity reads never record use." },
 						"depth": { "type": "integer", "minimum": 1, "maximum": MAX_DEPTH },
 						"limit": { "type": "integer", "minimum": 1, "maximum": LIMIT, "description": "at most this many nodes or hits; 20 when absent" },

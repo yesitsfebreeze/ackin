@@ -70,7 +70,11 @@ pub fn path(descriptor: &Path) -> Result<PathBuf> {
 }
 
 pub(crate) fn run_dir(descriptor: &Path) -> Result<PathBuf> {
-	let dir = base()?.join(tag(descriptor));
+	run_dir_at(&base()?, descriptor)
+}
+
+pub(crate) fn run_dir_at(base: &Path, descriptor: &Path) -> Result<PathBuf> {
+	let dir = base.join(tag(descriptor));
 	owner_only_dir(&dir)?;
 	Ok(dir)
 }
@@ -436,7 +440,7 @@ async fn answer(
 		(Caller::Host, _)
 			| (
 				Caller::Cartridge(_),
-				"status" | "snapshot" | "cartridges" | "declarations" | "asp" | "event"
+				"status" | "snapshot" | "cartridges" | "declarations" | "asp" | "event" | "trace"
 			)
 	);
 	if !granted {
@@ -444,6 +448,26 @@ async fn answer(
 		return request.reply(Err(rpc::Error::new(rpc::UNAUTHORIZED, message)));
 	}
 	match method.as_str() {
+		"trace" => {
+			let mut activity = params;
+			if !activity.is_object() {
+				return request.reply(Err(rpc::Error::application(
+					"trace needs an activity object",
+				)));
+			}
+			activity["origin"] = json!(match &caller {
+				Caller::Cartridge(id) => id.as_str(),
+				Caller::Host => "host",
+			});
+			request.reply(
+				host.bail("trace", crate::trace::activity::append(activity))
+					.await
+					.map_err(application)
+					.and_then(|answer| {
+						answer.ok_or_else(|| rpc::Error::application("trace has no active writer"))
+					}),
+			);
+		}
 		"status" => request.reply(Ok(json!(host.status()))),
 		"snapshot" => request.reply(Ok(host.snapshot())),
 		"cartridges" => request.reply(Ok(host.cartridges())),

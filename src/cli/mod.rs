@@ -1,11 +1,12 @@
 mod args;
+mod bootstrap;
 mod client;
 mod host;
 mod listing;
 mod manual;
 mod project;
-mod settings;
 mod scope;
+mod settings;
 mod setup;
 mod trust;
 mod width;
@@ -103,7 +104,12 @@ async fn run(command: Command, project: &Project) -> Result<ExitCode> {
 	match command {
 		Command::Scope { once, python } => scope::run(project, once, python.as_deref()),
 		Command::Run { event, data } => host::run(project, &event, json_arg(&data)?).await,
-		Command::Launch { agent, model, args } => host::launch(project, agent, model, args).await,
+		Command::Launch {
+			agent,
+			model,
+			passthrough,
+			args,
+		} => host::launch(project, agent, model, passthrough, args).await,
 		Command::Mcp => host::mcp(project).await,
 		Command::Daemon {
 			replace,

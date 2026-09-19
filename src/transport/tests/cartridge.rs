@@ -432,12 +432,16 @@ async fn a_listener_that_does_not_answer_reaches_the_log() {
 		.with_writer(sink.clone())
 		.with_max_level(tracing::Level::WARN)
 		.finish();
-	let _guard = tracing::subscriber::set_default(subscriber);
-	let (_dir, _a, b, _) = pair().await;
-	assert_eq!(
-		b.ctx.gather("slow", json!(null)).await,
-		Ok(vec![Outcome::TimedOut { from: "a".into() }])
-	);
+	use tracing::instrument::WithSubscriber;
+	async {
+		let (_dir, _a, b, _) = pair().await;
+		assert_eq!(
+			b.ctx.gather("slow", json!(null)).await,
+			Ok(vec![Outcome::TimedOut { from: "a".into() }])
+		);
+	}
+	.with_subscriber(subscriber)
+	.await;
 	let logged = String::from_utf8(sink.0.lock().expect("sink lock").clone()).expect("utf-8 log");
 	assert!(
 		logged.contains("a did not answer in time") && logged.contains("slow"),

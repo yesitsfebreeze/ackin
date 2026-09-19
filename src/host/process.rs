@@ -167,10 +167,16 @@ pub(super) async fn start(
 	));
 	if let Some(stderr) = child.stderr.take() {
 		let (id, tail) = (plan.id.clone(), tail.clone());
+		let recorder = host.trace_recorder().clone();
 		tokio::spawn(async move {
 			let mut lines = BufReader::new(stderr).lines();
 			while let Ok(Some(line)) = lines.next_line().await {
 				crate::trace::diagnostic_line(&id, &line);
+				if !line.starts_with("cartridge trace delivery:") {
+					let activity = json!({"kind":"diagnostic", "origin":id, "diagnostic":
+							serde_json::from_str::<serde_json::Value>(&line).unwrap_or_else(|_| json!(line))});
+					recorder.record(activity);
+				}
 				let mut tail = tail.lock().expect("stderr tail");
 				tail.push_back(line);
 				if tail.len() > 20 {

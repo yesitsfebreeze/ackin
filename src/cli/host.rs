@@ -147,6 +147,8 @@ fn daemon_log(project: &Project) -> std::path::PathBuf {
 /// and the terminal, and every later command attaches to it.
 fn spawn_daemon(project: &Project) -> Result<()> {
 	let exe = std::env::current_exe().map_err(|e| Error::file("cartridge", e))?;
+	std::fs::create_dir_all(&project.descriptor)
+		.map_err(|e| Error::file(&project.descriptor, e))?;
 	let log = daemon_log(project);
 	let file = std::fs::OpenOptions::new()
 		.create(true)
@@ -290,9 +292,25 @@ pub(crate) async fn launch(
 	project: &Project,
 	agent: String,
 	model: String,
-	args: Vec<String>,
+	mut passthrough: bool,
+	mut args: Vec<String>,
 ) -> Result<ExitCode> {
-	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args });
+	super::bootstrap::launch(project).await?;
+	// Trailing args swallow every flag after the agent, so the switch is
+	// picked out of them here, before any `--`.
+	let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+	let before = args.len();
+	let mut index = 0;
+	args.retain(|a| {
+		index += 1;
+		index > end || !matches!(a.as_str(), "-ps" | "--passthrough")
+	});
+	passthrough |= args.len() != before;
+	let bases: serde_json::Map<String, Value> = ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"]
+		.into_iter()
+		.filter_map(|name| Some((name.to_owned(), json!(std::env::var(name).ok()?))))
+		.collect();
+	let request = json!({ "op": "launch", "agent": agent, "model": model, "args": args, "passthrough": passthrough, "bases": bases });
 	let (peer, _incoming) = attach(project, "proxy").await?;
 	let launch = match client::bail(&peer, "proxy", request).await {
 		Ok(launch) => launch,
