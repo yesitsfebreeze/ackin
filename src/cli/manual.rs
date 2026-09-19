@@ -338,7 +338,7 @@ impl Manual {
 		let rows = self.children(Node::Root);
 		print_rows(&rows);
 		println!(
-			"\ngo deeper:\n  cartridge help <id>                 one module: the documents it ships\n  cartridge help <id>/<file>          one document; <id>/<file>#<section> one section\n  cartridge help <words>              every line holding all the words, with its address\n  cartridge help --json [<address>]   the same as JSON; no address is the whole manual\n  on a terminal each of these opens the picker: type to filter, enter to open, esc to go back"
+			"\ngo deeper:\n  cartridge help <id>                 one module: the documents it ships\n  cartridge help <id>/<file>          one document; <id>/<file>#<section> one section\n  cartridge help <words>              every line holding all the words, with its address\n  cartridge help --json [<address>]   the same as JSON; no address is the whole manual\n  on a terminal each of these opens the picker: type to filter, enter to open, esc quit, q quits an empty filter"
 		);
 		let broken: Vec<&str> = self
 			.modules
@@ -680,6 +680,7 @@ struct Level {
 	selected: usize,
 }
 
+#[derive(Clone, Copy)]
 enum Key {
 	Char(char),
 	Back,
@@ -688,6 +689,7 @@ enum Key {
 	Down(usize),
 	Open,
 	Quit,
+	Exit,
 	Other,
 }
 
@@ -713,7 +715,8 @@ fn key() -> std::io::Result<Key> {
 			KeyCode::PageUp => Key::Up(10),
 			KeyCode::PageDown => Key::Down(10),
 			KeyCode::Enter | KeyCode::Right | KeyCode::Tab => Key::Open,
-			KeyCode::Esc | KeyCode::Left => Key::Back,
+			KeyCode::Esc => Key::Exit,
+			KeyCode::Left => Key::Back,
 			KeyCode::Backspace => Key::Erase,
 			_ => Key::Other,
 		});
@@ -733,14 +736,26 @@ fn browse(manual: &Manual, start: &str, query: &str) -> std::io::Result<()> {
 		}
 		stack[0].address = up(manual, start);
 	}
+	run(manual, &mut stack, key, draw_list)
+}
+
+fn run(
+	manual: &Manual,
+	stack: &mut Vec<Level>,
+	mut next: impl FnMut() -> std::io::Result<Key>,
+	mut render: impl FnMut(&Level, &[Row]) -> std::io::Result<()>,
+) -> std::io::Result<()> {
 	loop {
 		let level = stack.last_mut().expect("the root level is never popped");
 		let node = manual.find(&level.address).unwrap_or(Node::Root);
 		let rows = rows(manual, node, &level.query);
 		level.selected = level.selected.min(rows.len().saturating_sub(1));
-		draw_list(level, &rows)?;
-		match key()? {
-			Key::Quit => return Ok(()),
+		render(level, &rows)?;
+		let pressed = next()?;
+		if exits(&pressed, &level.query) {
+			return Ok(());
+		}
+		match pressed {
 			Key::Char(c) => {
 				level.query.push(c);
 				level.selected = 0;
@@ -780,9 +795,13 @@ fn browse(manual: &Manual, start: &str, query: &str) -> std::io::Result<()> {
 					return Ok(());
 				}
 			}
-			Key::Other => {}
+			Key::Quit | Key::Exit | Key::Other => {}
 		}
 	}
+}
+
+fn exits(k: &Key, query: &str) -> bool {
+	matches!(k, Key::Quit | Key::Exit) || matches!(k, Key::Char('q') if query.is_empty())
 }
 
 fn rows(manual: &Manual, node: Node<'_>, query: &str) -> Vec<Row> {
@@ -875,7 +894,7 @@ fn draw_list(level: &Level, rows: &[Row]) -> std::io::Result<()> {
 		SetAttribute(Attribute::Dim),
 		Print(fit(
 			&format!(
-				"{} · type to filter · enter open · esc back · ctrl-c quit",
+				"{} · type to filter · enter open · esc/ctrl-c quit · q quits empty filter",
 				rows.len()
 			),
 			w
@@ -933,7 +952,7 @@ fn view(manual: &Manual, address: &str, line: Option<usize>) -> std::io::Result<
 		drop(out);
 		match key()? {
 			Key::Quit | Key::Char('q') => return Ok(false),
-			Key::Back | Key::Erase => return Ok(true),
+			Key::Back | Key::Erase | Key::Exit => return Ok(true),
 			Key::Up(n) => top = top.saturating_sub(n),
 			Key::Down(n) => top += n,
 			Key::Char('k') => top = top.saturating_sub(1),
@@ -1011,5 +1030,52 @@ mod tests {
 		);
 		assert_eq!(up(&manual, "memo/docs/memos.txt"), "memo");
 		assert_eq!(up(&manual, "memo/note/why.md#detail"), "memo/note/why.md");
+	}
+
+	#[test]
+	fn q_and_escape_exit_the_list_instead_of_being_consumed() {
+		assert!(exits(&Key::Quit, ""), "ctrl-c always exits");
+		assert!(exits(&Key::Exit, ""), "esc exits with no filter typed");
+		assert!(exits(&Key::Exit, "shel"), "esc exits in one press even mid-filter");
+		assert!(exits(&Key::Char('q'), ""), "bare q exits an empty filter");
+		assert!(
+			!exits(&Key::Char('q'), "shel"),
+			"q stays literal filter text once a query is underway"
+		);
+		assert!(!exits(&Key::Char('x'), ""), "other characters are never consumed as exit");
+	}
+
+	fn run_keys(manual: &Manual, start: &str, keys: &[Key]) -> (std::io::Result<()>, String) {
+		let mut stack = vec![Level {
+			address: start.into(),
+			query: String::new(),
+			selected: 0,
+		}];
+		let mut it = keys.iter().copied();
+		let result = run(manual, &mut stack, || Ok(it.next().unwrap_or(Key::Quit)), |_, _| Ok(()));
+		let query = stack.last().expect("root level is never popped").query.clone();
+		(result, query)
+	}
+
+	#[test]
+	fn scripted_keys_drive_the_real_list_loop() {
+		let guide = "# Root\n\nintro\n";
+		let manual = module(vec![Doc::new("docs/g.txt".into(), guide.into())]);
+
+		let (result, query) = run_keys(&manual, "", &[Key::Char('q')]);
+		assert!(result.is_ok());
+		assert_eq!(query, "", "q must exit the root list before it is appended");
+
+		let (result, query) = run_keys(&manual, "memo", &[Key::Char('q')]);
+		assert!(result.is_ok());
+		assert_eq!(query, "", "q must exit a pushed module level too");
+
+		let (result, query) = run_keys(&manual, "", &[Key::Char('s'), Key::Char('q'), Key::Quit]);
+		assert!(result.is_ok());
+		assert_eq!(query, "sq", "q is consumed as filter text once a query is underway");
+
+		let (result, query) = run_keys(&manual, "", &[Key::Char('s'), Key::Exit]);
+		assert!(result.is_ok());
+		assert_eq!(query, "s", "esc must exit before appending anything of its own");
 	}
 }
