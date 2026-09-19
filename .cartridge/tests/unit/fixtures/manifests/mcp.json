@@ -1,0 +1,106 @@
+{
+  "name": "mcp",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/mcp.ctg",
+  "description": "Exposes the profile tool services to MCP clients over newline-delimited JSON-RPC on stdio.",
+  "events": {
+    "mcp": {
+      "description": "One MCP server over the base's stdio pump: {op:\"ready\"} answers null before the client speaks; {op:\"message\", line, instance} answers one JSON-RPC line, or null for a notification. `instance` names the attached client the line came from; every sender that omits it shares one instance.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "message"
+            ]
+          },
+          "line": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          }
+        }
+      },
+      "timeout_ms": 1800000
+    }
+  },
+  "listen": [
+    "mcp"
+  ],
+  "needs": [
+    "sessions",
+    "policy",
+    "policy.*",
+    "tool.*"
+  ],
+  "settings": {
+    "record_usage": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Persist an automatic usage journal for every dispatch."
+    },
+    "tools": {
+      "type": "list",
+      "default": [],
+      "doc": "Exact `tool.*` keys this server exposes. Empty means every `tool.*` event in needs, so the composition alone decides the surface."
+    },
+    "cwd": {
+      "type": "string",
+      "default": ".",
+      "doc": "Working directory tool calls resolve against."
+    },
+    "band": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Withhold the schema of every tool that is not hot; list it by name and summary in the `tools` meta-tool."
+    },
+    "hot": {
+      "type": "list",
+      "default": [],
+      "doc": "Tool names always sent with their schema while the band is on."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "mcp"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "mcp"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "mcp"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ]
+  }
+}

@@ -924,6 +924,17 @@ impl Host {
 		)
 	}
 
+	/// The events `id` declared, as its manifest states them; empty for an id
+	/// that has no plan.
+	pub fn declarations(&self, id: &str) -> Value {
+		let slots = self.slots.lock();
+		let plan = slots
+			.iter()
+			.find(|s| s.entry.id == id)
+			.and_then(|s| s.plan.as_ref());
+		plan.map_or_else(|| json!({}), |p| json!(p.events))
+	}
+
 	pub fn snapshot(&self) -> Value {
 		let listeners = self.listeners.lock().clone();
 		let slots = self.slots.lock();

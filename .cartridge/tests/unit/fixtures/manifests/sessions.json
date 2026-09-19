@@ -1,0 +1,306 @@
+{
+  "name": "sessions",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/sessions.ctg",
+  "description": "Persists sessions and touched-file state and manages buffers and agent session metadata.",
+  "events": {
+    "sessions": {
+      "description": "The session store: {op, ...} for list, create, get, update, touch, delete, checkpoint, send, mailbox, post, read, channels, roster, context_metadata, mapping, connect, retention_*, record_changes, changes, reflex_report, recovery, repair, diagnostics.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "buffers": {
+      "description": "Buffers: {op, ...} for list, open, get, set, append, close.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "session": {
+      "description": "A session changed: {op, id}; retention deletes report {op:\"delete\", id} per session.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op",
+          "id"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "buffer": {
+      "description": "A buffer changed: {op, id}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op",
+          "id"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "sessions",
+    "buffers"
+  ],
+  "settings": {
+    "dir": {
+      "type": "string",
+      "default": ".cartridge/sessions",
+      "doc": "Where turns, journals and buffers are stored."
+    },
+    "channel_text_bytes": {
+      "type": "integer",
+      "default": 8192,
+      "min": 1,
+      "max": 65536,
+      "doc": "Bytes of a message rendered into a channel listing."
+    },
+    "observations_path": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Where the observation journal is written, or nothing to leave it beside the store."
+    },
+    "client_context": {
+      "type": "table",
+      "default": {},
+      "doc": "How a client's own context maps onto session fields."
+    },
+    "mailbox_access": {
+      "type": "list",
+      "default": [],
+      "doc": "Mailbox bindings: who may read and post where. A binding's `credential_env` names an environment variable holding that actor's token; the base clears a node's environment, so the name must start `SESSIONS_MAILBOX_` \u2014 the prefix this cartridge declares in `grant.env`."
+    },
+    "limits.channel_bytes": {
+      "type": "integer",
+      "default": 33554432,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes one channel's store may take."
+    },
+    "limits.channels": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Channels one session may hold."
+    },
+    "limits.channel_lines": {
+      "type": "integer",
+      "default": 100000,
+      "min": 1,
+      "max": 100000000,
+      "doc": "Lines one channel keeps. Must stay above what the byte cap admits, so the bytes bind first."
+    },
+    "limits.evidence_bytes": {
+      "type": "integer",
+      "default": 1048576,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes of evidence one change record may carry."
+    },
+    "limits.batch_bytes": {
+      "type": "integer",
+      "default": 16777216,
+      "min": 1024,
+      "max": 1073741824,
+      "doc": "Bytes one change batch may carry."
+    },
+    "limits.batch": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Records one change batch may carry."
+    },
+    "limits.mapping_input": {
+      "type": "integer",
+      "default": 65536,
+      "min": 256,
+      "max": 67108864,
+      "doc": "Bytes of one client-mapping input."
+    },
+    "limits.mapping_index_bytes": {
+      "type": "integer",
+      "default": 134217728,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes the mapping index may take."
+    },
+    "limits.mapping_entries": {
+      "type": "integer",
+      "default": 1000000,
+      "min": 1,
+      "max": 100000000,
+      "doc": "Entries it may hold."
+    },
+    "limits.change_records": {
+      "type": "integer",
+      "default": 16384,
+      "min": 1,
+      "max": 10000000,
+      "doc": "Change records kept."
+    },
+    "limits.change_log_bytes": {
+      "type": "integer",
+      "default": 67108864,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes the change log keeps."
+    },
+    "limits.change_page_bytes": {
+      "type": "integer",
+      "default": 4194304,
+      "min": 1024,
+      "max": 1073741824,
+      "doc": "Bytes one page of it returns."
+    },
+    "limits.observation_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes the observation journal keeps."
+    },
+    "limits.observation_lines": {
+      "type": "integer",
+      "default": 1000000,
+      "min": 1,
+      "max": 100000000,
+      "doc": "Lines it keeps."
+    },
+    "limits.observation_line_bytes": {
+      "type": "integer",
+      "default": 4194304,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes one of those lines may take."
+    },
+    "limits.mailbox_text": {
+      "type": "integer",
+      "default": 16384,
+      "min": 16,
+      "max": 16777216,
+      "doc": "Bytes of text one mailbox message may carry."
+    },
+    "limits.mailbox_messages": {
+      "type": "integer",
+      "default": 1000000,
+      "min": 1,
+      "max": 100000000,
+      "doc": "Messages one mailbox keeps."
+    },
+    "limits.mailbox_storage": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes a mailbox may store."
+    },
+    "limits.retention_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes a retention sweep keeps."
+    },
+    "limits.retention_sessions": {
+      "type": "integer",
+      "default": 1000000,
+      "min": 1,
+      "max": 100000000,
+      "doc": "Sessions it keeps."
+    },
+    "limits.retention_batch": {
+      "type": "integer",
+      "default": 2000,
+      "min": 1,
+      "max": 1000000,
+      "doc": "Sessions swept at once, so one sweep is bounded and a long backlog drains over several."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "sessions"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "sessions"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "sessions"
+      ],
+      "cwd": "."
+    },
+    "run": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "process",
+        "sessions"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "read": [
+      "$PROJECT"
+    ],
+    "write": [
+      "${config.dir}"
+    ],
+    "env": [
+      "SESSIONS_MAILBOX_*"
+    ]
+  }
+}

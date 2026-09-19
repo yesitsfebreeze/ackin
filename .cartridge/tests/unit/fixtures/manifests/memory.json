@@ -1,0 +1,244 @@
+{
+  "name": "memory",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/memory.ctg",
+  "description": "Stores and retrieves durable knowledge; provides a standalone CLI and a cartridge transport server.",
+  "events": {
+    "memory": {
+      "description": "The engine surface: {op, ...} with the engine's own arguments (query, search, get, log, events, report, ingest, link, forget, forget_by_source, degrade, move, promote, health, ready, status, focus, claim_kind, pulse, gc, audit, queue_drain, ledger).",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tool.memory": {
+      "description": "The memory tool for a model: {op: describe}, {op: cancel}, or {op: call, input, context} where input is the tool's own input and context the caller's session, run, call and cwd.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "query",
+                  "ingest"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "k": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "raw": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "op",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object",
+            "required": [
+              "session",
+              "run",
+              "call",
+              "cwd"
+            ],
+            "properties": {
+              "session": {
+                "type": "string"
+              },
+              "run": {
+                "type": "string"
+              },
+              "call": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "context.memory": {
+      "description": "The record's contributor contract answered from this bank: {op: contribute, query, limits} returns a Contribution; {op: read, reference, deadline_ms} re-reads one projection.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "contribute",
+              "read"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "memory",
+    "tool.memory",
+    "context.memory"
+  ],
+  "settings": {
+    "dir": {
+      "type": "string",
+      "default": ".cartridge/memory",
+      "doc": "Where the knowledge bank is stored. Required: the bank is a directory, not a default."
+    },
+    "owner": {
+      "type": "table",
+      "default": null,
+      "optional": true,
+      "doc": "Attach to another host's bank instead of opening one: `{endpoint, timeout_ms}` naming its local socket, where `timeout_ms` defaults to 30000 and bounds one call to it. Absent opens a local bank, which is the normal case; attached accepts nothing else, because the owner's model settings govern every read. Declared as one table rather than per-key, because a key under an optional parent has no value to hold when the parent is absent."
+    },
+    "embed": {
+      "type": "table",
+      "default": {},
+      "doc": "Embedding model, endpoint and batching. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "reason": {
+      "type": "table",
+      "default": {},
+      "doc": "Reasoning model and its endpoint. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "retrieval": {
+      "type": "table",
+      "default": {},
+      "doc": "How a query searches: candidates, rerank depth and thresholds. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "ingest": {
+      "type": "table",
+      "default": {},
+      "doc": "How writes are distilled, deduplicated and chunked. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "hygiene": {
+      "type": "table",
+      "default": {},
+      "doc": "Compaction, decay and pruning of stored knowledge. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "tick": {
+      "type": "table",
+      "default": {},
+      "doc": "The background cadence that runs hygiene and heat. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "heat": {
+      "type": "table",
+      "default": {},
+      "doc": "How recency and use weight what is retrieved. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "gnn": {
+      "type": "table",
+      "default": {},
+      "doc": "The graph model over the bank. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "watcher": {
+      "type": "table",
+      "default": {},
+      "doc": "What is watched for automatic ingestion. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "queue": {
+      "type": "table",
+      "default": {},
+      "doc": "The ingest queue's own limits, minus its directory, which follows `dir`. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "graph": {
+      "type": "table",
+      "default": {},
+      "doc": "The knowledge graph's own limits. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    },
+    "ledger": {
+      "type": "table",
+      "default": {},
+      "doc": "The exchange ledger: `raw_cap_bytes` bounds the open day's raw exchanges before they are condensed early, and `chunk_bytes` (default 16000, sized to the reason model's default 8k-token window) is the input of one condensing call. The keys inside are memory's own configuration schema; an empty table takes its defaults."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "memory"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "memory"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "memory"
+      ],
+      "cwd": "."
+    },
+    "run": {
+      "argv": [
+        "../cartridge.ctg/target/release/cartridge",
+        "--dir",
+        "..",
+        "run",
+        "memory",
+        "{\"op\":\"status\"}"
+      ],
+      "cwd": ".",
+      "description": "One status call through the base, with this folder's parent as the cartridge root."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "write": [
+      "${config.dir}"
+    ],
+    "net": [
+      "*"
+    ]
+  }
+}

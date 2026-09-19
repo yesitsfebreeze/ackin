@@ -76,7 +76,8 @@ full: `cartridge:<id>` for every cartridge of the profile, `tool:<name>` for eve
 failed or waits, `host.error`; its revision is its start count, so a fact
 another cartridge asserted about it before a restart comes back stale. Its
 search matches a tool by its name and description. `types` also lists every
-declared event under `events`, with its owner, description and schema: an
+declared event under `events`, with its owner, description, schema and, when
+declared, its frame: an
 event is a type of the same world, declared in the same manifest.
 
 REQUESTS

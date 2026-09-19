@@ -1,0 +1,198 @@
+{
+  "name": "agent",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/agent.ctg",
+  "description": "Runs bounded model-and-tool turns with streaming events, cancellation, and policy approvals.",
+  "events": {
+    "agent": {
+      "description": "The run lifecycle of one session: {op:\"start\", prompt, session?, model?} -> {session, run}; status, context, cancel, answer {run, call, decision}; tools lists the dispatchable tool names.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "start",
+              "status",
+              "context",
+              "cancel",
+              "answer",
+              "tools"
+            ]
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "call": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "deny"
+            ]
+          }
+        }
+      }
+    },
+    "agent.event": {
+      "description": "One event of a run as it goes: {session, run, seq, revision, kind, ...} with kind started, text, reasoning, model_turn_started, tool_started, tool_finished, approval_requested, stream_error, done or error.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "session",
+          "run",
+          "seq",
+          "revision",
+          "kind"
+        ],
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "run": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "agent"
+  ],
+  "needs": [
+    "sessions",
+    "buffers",
+    "policy",
+    "router",
+    "harness",
+    "memo",
+    "tool.*"
+  ],
+  "settings": {
+    "record_usage": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Persist an automatic usage journal for every turn. Session checkpoints and explicit memo/memory writes are durable either way."
+    },
+    "yolo": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Automatic execution: bypass tool policy and skip resolver provenance recording. Set by `--yolo`, not normally by a file."
+    },
+    "approval_timeout_secs": {
+      "type": "integer",
+      "default": 900,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long a policy approval waits for an answer before the call is refused. Approvals time out rather than hang."
+    },
+    "cancel_timeout_secs": {
+      "type": "integer",
+      "default": 30,
+      "min": 1,
+      "max": 3600,
+      "doc": "How long a cancelled tool gets to unwind before the turn stops waiting for it."
+    },
+    "max_prompt_bytes": {
+      "type": "integer",
+      "default": 8388608,
+      "min": 1024,
+      "max": 1073741824,
+      "doc": "Largest prompt one turn may carry."
+    },
+    "max_steps": {
+      "type": "integer",
+      "default": 500,
+      "min": 1,
+      "max": 1000000,
+      "doc": "Model round trips one turn may take before it is stopped."
+    },
+    "max_tool_calls": {
+      "type": "integer",
+      "default": 2000,
+      "min": 1,
+      "max": 1000000,
+      "doc": "Tool calls one turn may make before it is stopped."
+    },
+    "max_parallel_tools": {
+      "type": "integer",
+      "default": 32,
+      "min": 1,
+      "max": 1024,
+      "doc": "Independent read tools run at once. Mutations and shell calls keep model order regardless."
+    },
+    "tools": {
+      "type": "list",
+      "default": [],
+      "doc": "Exact tool keys this agent may dispatch. Empty means every `tool.*` event in needs."
+    },
+    "max_frame_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bound for one SSE frame and for the assembled response. Matches the router's own wire limit; a long-context reply is a large frame."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "agent"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "agent"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "agent"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "net": [
+      "127.0.0.1",
+      "localhost"
+    ]
+  }
+}

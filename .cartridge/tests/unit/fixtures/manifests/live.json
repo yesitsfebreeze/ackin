@@ -1,0 +1,198 @@
+{
+  "name": "live",
+  "entry": "init.lua",
+  "description": "GPT Live voice coworker: the microphone, the speaker and the session live in this process, and what is said becomes work on this machine.",
+  "events": {
+    "live": {
+      "description": "The running voice coworker: {op} with status, conversations, open, voice, state, context, agents, attach, delegate, watch, reply, note or cancel and the fields the op names.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "conversation": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tool.live": {
+      "description": "The voice coworker as a tool: {op} describe or call, with the live operation as `input`.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "input": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.live_note": {
+      "description": "Save a durable note or written result in the current voice conversation.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "input": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.live_agent": {
+      "description": "Spawn, list, inspect or cancel work started from the voice conversation.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "input": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "live",
+    "tool.live",
+    "tool.live_note",
+    "tool.live_agent"
+  ],
+  "needs": [
+    "sessions",
+    "memo?",
+    "agent?",
+    "tool.shell",
+    "tool.read",
+    "tool.write",
+    "tool.edit",
+    "tool.glob",
+    "tool.grep",
+    "tool.search",
+    "tool.prd",
+    "tool.memory",
+    "tool.lsp",
+    "tool.docs",
+    "tool.gitfs",
+    "tool.ship",
+    "tool.digest",
+    "tool.draft"
+  ],
+  "settings": {
+    "dir": {
+      "type": "string",
+      "default": ".cartridge/live-data",
+      "doc": "Where the conversation record is written. `:memory:` keeps it in memory."
+    },
+    "cwd": {
+      "type": "string",
+      "default": "..",
+      "doc": "Working directory the service and its agents resolve against."
+    },
+    "model": {
+      "type": "string",
+      "default": "gpt-live-1",
+      "doc": "Voice model."
+    },
+    "voice": {
+      "type": "string",
+      "default": "marin",
+      "doc": "Voice used for speech."
+    },
+    "duplex": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Keep listening while the assistant speaks, so the user can interrupt. Set it with headphones; on a speaker the microphone hears the assistant and answers itself."
+    },
+    "credentials": {
+      "type": "string",
+      "default": ".cartridge/credentials",
+      "doc": "Where the OpenAI key is looked for when the environment does not carry one. Match the router's own credential directory."
+    },
+    "provider": {
+      "type": "string",
+      "default": "gpt",
+      "doc": "Which transport carries a voice session. `gpt` dials GPT Live over the network; `local` runs the whole session in this process, through `stt`, `brain` and `tts`, and reaches the network only if one of those settings names an `http(s)://` endpoint. An unknown value fails `voice` rather than falling back."
+    },
+    "models": {
+      "type": "string",
+      "default": ".cartridge/live-models",
+      "doc": "Where `stt` and `tts` resolve a bare filename. Used only when `provider` is `local`."
+    },
+    "stt": {
+      "type": "string",
+      "default": "whisper.gguf",
+      "doc": "Speech-to-text for the local transport: a model filename resolved under `models`, or a literal `http(s)://` endpoint standing in for it until a sibling cartridge adds the runtime. Used only when `provider` is `local`."
+    },
+    "tts": {
+      "type": "string",
+      "default": "kokoro.onnx",
+      "doc": "Text-to-speech for the local transport: a model filename resolved under `models`, or a literal `http(s)://` endpoint standing in for it until a sibling cartridge adds the runtime. Used only when `provider` is `local`."
+    },
+    "brain": {
+      "type": "string",
+      "default": "http://127.0.0.1:8080/v1/chat/completions",
+      "doc": "The OpenAI-shaped chat/completions endpoint the local transport asks for a reply, dialled with a bounded timeout so an endpoint that never answers closes the session instead of hanging the turn. Used only when `provider` is `local`."
+    },
+    "greeting": {
+      "type": "boolean",
+      "default": true,
+      "doc": "Greet the user out loud when a voice session opens, so the speaker proves itself before anything is asked of it."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "cargo",
+        "build",
+        "--release"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--all-targets"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "cargo",
+        "test"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "write": [
+      "${config.dir}"
+    ],
+    "net": [
+      "api.openai.com",
+      "127.0.0.1"
+    ],
+    "exec": [
+      "tmux"
+    ],
+    "env": [
+      "OPENAI_API_KEY"
+    ],
+    "audio": true
+  }
+}

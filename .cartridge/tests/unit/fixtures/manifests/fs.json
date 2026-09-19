@@ -1,0 +1,877 @@
+{
+  "name": "fs",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/fs.ctg",
+  "needs": [
+    "sessions",
+    "router"
+  ],
+  "events": {
+    "tool.read": {
+      "description": "Read numbered UTF-8 lines of a workspace file. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.write": {
+      "description": "Create a file or overwrite an observed current version. In git mode this is one commit on the session branch and the worktree is untouched until tool.gitfs materialize. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.edit": {
+      "description": "Replace an exact unique match in an observed current file, or every match with all=true. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "old": {
+                "type": "string",
+                "minLength": 1
+              },
+              "new": {
+                "type": "string"
+              },
+              "all": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "old",
+              "new"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.glob": {
+      "description": "List workspace files matching an rg glob. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "pattern": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.grep": {
+      "description": "Search file contents with rg regex syntax. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "glob": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "pattern"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.search": {
+      "description": "Search typed stages, or resume a cursor; pages capture results once. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "cursor": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "stages": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                },
+                "minItems": 0
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.digest": {
+      "description": "Ask a cheap worker model a question over files it reads instead of the caller; bullets cited path:line. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "question": {
+                "type": "string",
+                "minLength": 1
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "question",
+              "paths"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.draft": {
+      "description": "Have a cheap worker model generate code from a spec matching a reference file, optionally written to target through the guarded write. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "spec": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reference": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "spec",
+              "reference"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "context.file": {
+      "description": "The record's file evidence: {op: contribute, query, limits} nominates allowlisted files matching the query; {op: read, reference, deadline_ms} re-reads one reference exactly.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "contribute",
+              "read"
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "limits": {
+            "type": "object"
+          },
+          "reference": {
+            "type": "object"
+          },
+          "deadline_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "asp.fs": {
+      "description": "ASP provider for the file and range schemes: {op: expand, entity} answers the entity's node with the worktree content SHA-256 as its revision; {op: search, query, limit} answers file and range nodes with matches edges.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "expand",
+              "search"
+            ]
+          },
+          "entity": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "fs.integration": {
+      "description": "Contract: digest this cartridge's longest source file through the real router and report what the caller was spared.",
+      "schema": {}
+    },
+    "tool.gitfs": {
+      "description": "The session's Git branch behind tool.write and tool.edit: ls/diff inspect it (ls {session} shows another agent's), rollback undoes one commit, materialize copies owned files into the worktree, snapshot pulls disk edits back. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "ls",
+                  "diff",
+                  "rollback",
+                  "materialize",
+                  "snapshot"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Repo-relative path, no leading / or .."
+              },
+              "session": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Whose branch to list (ls); your own by default."
+              },
+              "commit": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A commit of your session to undo (rollback)."
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Restrict to these owned paths (materialize, snapshot)."
+              },
+              "force": {
+                "type": "boolean",
+                "description": "Overwrite newer on-disk files (materialize)."
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 128,
+                "maximum": 65536
+              },
+              "expected_revision": {
+                "type": "string",
+                "description": "Required for diff continuation."
+              }
+            },
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tool.ship": {
+      "description": "Review owned changes and publish them locally (ship preview/commit), push a reviewed commit, scan for secrets, undo. Tool envelope: {op: describe | call | cancel, input, context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "ship",
+                  "push",
+                  "undo",
+                  "scan"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Reviewed commit subject; never bypasses a required gate."
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "preview",
+                  "commit",
+                  "reconcile"
+                ]
+              },
+              "expected_revision": {
+                "type": "string"
+              },
+              "remote": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              },
+              "commit": {
+                "type": "string"
+              },
+              "expected_remote_head": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "operation_id": {
+                "type": "string"
+              },
+              "force_secrets": {
+                "type": "boolean",
+                "description": "Ship despite secrets in the diff."
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Files to scan (scan)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "tool.read",
+    "tool.write",
+    "tool.edit",
+    "tool.glob",
+    "tool.grep",
+    "tool.search",
+    "tool.digest",
+    "tool.draft",
+    "context.file",
+    "asp.fs",
+    "fs.integration",
+    "tool.gitfs",
+    "tool.ship"
+  ],
+  "contracts": [
+    "fs.integration"
+  ],
+  "asp": {
+    "schemes": {
+      "file": {
+        "description": "A workspace file; the key is its normalized workspace-relative path and the revision its content SHA-256.",
+        "owner": true
+      },
+      "range": {
+        "description": "A span of a file, <file key>:<line>:<col>-<line>:<col>; lines and columns are 1-based, columns count characters, the end is exclusive.",
+        "owner": true
+      }
+    },
+    "edges": {
+      "matches": {
+        "description": "The file holds a search match at the range."
+      }
+    },
+    "attributes": {
+      "fs.bytes": {
+        "description": "The file's size in bytes."
+      }
+    },
+    "actions": [
+      {
+        "name": "read",
+        "applies_to": "file",
+        "effect": "read",
+        "tool": "tool.read",
+        "args": {
+          "path": "${key}"
+        },
+        "description": "Read the file's numbered lines."
+      }
+    ],
+    "search": true
+  },
+  "description": "Owns workspace file access: reads, guarded writes and edits, search, worker digests, and the Git-backed session branch those writes commit to, with review and shipping.",
+  "settings": {
+    "mode": {
+      "type": "string",
+      "default": "git",
+      "doc": "Where tool.write and tool.edit publish. git: one commit per change on refs/gitfs/<session>, the worktree untouched until tool.gitfs materialize; reads and searches prefer the session's changes and fall back to the worktree. local: write the worktree directly. A workspace outside a Git repository always behaves as local."
+    },
+    "max_read_bytes": {
+      "type": "integer",
+      "default": 8388608,
+      "min": 128,
+      "max": 268435456,
+      "doc": "Bytes one read returns before it is truncated."
+    },
+    "max_read_lines": {
+      "type": "integer",
+      "default": 50000,
+      "min": 1,
+      "max": 5000000,
+      "doc": "Lines one read returns before it is truncated."
+    },
+    "max_whole_read_lines": {
+      "type": "integer",
+      "default": 350,
+      "min": 1,
+      "max": 5000000,
+      "doc": "Lines a file may have before a read with neither offset nor limit is refused and pointed at a range or a grep."
+    },
+    "max_file_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 1,
+      "max": 4294967296,
+      "doc": "Largest file this cartridge will open at all."
+    },
+    "max_invocations": {
+      "type": "integer",
+      "default": 65536,
+      "min": 1,
+      "max": 4194304,
+      "doc": "Invocations retained for the observation journal."
+    },
+    "max_runs": {
+      "type": "integer",
+      "default": 4096,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Runs retained alongside them."
+    },
+    "max_observations": {
+      "type": "integer",
+      "default": 65536,
+      "min": 1,
+      "max": 4194304,
+      "doc": "Observations retained per run."
+    },
+    "max_search_items": {
+      "type": "integer",
+      "default": 50000,
+      "min": 1,
+      "max": 1000000,
+      "doc": "Matches one search returns."
+    },
+    "max_search_bytes": {
+      "type": "integer",
+      "default": 16777216,
+      "min": 1024,
+      "max": 268435456,
+      "doc": "Bytes of match text one search returns."
+    },
+    "max_search_wait_ms": {
+      "type": "integer",
+      "default": 120000,
+      "min": 100,
+      "max": 3600000,
+      "doc": "How long a search may run before it is stopped."
+    },
+    "max_search_backend_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes the search backend may produce."
+    },
+    "max_search_snapshot_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes of a search snapshot kept for paging through results."
+    },
+    "max_chains": {
+      "type": "integer",
+      "default": 4096,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Edit chains tracked at once."
+    },
+    "rg_program": {
+      "type": "string",
+      "default": "rg",
+      "doc": "The ripgrep executable searches run, by basename or path."
+    },
+    "worker_model": {
+      "type": "string",
+      "default": "auto:text",
+      "doc": "Model `tool.digest` and `tool.draft` ask the router for; `auto:text` lets the router pick its cheapest text route."
+    },
+    "max_worker_bytes": {
+      "type": "integer",
+      "default": 400000,
+      "min": 1024,
+      "max": 268435456,
+      "doc": "Bytes of numbered file text one digest or draft may send to the worker."
+    },
+    "max_worker_wait_ms": {
+      "type": "integer",
+      "default": 180000,
+      "min": 1000,
+      "max": 3600000,
+      "doc": "How long one worker call may take before its answer is abandoned."
+    },
+    "context_files": {
+      "type": "list",
+      "default": [],
+      "doc": "Files this cartridge offers as context evidence, each `{owner, path}`: a composed cartridge id and a path relative to its directory. At most 128; typed `.cartridge/memos` and `.cartridge/documents` paths are refused."
+    },
+    "store_dir": {
+      "type": "string",
+      "default": ".cartridge/gitfs",
+      "doc": "Session overlay blobs and runtime state. Gitignored: it stays out of the tree it records."
+    },
+    "ship.push": {
+      "type": "boolean",
+      "default": true,
+      "doc": "Whether ship publishes after previewing. It previews first and then publishes the exact reviewed tree locally; legacy push does not enable implicit network access."
+    },
+    "ship.remote": {
+      "type": "string",
+      "default": "origin",
+      "doc": "The remote a push names."
+    },
+    "ship.gate_model": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Model that gates a review. A configured gate requires an exact router grant and refuses on failure; without one the reviewed subject uses a plain file summary."
+    },
+    "ship.gate_timeout_ms": {
+      "type": "integer",
+      "default": 300000,
+      "min": 1,
+      "max": 86400000,
+      "doc": "How long that gate may take."
+    },
+    "ship.push_timeout_ms": {
+      "type": "integer",
+      "default": 300000,
+      "min": 1,
+      "max": 86400000,
+      "doc": "How long a push may take."
+    },
+    "ship.force_secrets": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Ship even when the secret scan objects."
+    },
+    "ship.author.name": {
+      "type": "string",
+      "default": "cartridge gitfs",
+      "doc": "Author name recorded on a shipped commit."
+    },
+    "ship.author.email": {
+      "type": "string",
+      "default": "gitfs@cartridge.local",
+      "doc": "Author email recorded on it."
+    },
+    "limits.provenance_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes of provenance read from one source."
+    },
+    "limits.source_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes of one source file inspected."
+    },
+    "limits.push_records": {
+      "type": "integer",
+      "default": 4096,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Push records kept."
+    },
+    "limits.push_record_bytes": {
+      "type": "integer",
+      "default": 262144,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes one push record may take."
+    },
+    "limits.push_output_bytes": {
+      "type": "integer",
+      "default": 16777216,
+      "min": 256,
+      "max": 1073741824,
+      "doc": "Bytes of push output carried back."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "fs"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "fs"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "fs"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "write": [
+      "/"
+    ],
+    "exec": [
+      "*"
+    ],
+    "net": [
+      "*"
+    ]
+  }
+}

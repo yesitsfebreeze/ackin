@@ -1,0 +1,228 @@
+{
+  "name": "pty",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/pty.ctg",
+  "description": "Owns a persistent terminal process, screen/output events, shell commands, and environment discovery.",
+  "events": {
+    "pty": {
+      "description": "The shared terminal: {op, ...} for read, commands, screen, viewport, frame, scroll, write, resize, print, key, mouse, paste, focus, control and context_metadata.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          }
+        }
+      },
+      "timeout_ms": 2000
+    },
+    "environment": {
+      "description": "The boot-time scan of the host (shell, OS, user, cwd, PATH, executables) plus the current shell identity; takes no arguments.",
+      "schema": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "timeout_ms": 2000
+    },
+    "tool.shell": {
+      "description": "The shell tool: {op: describe} for its description, {op: call, input, context} to run a command line, send input or read the screen, {op: cancel, context} to interrupt a matching invocation.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string",
+                "minLength": 1,
+                "description": "One command line, submitted at the shell prompt."
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Literal terminal input, sent exactly as supplied to the foreground program."
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 600000,
+                "description": "Readback wait; default 1000 for commands, 200 for input, 0 for reads. Does not kill the program."
+              }
+            },
+            "additionalProperties": false
+          },
+          "context": {
+            "description": "The invocation: session, run, call and cwd of the caller."
+          }
+        }
+      }
+    },
+    "pty.output": {
+      "description": "Terminal output as it arrives: {n, data} (base64 chunk), {command} (a finished command), {exit} (shell exit) or {control, interrupted} (a handoff).",
+      "schema": {
+        "type": "object"
+      }
+    }
+  },
+  "listen": [
+    "pty",
+    "environment",
+    "tool.shell"
+  ],
+  "settings": {
+    "shell": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "The shell a hosted terminal runs. Absent takes `$SHELL`, then `/bin/sh`."
+    },
+    "scrollback": {
+      "type": "integer",
+      "default": 500000,
+      "min": 1,
+      "max": 100000000,
+      "doc": "Rows a terminal keeps for scrolling back."
+    },
+    "limits.context_bytes": {
+      "type": "integer",
+      "default": 65536,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes of terminal context rendered for a caller."
+    },
+    "limits.text_bytes": {
+      "type": "integer",
+      "default": 65536,
+      "min": 16,
+      "max": 16777216,
+      "doc": "Bytes of one identity text field."
+    },
+    "limits.identity_bytes": {
+      "type": "integer",
+      "default": 1048576,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes of the whole identity record."
+    },
+    "limits.grid_margin": {
+      "type": "integer",
+      "default": 4096,
+      "min": 1,
+      "max": 10000000,
+      "doc": "Rows of headroom the grid keeps above the scrollback depth, so its own ring never trims first."
+    },
+    "limits.ring_bytes": {
+      "type": "integer",
+      "default": 67108864,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes of output the ring keeps."
+    },
+    "limits.scrollback": {
+      "type": "integer",
+      "default": 500000,
+      "min": 1,
+      "max": 100000000,
+      "doc": "Default scrollback when `scrollback` above names none."
+    },
+    "limits.output_bytes": {
+      "type": "integer",
+      "default": 8388608,
+      "min": 256,
+      "max": 1073741824,
+      "doc": "Bytes of one command's output kept against its mark."
+    },
+    "limits.whole_read_lines": {
+      "type": "integer",
+      "default": 350,
+      "min": 1,
+      "max": 5000000,
+      "doc": "Lines a file may have before `cat`, `head`, `tail`, `less` or `more` of it alone, with no pipe or redirection, is refused and pointed at tool.digest."
+    },
+    "limits.history": {
+      "type": "integer",
+      "default": 2000,
+      "min": 1,
+      "max": 10000000,
+      "doc": "Command marks kept."
+    },
+    "limits.carry_bytes": {
+      "type": "integer",
+      "default": 262144,
+      "min": 0,
+      "max": 268435456,
+      "doc": "Bytes carried forward from the previous command."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "pty"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "pty"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "pty"
+      ],
+      "cwd": "."
+    },
+    "run": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "process",
+        "pty"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "write": [
+      "/"
+    ],
+    "exec": [
+      "*"
+    ],
+    "net": [
+      "*"
+    ]
+  }
+}

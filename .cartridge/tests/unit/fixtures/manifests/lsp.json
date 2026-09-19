@@ -1,0 +1,264 @@
+{
+  "name": "lsp",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/lsp.ctg",
+  "description": "Installs and launches language servers on demand, answers agent LSP queries \u2014 diagnostics, completion, hover, definition, references, symbols \u2014 for whatever file is touched, and contributes symbols, references and calls to ASP.",
+  "events": {
+    "asp.lsp": {
+      "description": "The ASP provider door: {op: expand, entity} for a `file:` (its `symbol:` outline) or a `symbol:` (what references it, what it calls and what calls it), and {op: search, query, limit} for a bare name through the running servers. Answers {nodes, edges} or nil.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "expand",
+              "search"
+            ]
+          },
+          "entity": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "timeout_ms": 120000
+    },
+    "context.lsp": {
+      "description": "The catalog as evidence for the record's context collector: {op: contribute | read, query/reference}; each row is one language server with its installed state.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "contribute",
+              "read"
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "limits": {
+            "type": "object"
+          },
+          "reference": {
+            "type": "object"
+          },
+          "deadline_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "tool.lsp": {
+      "description": "The LSP tool envelope: {op: describe | call | cancel, input, context}. Input ops: status, install, diagnostics, completion, hover, definition, references, symbols. A language server missing for a touched language is installed on demand.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "status",
+                  "install",
+                  "diagnostics",
+                  "completion",
+                  "hover",
+                  "definition",
+                  "references",
+                  "symbols"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "character": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          "context": {
+            "type": "object"
+          }
+        }
+      },
+      "timeout_ms": 600000
+    }
+  },
+  "listen": [
+    "asp.lsp",
+    "context.lsp",
+    "tool.lsp"
+  ],
+  "asp": {
+    "schemes": {
+      "file": {
+        "description": "a workspace file, keyed as fs keys it; lsp expands it to the symbols it declares"
+      },
+      "symbol": {
+        "description": "a symbol a language server names: `<file key>#<container>::<name>`, with `@<line>` on a repeated name",
+        "owner": true
+      }
+    },
+    "edges": {
+      "contains": {
+        "description": "the file declares the symbol"
+      },
+      "references": {
+        "description": "the symbol, or the file outside any symbol, uses the target symbol"
+      },
+      "calls": {
+        "description": "the symbol calls the target symbol"
+      }
+    },
+    "attributes": {
+      "lsp.kind": {
+        "description": "the symbol kind as a word: function, struct, method, \u2026"
+      },
+      "lsp.span": {
+        "description": "`<line>:<col>-<line>:<col>` of the whole symbol, 1-based"
+      }
+    },
+    "search": true
+  },
+  "settings": {
+    "auto_install": {
+      "type": "boolean",
+      "default": true,
+      "doc": "Install a missing language server on first query, instead of reporting it missing."
+    },
+    "cache_dir": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Directory holding installed language servers. Absent uses $XDG_CACHE_HOME/cartridge/lsp, then $HOME/.cache/cartridge/lsp, then $TMPDIR/cartridge-lsp."
+    },
+    "install_timeout_ms": {
+      "type": "integer",
+      "default": 600000,
+      "min": 1000,
+      "max": 3600000,
+      "doc": "How long one install may run before it is abandoned."
+    },
+    "query_timeout_ms": {
+      "type": "integer",
+      "default": 120000,
+      "min": 1000,
+      "max": 3600000,
+      "doc": "How long one LSP query (completion, hover, definition, references, symbols, diagnostics refresh) may take before it is abandoned."
+    },
+    "max_diagnostics": {
+      "type": "integer",
+      "default": 2000,
+      "min": 1,
+      "max": 100000,
+      "doc": "Diagnostics kept per document."
+    },
+    "max_result_bytes": {
+      "type": "integer",
+      "default": 1048576,
+      "min": 1024,
+      "max": 268435456,
+      "doc": "Bytes of one query result returned before it is truncated."
+    },
+    "max_servers": {
+      "type": "integer",
+      "default": 8,
+      "min": 1,
+      "max": 64,
+      "doc": "Running language-server processes kept at once; least-recently-used servers are stopped past this."
+    },
+    "servers": {
+      "type": "table",
+      "default": {},
+      "doc": "Per-server launch overrides: `servers[\"rust-analyzer\"] = { argv = {...}, cwd = ... }`."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "lsp"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "lsp"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "lsp"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "write": [
+      "/"
+    ],
+    "exec": [
+      "*"
+    ],
+    "net": [
+      "*"
+    ]
+  }
+}

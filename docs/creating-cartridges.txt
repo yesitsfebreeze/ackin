@@ -15,7 +15,8 @@ cartridge.json:
   "events": {
     "hello.greet": {
       "description": "A greeting for a name.",
-      "schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}
+      "schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}},
+      "frame": "message"
     }
   },
   "listen": ["hello.greet"]
@@ -31,6 +32,10 @@ Enable it in .cartridge/init.lua:
 
 and send it an event:
   cartridge run hello.greet '{"name":"you"}'
+
+`frame` is optional: `message`, `data` or `none`, what the answer may become in
+a model's context (transport.txt). The entry reads its own declarations back
+with `cartridge.host("declarations", nil)` rather than its cartridge.json.
 
 Everything the entry can do is on the `cartridge` global; transport.txt lists
 it. To use another cartridge's event, declare it in `needs` and send it:

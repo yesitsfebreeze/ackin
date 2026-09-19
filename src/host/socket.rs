@@ -345,7 +345,8 @@ mod tests;
 #[derive(Clone, PartialEq, Eq)]
 enum Caller {
 	Host,
-	Cartridge,
+	/// A node, by the id its token was issued to.
+	Cartridge(String),
 }
 
 async fn connection(
@@ -362,7 +363,7 @@ async fn connection(
 			let caller = match token {
 				"" => Some(Caller::Host),
 				token if token == host.host_token() => Some(Caller::Host),
-				token => host.caller(token).map(|_| Caller::Cartridge),
+				token => host.caller(token).map(Caller::Cartridge),
 			};
 			match caller {
 				Some(caller) => {
@@ -434,8 +435,8 @@ async fn answer(
 		(&caller, method.as_str()),
 		(Caller::Host, _)
 			| (
-				Caller::Cartridge,
-				"status" | "snapshot" | "cartridges" | "asp" | "event"
+				Caller::Cartridge(_),
+				"status" | "snapshot" | "cartridges" | "declarations" | "asp" | "event"
 			)
 	);
 	if !granted {
@@ -446,12 +447,21 @@ async fn answer(
 		"status" => request.reply(Ok(json!(host.status()))),
 		"snapshot" => request.reply(Ok(host.snapshot())),
 		"cartridges" => request.reply(Ok(host.cartridges())),
+		"declarations" => match &caller {
+			Caller::Cartridge(id) => request.reply(Ok(host.declarations(id))),
+			Caller::Host => request.reply(Err(rpc::Error::application(
+				"`declarations` answers a cartridge its own events",
+			))),
+		},
 		// A cartridge asks ASP what it may know. Running an action is a tool
 		// call, and a cartridge makes those through its own dispatch, where
 		// policy is asked; only the command line runs one from here.
-		"asp" if caller == Caller::Cartridge && params["op"] == "act" => request.reply(Err(
-			rpc::Error::new(rpc::UNAUTHORIZED, "`act` is not granted to this token"),
-		)),
+		"asp" if matches!(caller, Caller::Cartridge(_)) && params["op"] == "act" => {
+			request.reply(Err(rpc::Error::new(
+				rpc::UNAUTHORIZED,
+				"`act` is not granted to this token",
+			)))
+		}
 		"asp" => request.reply(host.asp(params).await.map_err(application)),
 		"event" if params["name"] == crate::asp::TOOL => request.reply(
 			host.asp_tool(params["data"].clone())

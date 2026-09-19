@@ -1,0 +1,261 @@
+{
+  "name": "proxy",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/proxy.ctg",
+  "needs": [
+    "sessions",
+    "harness",
+    "router",
+    "policy",
+    "memo",
+    "tool.*",
+    "${config.ledger}"
+  ],
+  "events": {
+    "proxy": {
+      "timeout_ms": 1860000,
+      "description": "The harness proxy: {op: request, wire?, body} forwards a model request through the harness and tools; {op: launch, agent, model, args, passthrough?} renders an agent launch aimed at this proxy's HTTP listener, or with passthrough one whose base URLs relay through this proxy, enriched, to the upstreams in bases without the router; context, trace and usage report on one exchange by id.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "request",
+              "context",
+              "trace",
+              "usage",
+              "launch"
+            ]
+          },
+          "wire": {
+            "type": "string"
+          },
+          "body": {
+            "type": "object"
+          },
+          "id": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "passthrough": {
+            "type": "boolean"
+          },
+          "bases": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "proxy"
+  ],
+  "description": "Serves authenticated loopback model API requests through the router, harness, tools, and memory.",
+  "settings": {
+    "record_usage": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Persist an automatic usage journal for every request."
+    },
+    "usage_accounting": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Add cumulative model-usage reports to native responses."
+    },
+    "tool_trace": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Record a trace of every tool call a request made."
+    },
+    "yolo": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Automatic execution: grant every tool call without asking the policy. The same meaning the agent's `yolo` has, for a launched agent whose own client already governs its calls."
+    },
+    "ledger": {
+      "type": "string",
+      "default": "",
+      "doc": "Memory key each completed exchange is appended to as `{op: \"ledger\", action: \"append\"}` (normally `memory`); empty sends nothing and needs nothing. A key named here must be an event some cartridge in the composition listens to."
+    },
+    "context_recall": {
+      "type": "boolean",
+      "default": true,
+      "doc": "Offer recalled context to the model alongside the request."
+    },
+    "context_diagnostics": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Attach context-assembly diagnostics to responses."
+    },
+    "context_limits.deadline_ms": {
+      "type": "integer",
+      "default": 2000,
+      "min": 1,
+      "max": 600000,
+      "doc": "How long context assembly may take before it answers with what it has."
+    },
+    "context_limits.max_rows": {
+      "type": "integer",
+      "default": 64,
+      "min": 1,
+      "max": 100000,
+      "doc": "Evidence rows one assembly may carry."
+    },
+    "context_limits.max_bytes": {
+      "type": "integer",
+      "default": 1048576,
+      "min": 1024,
+      "max": 268435456,
+      "doc": "Bytes those rows may take together."
+    },
+    "context_capacity": {
+      "type": "integer",
+      "default": 256,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Assembled contexts kept for reuse."
+    },
+    "context_ttl_secs": {
+      "type": "integer",
+      "default": 900,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long one stays reusable."
+    },
+    "trace_capacity": {
+      "type": "integer",
+      "default": 4096,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Tool traces kept."
+    },
+    "trace_ttl_secs": {
+      "type": "integer",
+      "default": 3600,
+      "min": 1,
+      "max": 604800,
+      "doc": "How long one stays readable."
+    },
+    "continuation_capacity": {
+      "type": "integer",
+      "default": 16384,
+      "min": 1,
+      "max": 4194304,
+      "doc": "Interrupted turns kept resumable."
+    },
+    "continuation_ttl_secs": {
+      "type": "integer",
+      "default": 86400,
+      "min": 1,
+      "max": 2592000,
+      "doc": "How long one stays resumable."
+    },
+    "client_key_envs": {
+      "type": "table",
+      "default": {},
+      "doc": "Named HTTP principals mapped to the environment variable holding each secret. Secrets are read at listener startup, never from this file."
+    },
+    "tools": {
+      "type": "list",
+      "default": [],
+      "doc": "Exact tool keys this proxy grants. Empty means every `tool.*` event the composition listens to."
+    },
+    "cwd": {
+      "type": "string",
+      "default": ".",
+      "doc": "Working directory a launched agent runs in."
+    },
+    "key_env": {
+      "type": "string",
+      "default": "CARTRIDGE_PROXY_KEY",
+      "doc": "Environment variable holding the key that authenticates the listener."
+    },
+    "listen": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Loopback address the proxy serves, or nothing. The host binds it (the manifest names it as `listener`) and hands the node the socket, so the address and its queued connections survive a reload of this cartridge and a `daemon --replace`. Port 0 takes a port once and keeps it for this project."
+    },
+    "max_steps": {
+      "type": "integer",
+      "default": 500,
+      "min": 1,
+      "max": 1000000,
+      "doc": "Model round trips one request may take."
+    },
+    "max_tool_calls": {
+      "type": "integer",
+      "default": 2000,
+      "min": 1,
+      "max": 1000000,
+      "doc": "Tool calls one request may make."
+    },
+    "timeout_secs": {
+      "type": "integer",
+      "default": 1800,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long one request may run. `events.proxy.timeout_ms` is this default plus a 60s grace (1860000), so an event-bus caller receives the proxy's own diagnosed deadline instead of the host's bare timeout; that event bound covers every `proxy` op, while only `request` carries this inner deadline. Raising `timeout_secs` past 1860 puts the host's `event_timeout_ms` back in front."
+    },
+    "max_bytes": {
+      "type": "integer",
+      "default": 134217728,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Largest request body accepted. A caller-owned history on a long-context route is legitimately large; this is the resource guard, not the context ceiling."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "proxy"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "proxy"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "proxy"
+      ],
+      "cwd": "."
+    }
+  },
+  "listener": "listen",
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "net": [
+      "*"
+    ]
+  }
+}

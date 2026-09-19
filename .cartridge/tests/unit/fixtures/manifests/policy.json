@@ -1,0 +1,100 @@
+{
+  "name": "policy",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/policy.ctg",
+  "description": "Pure Lua policy decisions and read-only rule explanations; approval and sandbox enforcement remain with their existing owners.",
+  "settings": {
+    "default": {
+      "type": "string",
+      "default": "allow",
+      "doc": "The answer for a tool no rule names: allow, ask or deny."
+    },
+    "tools": {
+      "type": "table",
+      "default": {},
+      "doc": "Per-tool answers, overriding the default. Approval, where it happens, happens at the client; every granted dispatch still lands in the observation journal under its caller and turn."
+    },
+    "operations": {
+      "type": "table",
+      "default": {},
+      "doc": "Per-operation answers within a tool, which take precedence over its tool-level answer."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "policy"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "policy"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "policy"
+      ],
+      "cwd": "."
+    },
+    "run": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "policy"
+      ],
+      "cwd": ".",
+      "description": "Runs the module through its supported application entry point."
+    }
+  },
+  "events": {
+    "policy": {
+      "description": "Decide a tool call: {tool, op?, ...} -> {decision, reason, revision}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "tool"
+        ],
+        "properties": {
+          "tool": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "policy.explain": {
+      "description": "Explain the configured rules: {tool?} -> {default, tools, operations, revision}.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "policy",
+    "policy.explain"
+  ]
+}

@@ -1,0 +1,248 @@
+{
+  "name": "docs",
+  "entry": "init.lua",
+  "description": "Discovers documentation across local repositories, returns file paths and working directories, and announces docs.available.",
+  "events": {
+    "docs": {
+      "description": "List documentation or describe the service: {op: list|info, limit?, cursor?, cwd?} -> a page or the info payload.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "list",
+              "info"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tool.docs": {
+      "description": "The docs tool envelope: describe, call {context, input: {op: list|info, limit?, cursor?}}, cancel {context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "context": {
+            "type": "object",
+            "required": [
+              "session",
+              "run",
+              "call",
+              "cwd"
+            ],
+            "properties": {
+              "session": {
+                "type": "string"
+              },
+              "run": {
+                "type": "string"
+              },
+              "call": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": "string"
+              }
+            }
+          },
+          "input": {
+            "type": "object",
+            "required": [
+              "op"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "call"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "context",
+                "input"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "cancel"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "context"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "docs.discover": {
+      "description": "Ask the documentation to announce docs.available again; answers true.",
+      "schema": {
+        "type": [
+          "null",
+          "object"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "docs.available": {
+      "description": "The documentation is there: the info payload {message, service, tool, root, request, ...}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "service",
+          "root"
+        ]
+      }
+    },
+    "docs.scan.started": {
+      "description": "A documentation scan began under root: {root, turn}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "root"
+        ]
+      }
+    },
+    "docs.scan.completed": {
+      "description": "A scan finished: {root, turn, total, returned, more}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "root",
+          "total"
+        ]
+      }
+    },
+    "docs.scan.failed": {
+      "description": "A scan failed: {root, turn, error}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "root",
+          "error"
+        ]
+      }
+    }
+  },
+  "listen": [
+    "docs",
+    "tool.docs",
+    "docs.discover"
+  ],
+  "contracts": [
+    "docs.discover"
+  ],
+  "settings": {
+    "root": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Directory documentation is discovered under. Absent discovers it from the working directory, which is the normal case; naming one fixes it."
+    },
+    "limits.entries": {
+      "type": "integer",
+      "default": 4000000,
+      "min": 1,
+      "max": 1000000000,
+      "doc": "Directory entries the documentation scan visits before it stops."
+    },
+    "limits.files": {
+      "type": "integer",
+      "default": 400000,
+      "min": 1,
+      "max": 100000000,
+      "doc": "Documentation files it collects."
+    },
+    "limits.depth": {
+      "type": "integer",
+      "default": 256,
+      "min": 1,
+      "max": 4096,
+      "doc": "How deep it descends."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "docs"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "docs"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "docs"
+      ],
+      "cwd": "."
+    },
+    "run": {
+      "argv": [
+        "cartridge",
+        "run",
+        "docs",
+        "{\"op\":\"list\"}"
+      ],
+      "cwd": ".",
+      "description": "Starts the profile, lists the documentation once, and stops."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ]
+  }
+}

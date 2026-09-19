@@ -1,0 +1,260 @@
+{
+  "name": "prd",
+  "entry": "init.lua",
+  "description": "Native planning service for central PRDs, specs, dependency plans, Gantt and worker orchestration, published over runtime events. Memory is optional context: when no provider answers, recall reports unavailable and the PRD record stands alone.",
+  "events": {
+    "tool.prd": {
+      "description": "Plan centralized PRD boards, prepare briefs and perform checked transitions: a tool envelope whose input is {op, board?, args?}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "context": {
+            "type": "object"
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "scan",
+                  "plan",
+                  "gantt",
+                  "read",
+                  "brief",
+                  "next",
+                  "add",
+                  "refine",
+                  "specced",
+                  "claim",
+                  "release",
+                  "collect",
+                  "run",
+                  "status",
+                  "stop"
+                ]
+              },
+              "board": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "args": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "maxLength": 8192
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "prd": {
+      "description": "The same engine for a trusted native caller: describe, call and cancel envelopes as for tool.prd.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "context": {
+            "type": "object"
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "scan",
+                  "plan",
+                  "gantt",
+                  "read",
+                  "brief",
+                  "next",
+                  "add",
+                  "refine",
+                  "specced",
+                  "claim",
+                  "release",
+                  "collect",
+                  "run",
+                  "status",
+                  "stop"
+                ]
+              },
+              "board": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "args": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "maxLength": 8192
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "source.board": {
+      "description": "The owner of board search roots: {op:\"source_declarations\", board?, deadline_ms?} lists declared child boards; {op:\"source_records\", board?, action, expected_source_revision, path?, expected_revision?} indexes and reads public records.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "source_declarations",
+              "source_records"
+            ]
+          },
+          "board": {
+            "type": "string"
+          },
+          "deadline_ms": {
+            "type": "integer"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "index",
+              "read"
+            ]
+          },
+          "expected_source_revision": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "prd",
+    "tool.prd",
+    "source.board"
+  ],
+  "settings": {
+    "root": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Repository root the boards live under. Absent discovers it."
+    },
+    "default_board": {
+      "type": "string",
+      "default": "root",
+      "doc": "Board used when a request names none."
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "default": 600,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long one command may run."
+    },
+    "job_timeout_seconds": {
+      "type": "integer",
+      "default": 7200,
+      "min": 1,
+      "max": 604800,
+      "doc": "How long one background job may run."
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "default": 16777216,
+      "min": 1024,
+      "max": 1073741824,
+      "doc": "Bytes one command may return."
+    },
+    "adapter": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Trusted external adapter an explicit `run` uses. Absent refuses external runs, which is the normal case: host-driven work goes through next/brief."
+    }
+  },
+  "commands": {
+    "check": {
+      "argv": [
+        "bun",
+        "run",
+        "check"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "bun",
+        "run",
+        "test"
+      ],
+      "cwd": "."
+    },
+    "run": {
+      "argv": [
+        "bun",
+        "src/service.ts"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "exec": [
+      "bun",
+      "git",
+      "sh"
+    ],
+    "read": [
+      "/"
+    ],
+    "write": [
+      "$PROJECT",
+      "$TMPDIR"
+    ],
+    "net": [
+      "localhost"
+    ]
+  }
+}

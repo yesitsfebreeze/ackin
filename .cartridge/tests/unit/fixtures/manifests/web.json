@@ -1,0 +1,201 @@
+{
+  "name": "web",
+  "entry": "init.lua",
+  "description": "Reaches the network on purpose: fetches one page from an allowed host and returns it as readable text, or searches the web through Brave and returns ranked results with their source URLs, refusing every other destination or unconfigured search before a request is made.",
+  "events": {
+    "web": {
+      "description": "Fetch a page or search the web: {op:\"fetch\", url} -> {url, title, text, bytes, truncated}; {op:\"search\", query, limit?} -> {query, results:[{rank, title, url, snippet}]}. A host outside `allow_hosts`, a scheme other than http and https, or a search with no usable Brave key throws before any request leaves the process.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "fetch",
+              "search"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "fetch"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "url"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "search"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "query"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "tool.web": {
+      "description": "The web tool envelope: describe, call {context, input: {op:\"fetch\", url} | {op:\"search\", query, limit?}}, cancel {context}. A refused destination or search comes back as {content: <the reason>, error: true} rather than being thrown away.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "context": {
+            "type": "object",
+            "required": [
+              "session",
+              "run",
+              "call",
+              "cwd"
+            ],
+            "properties": {
+              "session": {
+                "type": "string"
+              },
+              "run": {
+                "type": "string"
+              },
+              "call": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": "string"
+              }
+            }
+          },
+          "input": {
+            "type": "object",
+            "required": [
+              "op"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "call"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "context",
+                "input"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "cancel"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "context"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "settings": {
+    "allow_hosts": {
+      "type": "list",
+      "default": [
+        "en.wikipedia.org",
+        "developer.mozilla.org",
+        "docs.rs"
+      ],
+      "doc": "Hosts this cartridge may reach, matched exactly and case-insensitively against the URL's hostname. A sub-domain of a listed host is not listed: `docs.example` does not admit `api.docs.example`. There is no wildcard; an empty list reaches nothing. This list, not `grant.net`, is what actually refuses a destination, because the host reads `grant.net` as a boolean."
+    },
+    "max_bytes": {
+      "type": "integer",
+      "default": 2000000,
+      "min": 1,
+      "doc": "The largest readable text returned, in UTF-8 bytes. A longer page is cut here and comes back with `truncated: true`."
+    },
+    "brave_api_key_env": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "The environment variable holding a Brave Search API key, read from the cartridge daemon's own environment, not from a shell the operator happens to be in. The base clears a node's environment, so that variable's name must start `WEB_` — the prefix this cartridge declares in `grant.env`. Absent (the default) means search is not configured; `fetch` keeps working with no key at all."
+    }
+  },
+  "commands": {
+    "check": {
+      "argv": [
+        "bun",
+        "run",
+        "check"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "bun",
+        "test"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "exec": [
+      "bun"
+    ],
+    "net": [
+      "en.wikipedia.org",
+      "developer.mozilla.org",
+      "docs.rs",
+      "api.search.brave.com"
+    ],
+    "env": [
+      "WEB_*"
+    ]
+  },
+  "listen": [
+    "web",
+    "tool.web"
+  ]
+}

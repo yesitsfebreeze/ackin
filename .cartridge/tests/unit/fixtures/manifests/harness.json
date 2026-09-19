@@ -1,0 +1,263 @@
+{
+  "name": "harness",
+  "entry": "init.lua",
+  "contracts": [
+    "harness.selftest",
+    "harness.integration"
+  ],
+  "source": "https://github.com/yesitsfebreeze/harness.ctg",
+  "needs": [
+    "sessions",
+    "buffers",
+    "router",
+    "memo",
+    "${config.router}",
+    "${config.clock}",
+    "${config.environment}",
+    "${config.terminal}",
+    "${config.memory}"
+  ],
+  "events": {
+    "harness": {
+      "description": "Compose a model request for a session: {op: context|compact|inspect|injection|ring, session?, descriptors?} -> {system, messages, tools} (injection: {system, tools, max_bytes}; ring: a sweep report).",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "context",
+              "compact",
+              "inspect",
+              "injection",
+              "ring"
+            ]
+          },
+          "session": {
+            "type": "string"
+          },
+          "descriptors": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "harness.selftest": {
+      "description": "Contract: the frame renders and one record projects, with no dependency in the way.",
+      "schema": {}
+    },
+    "harness.integration": {
+      "description": "Contract: the memo cartridge composes a template for {cwd?}.",
+      "schema": {}
+    }
+  },
+  "listen": [
+    "harness",
+    "harness.selftest",
+    "harness.integration"
+  ],
+  "description": "Builds model context from memos, session history, terminal state, budgets, and memory.",
+  "settings": {
+    "system": {
+      "type": "string",
+      "default": "",
+      "doc": "Base system prompt text, prepended unframed."
+    },
+    "roster": {
+      "type": "table",
+      "default": null,
+      "optional": true,
+      "doc": "The roster source: an actor, the environment variable holding its credential, and that fetch's own row, byte and deadline caps. The base clears a node's environment, so that variable's name must start `HARNESS_ROSTER_` \u2014 the prefix this cartridge declares in `grant.env`. Absent means no roster."
+    },
+    "clock": {
+      "type": "string",
+      "default": "",
+      "doc": "Injected key returning the current date. Empty resolves the UTC date natively, fresh on every request. A key named here must be an event some cartridge in the composition listens to."
+    },
+    "router": {
+      "type": "string",
+      "default": "router",
+      "doc": "Router key used for summarization."
+    },
+    "environment": {
+      "type": "string",
+      "default": "",
+      "doc": "Host-scan key rendered as `environment`; empty leaves the placeholder blank. A key named here must be an event some cartridge in the composition listens to."
+    },
+    "terminal": {
+      "type": "string",
+      "default": "",
+      "doc": "Wrapped-shell key whose `commands` op is rendered as `terminal`; empty leaves the placeholder blank."
+    },
+    "memory": {
+      "type": "string",
+      "default": "",
+      "doc": "Memory-bank key distilled prose is ingested into; empty disables eviction. A key named here must be an event some cartridge in the composition listens to."
+    },
+    "max_bytes": {
+      "type": "integer",
+      "default": 8388608,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Request budget. Two consumers read this one number: on the context op it is the ceiling that triggers compaction, and the proxy treats it as the point past which it stops adding retrieved context to a launched agent's request. That history is the agent's own and nothing on this side can compact it, so setting it low costs a long conversation its recall rather than refusing it. proxy.max_bytes is the only wall."
+    },
+    "output_headroom": {
+      "type": "integer",
+      "default": 524288,
+      "min": 0,
+      "max": 1073741824,
+      "doc": "Output bytes reserved out of that budget."
+    },
+    "keep_turns": {
+      "type": "integer",
+      "default": 16,
+      "min": 0,
+      "max": 100000,
+      "doc": "Complete turns kept at the tail of a compacted projection."
+    },
+    "compact_after_messages": {
+      "type": "integer",
+      "default": 128,
+      "min": 4,
+      "max": 1000000,
+      "doc": "Messages after which working memory is refreshed, independently of the provider's context window."
+    },
+    "compact_after_bytes": {
+      "type": "integer",
+      "default": 524288,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Context bytes after which the same happens."
+    },
+    "summary_max_bytes": {
+      "type": "integer",
+      "default": 65536,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes one summary may take."
+    },
+    "summary_timeout_secs": {
+      "type": "integer",
+      "default": 300,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long summarization may take."
+    },
+    "ring_keep": {
+      "type": "integer",
+      "default": 512,
+      "min": 0,
+      "max": 10000000,
+      "doc": "Finished turns whose files stay on disk as hard reference. `{op:\"ring\"}` distills older ones into the memory bank and drops their files. Zero keeps every turn forever."
+    },
+    "ring_sweep": {
+      "type": "integer",
+      "default": 16,
+      "min": 1,
+      "max": 100000,
+      "doc": "Turns distilled per sweep, so one sweep costs a bounded number of summarization requests and a long backlog drains over several sweeps."
+    },
+    "slim": {
+      "type": "boolean",
+      "default": true,
+      "doc": "Distil a failed tool-using run named on the ring call into one memory line; false stores nothing."
+    },
+    "limits.instruction_bytes": {
+      "type": "integer",
+      "default": 1048576,
+      "min": 1024,
+      "max": 1073741824,
+      "doc": "Bytes one instruction file may contribute."
+    },
+    "limits.instructions_bytes": {
+      "type": "integer",
+      "default": 4194304,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes every instruction file may contribute together."
+    },
+    "limits.noticed_problems": {
+      "type": "integer",
+      "default": 50,
+      "min": 1,
+      "max": 100000,
+      "doc": "Problems named in a composition notice before it says how many are left."
+    },
+    "limits.names_bytes": {
+      "type": "integer",
+      "default": 524288,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes of a name listing rendered into a prompt."
+    },
+    "limits.terminal_output_bytes": {
+      "type": "integer",
+      "default": 65536,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes of terminal output carried into a prompt, taken from its tail."
+    },
+    "limits.roster_evidence_bytes": {
+      "type": "integer",
+      "default": 1048576,
+      "min": 1024,
+      "max": 268435456,
+      "doc": "Bytes of roster evidence one composition renders. Bounds the rendered rows, not the fetch: `roster.max_bytes` bounds that."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "harness"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "harness"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "harness"
+      ],
+      "cwd": "."
+    },
+    "verify": {
+      "argv": [
+        "cartridge",
+        "verify",
+        "harness"
+      ],
+      "cwd": "..",
+      "description": "Sends the selftest and integration contracts on the real base."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "env": [
+      "HARNESS_ROSTER_*"
+    ]
+  }
+}

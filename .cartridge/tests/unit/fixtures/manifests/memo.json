@@ -1,0 +1,422 @@
+{
+  "name": "memo",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/memo.ctg",
+  "description": "Owns typed Markdown records, validates writes, exposes discovery and observations, and serves every memo to ASP as a memo: entity.",
+  "events": {
+    "memo": {
+      "description": "The native record service: {op, cwd, ...} with a trusted absolute cwd; ops are the tool's plus init, context and document.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tool.memo": {
+      "description": "The memo tool envelope: describe, call {context, input: {op, ...}}, cancel {context}.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "describe",
+              "call",
+              "cancel"
+            ]
+          },
+          "context": {
+            "type": "object",
+            "required": [
+              "session",
+              "run",
+              "call",
+              "cwd"
+            ],
+            "properties": {
+              "session": {
+                "type": "string"
+              },
+              "run": {
+                "type": "string"
+              },
+              "call": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": "string"
+              }
+            }
+          },
+          "input": {
+            "type": "object",
+            "required": [
+              "op"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "call"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "context",
+                "input"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "op": {
+                  "const": "cancel"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "context"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "asp.memo": {
+      "description": "What ASP asks of the record: {op: expand, entity} for a memo: or file: entity, or {op: search, query, limit}. The answer is {nodes, edges}, or nothing.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string"
+          },
+          "entity": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "memo",
+    "tool.memo",
+    "asp.memo"
+  ],
+  "asp": {
+    "schemes": {
+      "memo": {
+        "description": "A memo of the record, keyed by the path the memo tool reads it by: <kind>/<name>.md, or @<cartridge>/<kind>/<name>.md for one a cartridge ships. Its kind is its first tag and its memo.kind attribute.",
+        "owner": true
+      },
+      "file": {
+        "description": "A workspace file that a memo names."
+      }
+    },
+    "edges": {
+      "links": {
+        "description": "the memo's text holds a [[wiki link]] to the other memo"
+      },
+      "uses": {
+        "description": "the memo declares the usage memo in its uses"
+      },
+      "kind": {
+        "description": "the memo is an instance of the kind that the type memo declares"
+      },
+      "mentions": {
+        "description": "the memo's text names the file by its workspace-relative path"
+      }
+    },
+    "attributes": {
+      "memo.kind": {
+        "description": "The memo's declared kind."
+      }
+    },
+    "actions": [
+      {
+        "name": "read",
+        "applies_to": "memo",
+        "effect": "read",
+        "tool": "tool.memo",
+        "args": {
+          "op": "read",
+          "path": "${key}"
+        },
+        "description": "Read the memo's frontmatter and body."
+      }
+    ],
+    "search": true
+  },
+  "needs": [
+    "context.*"
+  ],
+  "settings": {
+    "yolo": {
+      "type": "boolean",
+      "default": false,
+      "doc": "Automatic execution: bypass tool policy. Set by `--yolo`, not normally by a file."
+    },
+    "max_invocations": {
+      "type": "integer",
+      "default": 65536,
+      "min": 1,
+      "max": 4194304,
+      "doc": "Invocations retained for the observation journal."
+    },
+    "max_runs": {
+      "type": "integer",
+      "default": 4096,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Runs retained alongside them."
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes one memo response may return."
+    },
+    "limits.document_file_bytes": {
+      "type": "integer",
+      "default": 67108864,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes one document file may hold."
+    },
+    "limits.document_metadata_bytes": {
+      "type": "integer",
+      "default": 1048576,
+      "min": 256,
+      "max": 268435456,
+      "doc": "Bytes its metadata block may hold."
+    },
+    "limits.document_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes every document may hold together."
+    },
+    "limits.document_entries": {
+      "type": "integer",
+      "default": 65536,
+      "min": 1,
+      "max": 4194304,
+      "doc": "Entries one document directory may hold."
+    },
+    "limits.document_rows": {
+      "type": "integer",
+      "default": 4096,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Rows one listing returns."
+    },
+    "limits.document_depth": {
+      "type": "integer",
+      "default": 256,
+      "min": 1,
+      "max": 4096,
+      "doc": "How deep the document walk descends."
+    },
+    "limits.projection_depth": {
+      "type": "integer",
+      "default": 16,
+      "min": 1,
+      "max": 1024,
+      "doc": "How deep a projection follows references."
+    },
+    "limits.projection_sources": {
+      "type": "integer",
+      "default": 512,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Sources one projection follows."
+    },
+    "limits.projection_visits": {
+      "type": "integer",
+      "default": 8192,
+      "min": 1,
+      "max": 4194304,
+      "doc": "Nodes it visits."
+    },
+    "limits.projection_output_bytes": {
+      "type": "integer",
+      "default": 16777216,
+      "min": 1024,
+      "max": 1073741824,
+      "doc": "Bytes it returns."
+    },
+    "limits.projection_diagnostics": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Diagnostics it keeps."
+    },
+    "limits.resolver_events": {
+      "type": "integer",
+      "default": 65536,
+      "min": 1,
+      "max": 4194304,
+      "doc": "Resolver events kept."
+    },
+    "limits.resolver_journal_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes the resolver journal keeps on disk."
+    },
+    "limits.validation_source_bytes": {
+      "type": "integer",
+      "default": 16777216,
+      "min": 1024,
+      "max": 1073741824,
+      "doc": "Bytes of one source validation reads."
+    },
+    "limits.validation_blocks": {
+      "type": "integer",
+      "default": 512,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Blocks it checks in one source."
+    },
+    "limits.validation_recipes": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Recipes it checks."
+    },
+    "limits.validation_diagnostics": {
+      "type": "integer",
+      "default": 1024,
+      "min": 1,
+      "max": 1048576,
+      "doc": "Diagnostics it reports."
+    },
+    "limits.record_memo_bytes": {
+      "type": "integer",
+      "default": 67108864,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes one memo may hold."
+    },
+    "limits.record_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 1024,
+      "max": 4294967296,
+      "doc": "Bytes the whole record may hold."
+    },
+    "limits.record_memos": {
+      "type": "integer",
+      "default": 65536,
+      "min": 1,
+      "max": 4194304,
+      "doc": "Memos the record may hold."
+    },
+    "recall.deadline_ms": {
+      "type": "integer",
+      "default": 3000,
+      "min": 1,
+      "max": 600000,
+      "doc": "How long one automatic prompt recall may take before it answers with what it has."
+    },
+    "recall.max_rows": {
+      "type": "integer",
+      "default": 16,
+      "min": 1,
+      "max": 128,
+      "doc": "Evidence rows one recall block may carry."
+    },
+    "recall.max_bytes": {
+      "type": "integer",
+      "default": 65536,
+      "min": 1024,
+      "max": 262144,
+      "doc": "Bytes those rows may take together."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "memo"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "memo"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "memo"
+      ],
+      "cwd": "."
+    },
+    "run": {
+      "argv": [
+        "cartridge",
+        "run",
+        "memo",
+        "{\"op\":\"index\",\"cwd\":\"$PROJECT\"}"
+      ],
+      "cwd": ".",
+      "description": "Starts the profile, asks the record for its kind index once, and stops."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "write": [
+      "/"
+    ],
+    "exec": [
+      "git",
+      "just"
+    ]
+  }
+}

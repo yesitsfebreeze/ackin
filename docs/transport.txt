@@ -9,13 +9,17 @@ sent and again when it arrives.
 
 DECLARATION
 
-  "events": { "session.start": { "description": "…", "schema": { …JSON Schema… }, "timeout_ms": 5000 } }
+  "events": { "session.start": { "description": "…", "schema": { …JSON Schema… }, "timeout_ms": 5000, "frame": "data" } }
   "listen": ["tool.read", "session.start"]
   "needs":  ["memory.query"]
 
   events   what this cartridge defines: the name, one line of purpose, a
            JSON Schema for the payload, and how long a sender waits for each
            listener (`timeout_ms`; absent, the base's `event_timeout_ms`).
+           `frame` says what the payload may become in a model's context:
+           `message`, `data` or `none`. The set is closed, so no declaration
+           claims system or developer authority; any other value refuses the
+           manifest, naming the event. Absent, the event states no frame.
            One owner per event.
   listen   what this cartridge listens to. Its listener's return value is the
            answer; nil is no answer.
@@ -69,7 +73,9 @@ The base injects `cartridge` into every init.lua:
                                   watch another cartridge's channel; fn(envelope)
   cartridge.needs()               the events this cartridge needs, all covered
   cartridge.events()              every event: name -> {owner, description, schema}
-  cartridge.host(method, params)  status, snapshot, cartridges, asp (asp.txt)
+  cartridge.host(method, params)  status, snapshot, cartridges, asp (asp.txt), and
+                                  declarations: this cartridge's own events as its
+                                  manifest declares them, frame included
   cartridge.on_dispose(fn)        runs when the cartridge stops
   cartridge.load(name)            a native Lua module shipped by this cartridge
   cartridge.spawn(cmd, opts)      a helper program: :request(v), :send(v), :on_line(fn), :kill()

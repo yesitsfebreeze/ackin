@@ -1,0 +1,122 @@
+{
+  "name": "tools",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/tools.ctg",
+  "description": "Provides workspace bundling and Git development worktree operations.",
+  "contracts": [
+    "tools.selftest"
+  ],
+  "events": {
+    "tools": {
+      "description": "Repository tooling: `bundle [profile]`, `lane <name>`, `land <name>`, `lane-rm <name>`, as a string or {op, name?, profile?}.",
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "bundle",
+                  "lane",
+                  "land",
+                  "lane-rm"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "debug",
+                  "release"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "tools.selftest": {
+      "description": "Proves every cartridge manifest under the composition reads as the bundler reads it. Takes no payload and reads no field: send `null` or `{}`, and anything that carries a value is refused against this declaration.",
+      "schema": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "listen": [
+    "tools",
+    "tools.selftest"
+  ],
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "tools"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "tools"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "tools"
+      ],
+      "cwd": "."
+    },
+    "verify": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "verify",
+        "tools"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "read": [
+      "/"
+    ],
+    "write": [
+      "/"
+    ],
+    "exec": [
+      "*"
+    ],
+    "net": [
+      "*"
+    ]
+  }
+}

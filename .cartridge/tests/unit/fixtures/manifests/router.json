@@ -1,0 +1,363 @@
+{
+  "name": "router",
+  "entry": "init.lua",
+  "source": "https://github.com/yesitsfebreeze/router.ctg",
+  "description": "Selects model providers, manages local credentials and catalogs, and builds agent launch commands.",
+  "events": {
+    "router": {
+      "description": "The router service: {op, ...}; `status` when op is absent. Ops: status, base, models, routes, decision, request, session, release, sync, reload, login, credentials, auth, logout, launch.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "status",
+              "availability",
+              "base",
+              "models",
+              "routes",
+              "decision",
+              "request",
+              "session",
+              "release",
+              "sync",
+              "reload",
+              "login",
+              "credentials",
+              "auth",
+              "logout",
+              "launch"
+            ]
+          }
+        }
+      }
+    },
+    "router.changed": {
+      "description": "The router changed: {op:\"ready\", base} once it serves, {op:\"sync\", models} after a sync.",
+      "schema": {
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "sync"
+            ]
+          },
+          "base": {
+            "type": "string"
+          },
+          "models": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  },
+  "listen": [
+    "router"
+  ],
+  "settings": {
+    "listen": {
+      "type": "list",
+      "default": [
+        "127.0.0.1:4141"
+      ],
+      "doc": "Loopback addresses the router binds. Port 0 lets the machine assign one, so concurrent chats coexist and each passes its own address to the clients it launches."
+    },
+    "background_model": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Model used for background work when a request names none."
+    },
+    "providers": {
+      "type": "list",
+      "default": [],
+      "doc": "Providers added to the set every reachable provider registers itself into. This adds; it does not replace."
+    },
+    "aliases": {
+      "type": "table",
+      "default": {},
+      "doc": "Model aliases this router resolves."
+    },
+    "agents": {
+      "type": "table",
+      "default": {
+        "launch": {
+          "claude": {
+            "args": [
+              "--model",
+              "{model}"
+            ],
+            "env": {
+              "ANTHROPIC_BASE_URL": "{base}",
+              "ANTHROPIC_AUTH_TOKEN": "{key}",
+              "ANTHROPIC_SMALL_FAST_MODEL": "{background}",
+              "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{background}",
+              "CLAUDE_CONFIG_DIR": "{preset}"
+            },
+            "unset": [
+              "ANTHROPIC_API_KEY",
+              "CLAUDE_CODE_OAUTH_TOKEN"
+            ],
+            "preset": {
+              "dir": "{home}/.cartridge/agents/claude",
+              "from": [
+                "{env.CLAUDE_CONFIG_DIR}",
+                "{home}/.claude"
+              ],
+              "link": "*",
+              "write": [
+                {
+                  "file": "settings.json",
+                  "json": {
+                    "modelPicker": {
+                      "replaceBuiltInOptions": true,
+                      "options": {
+                        "$shelf": {
+                          "label": "{id}",
+                          "model": "{id}",
+                          "description": "{tier}",
+                          "behavesAs": "claude-sonnet-5"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "codex": {
+            "subcommands": [
+              "exec",
+              "review"
+            ],
+            "args": [
+              "-m",
+              "{model}",
+              "-c",
+              "model_provider=\"cartridge\"",
+              "-c",
+              "model_providers.cartridge={name=\"Cartridge\",base_url=\"{base}/v1\",env_key=\"CARTRIDGE_MODEL_KEY\",wire_api=\"responses\"}"
+            ],
+            "env": {
+              "CARTRIDGE_MODEL_KEY": "{key}"
+            }
+          },
+          "pi": {
+            "args": [
+              "--provider",
+              "cartridge",
+              "--model",
+              "{model}"
+            ],
+            "env": {
+              "CARTRIDGE_MODEL_KEY": "{key}",
+              "PI_CODING_AGENT_DIR": "{preset}"
+            },
+            "preset": {
+              "from": [
+                "{env.PI_CODING_AGENT_DIR}",
+                "{home}/.pi/agent"
+              ],
+              "link": "*",
+              "write": [
+                {
+                  "file": "models.json",
+                  "json": {
+                    "providers": {
+                      "cartridge": {
+                        "baseUrl": "{base}/v1",
+                        "apiKey": "$CARTRIDGE_MODEL_KEY",
+                        "api": "openai-completions",
+                        "models": {
+                          "$shelf": {
+                            "id": "{id}",
+                            "name": "{id}",
+                            "contextWindow": "{context}",
+                            "maxTokens": 16384
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "doc": "How each launchable agent is invoked: its arguments, environment, unset variables and preset directory. `{model}`, `{base}`, `{key}`, `{background}`, `{home}`, `{preset}`, `{id}`, `{tier}` and `{context}` are filled in at launch. A profile that names one agent replaces that agent's entry and keeps the rest."
+    },
+    "frontiers": {
+      "type": "table",
+      "default": {},
+      "doc": "Frontier policy: which tasks prefer which routes."
+    },
+    "skip": {
+      "type": "list",
+      "default": [],
+      "doc": "Routes never chosen. An entry naming a provider keeps that provider off the shelf entirely — it is never registered, never inventoried and never tried, whatever credential for it is on this machine. Any other entry is matched as a substring of a model id."
+    },
+    "config_dir": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Where credentials are read from. Absent uses the default."
+    },
+    "data_dir": {
+      "type": "string",
+      "default": null,
+      "optional": true,
+      "doc": "Where router state is kept. Absent uses the default."
+    },
+    "routing.pricing": {
+      "type": "table",
+      "default": {},
+      "doc": "Exact-route operator-declared rates. An invalid declaration stays unknown rather than wrong."
+    },
+    "routing.local_last": {
+      "type": "boolean",
+      "default": true,
+      "doc": "Try local providers after remote ones."
+    },
+    "routing.local_providers": {
+      "type": "list",
+      "default": [
+        "ollama"
+      ],
+      "doc": "Which providers count as local."
+    },
+    "routing.prefer": {
+      "type": "list",
+      "default": [],
+      "doc": "Providers an `auto` request tries first, in this order."
+    },
+    "routing.free_first": {
+      "type": "boolean",
+      "default": false,
+      "doc": "An `auto` request tries every free route before any paid one. Off (the default), it tries every paid route first, and free routes are the fallback when no paid route is healthy or all of them fail."
+    },
+    "routing.quality_margin": {
+      "type": "number",
+      "default": 75.0,
+      "min": 0.0,
+      "max": 10000.0,
+      "doc": "Rating points of quality an `auto` request trades for a cheaper route. Among candidates within this many points of the best-rated one, the route with the lowest published rate leads; the rest keep their ranking order. 0 always takes the best-rated route."
+    },
+    "routing.max_attempts": {
+      "type": "integer",
+      "default": 12,
+      "min": 1,
+      "max": 10000,
+      "doc": "Routes one request may try before giving up."
+    },
+    "routing.first_output_timeout_secs": {
+      "type": "integer",
+      "default": 300,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long a route has to produce its first output before it is abandoned."
+    },
+    "routing.request_timeout_secs": {
+      "type": "integer",
+      "default": 1800,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long one request may run."
+    },
+    "limits.recovery_attempts": {
+      "type": "integer",
+      "default": 10,
+      "min": 1,
+      "max": 100000,
+      "doc": "Attempts made to recover a failing route."
+    },
+    "limits.recovery_lifetime_secs": {
+      "type": "integer",
+      "default": 900,
+      "min": 1,
+      "max": 86400,
+      "doc": "How long one recovery stays valid."
+    },
+    "limits.retry_every": {
+      "type": "integer",
+      "default": 10,
+      "min": 1,
+      "max": 1000000,
+      "doc": "Every this many requests that would skip a blocked route, one tries it anyway."
+    },
+    "limits.max_stated_cooldown_secs": {
+      "type": "integer",
+      "default": 604800,
+      "min": 1,
+      "doc": "No reset a provider states for itself outlives this. It bounds a fact rather than a guess, so it is far longer than `max_cooldown_secs`: a weekly quota really does reopen a week out, and clamping it to the guess ceiling made the router re-probe and re-wall the account several times a day until the week turned."
+    },
+    "limits.max_cooldown_secs": {
+      "type": "integer",
+      "default": 21600,
+      "min": 1,
+      "max": 2592000,
+      "doc": "No cooldown outlives this."
+    },
+    "limits.frame_bytes": {
+      "type": "integer",
+      "default": 268435456,
+      "min": 4096,
+      "max": 4294967296,
+      "doc": "Bytes one decoded wire frame may reach. A long-context request is a large frame."
+    }
+  },
+  "commands": {
+    "build": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "build",
+        "router"
+      ],
+      "cwd": "."
+    },
+    "check": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "check",
+        "router"
+      ],
+      "cwd": "."
+    },
+    "test": {
+      "argv": [
+        "just",
+        "--justfile",
+        "../cartridge.ctg/justfile",
+        "test",
+        "router"
+      ],
+      "cwd": "."
+    }
+  },
+  "grant": {
+    "exec": [
+      "security"
+    ],
+    "read": [
+      "/"
+    ],
+    "write": [
+      "$PROJECT/.cartridge",
+      "$HOME/.cartridge"
+    ],
+    "net": [
+      "*"
+    ]
+  }
+}

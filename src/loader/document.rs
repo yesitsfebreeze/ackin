@@ -22,7 +22,7 @@ pub struct Cartridge {
 	pub config: serde_json::Value,
 	#[serde(default)]
 	pub settings: crate::settings::Specs,
-	#[serde(default)]
+	#[serde(default, deserialize_with = "events")]
 	pub events: std::collections::BTreeMap<String, Event>,
 	#[serde(default)]
 	pub needs: Vec<String>,
@@ -51,6 +51,33 @@ pub struct Event {
 	pub schema: Option<serde_json::Value>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub timeout_ms: Option<u64>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub frame: Option<Frame>,
+}
+
+/// What an event's payload may become in a model's context. The set is closed
+/// on purpose: no declaration can claim system or developer authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Frame {
+	Message,
+	Data,
+	None,
+}
+
+/// Serde names neither the map key nor the manifest line's meaning, so each
+/// declaration is read on its own and a refusal names its kind.
+fn events<'de, D: serde::Deserializer<'de>>(
+	from: D,
+) -> std::result::Result<std::collections::BTreeMap<String, Event>, D::Error> {
+	let raw: std::collections::BTreeMap<String, serde_json::Value> =
+		serde::Deserialize::deserialize(from)?;
+	raw.into_iter()
+		.map(|(kind, declared)| match serde_json::from_value(declared) {
+			Ok(event) => Ok((kind, event)),
+			Err(e) => Err(serde::de::Error::custom(format!("`events.{kind}`: {e}"))),
+		})
+		.collect()
 }
 
 #[derive(serde::Deserialize)]
@@ -352,3 +379,7 @@ pub(crate) fn resolve(path: &Path) -> Result<Declared> {
 		listener: manifest.listener,
 	})
 }
+
+#[cfg(test)]
+#[path = "../../.cartridge/tests/unit/src/loader/document.rs"]
+mod tests;
