@@ -167,3 +167,7 @@ Tab completes or chains, Shift-Tab returns to the preceding stage, and Ctrl-T
 marks results. Ctrl-E opens the preview editor; Ctrl-S saves through the owner
 tool and its normal update events. F6 uses `$VISUAL`/`$EDITOR` for the draft.
 The default launcher installs Textual 8.2.8 and RapidFuzz 3.14.3 through uv.
+
+F5 refreshes the active finder chain. Switching away from the editor keeps its
+unsaved draft until Scope exits; Ctrl-E restores the draft and its original
+revision guard. Agent-provided chains run through the same search engine.

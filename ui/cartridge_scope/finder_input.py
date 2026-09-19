@@ -2,6 +2,7 @@
 import asyncio
 from textual import work
 from textual.widgets import Input, Static
+from textual.worker import WorkerCancelled
 from .filter_chain import PICKERS, compatible, fuzzy_score, output_type, parse, segments
 
 
@@ -31,6 +32,7 @@ class Finder:
     def init_finder(self, engine):
         self.engine = engine
         self.finder_rows = None
+        self.finder_expression = None
         self.finder_scopes = {}
         self.finder_prefixes = {}
         self.finder_selected = False
@@ -39,7 +41,8 @@ class Finder:
     def finder_active(self, value):
         return ">" in value or value.split(" ", 1)[0].casefold() in {name.casefold() for name in PICKERS}
 
-    def finder_forward(self):
+    @work(exclusive=True, group="finder-forward")
+    async def finder_forward(self):
         entry = self.query_one("#search", Input)
         parts = segments(entry.value)
         tail = parts[-1]
@@ -56,6 +59,17 @@ class Finder:
         try: stages = parse(entry.value)
         except ValueError as error:
             self.query_one("#status", Static).update(str(error)); return
+        expression = entry.value
+        while self.finder_expression != expression:
+            if entry.value != expression:
+                return
+            try:
+                await self.run_finder(expression, self.search_revision).wait()
+            except WorkerCancelled:
+                await asyncio.sleep(0)
+                continue
+            if "finder" in self.context.errors and not self.finder_rows:
+                return
         rows = self.finder_rows if self.finder_rows is not None else self.items
         ids = self.finder_marks or ({self.selected} if self.finder_selected else set())
         if ids: rows = [row for row in rows if row["id"] in ids]
@@ -97,6 +111,7 @@ class Finder:
             rows = await self.engine.evaluate(expression, scopes)
             if revision != self.search_revision: return
             self.finder_rows = rows
+            self.finder_expression = expression
             self.context.errors.pop("finder", None)
             if self.engine.errors:
                 self.context.errors["finder"] = "; ".join(dict.fromkeys(self.engine.errors))

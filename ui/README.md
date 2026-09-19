@@ -220,3 +220,20 @@ JSON proposal; saving submits the original and proposed information to the
 actual agent, which applies supported changes through the item's owner tools
 and reports the outcome. This is an asynchronous change request, not a direct
 record overwrite.
+
+Closing the editor with Escape or switching to the agent or waterfall keeps an
+unsaved draft for that item during the current UI session. Ctrl-E restores it
+with its original read/revision guard; a concurrent write is still detected.
+Drafts are not persisted after quitting Scope.
+
+Disk searches honor ignore files inside the project. Parent-directory ignore
+files and RIPGREP_CONFIG_PATH do not change Scope results. F5 refreshes the
+current composed chain, including disk enumeration. Agent-returned chains use
+the same finder backend as typed chains.
+
+The TUI research used [Awesome TUI](https://github.com/alvinunreal/awesometui)
+to find data-view alternatives, including [VisiData](https://github.com/saulpw/visidata).
+[Textual DataTable](https://github.com/Textualize/textual/blob/main/docs/widgets/data_table.md)
+provides cell selection and incremental updates; Scope adds the bounded window,
+ASP adapters and typed finder pipeline. The filter interaction follows
+[finder.nvim](https://github.com/yesitsfebreeze/finder.nvim).

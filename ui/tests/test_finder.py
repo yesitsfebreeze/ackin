@@ -104,3 +104,47 @@ class FinderTests(unittest.IsolatedAsyncioTestCase):
         second=await self.engine.evaluate('Files > Fuzzy mid',{1:[rows[0],rows[3],rows[2]]})
         self.assertEqual([row['id'] for row in first],['file:middle'])
         self.assertEqual(second,[])
+
+    async def test_project_ignores_apply_without_parent_or_user_rg_config(self):
+        import os
+        from unittest.mock import patch
+        nested=self.root/'project';nested.mkdir()
+        (self.root/'.gitignore').write_text('*\n')
+        (nested/'.gitignore').write_text('ignored.txt\n')
+        (nested/'visible.txt').write_text('needle\n')
+        (nested/'ignored.txt').write_text('needle\n')
+        config=self.root/'rg-config';config.write_text('--glob=!visible.txt\n')
+        engine=SearchEngine(str(nested),Client(),self.model)
+        with patch.dict(os.environ,{'RIPGREP_CONFIG_PATH':str(config)}):
+            rows=await engine.evaluate('Files txt')
+            self.assertEqual([r['name'] for r in rows],['visible.txt'])
+            rows=await engine.evaluate('Grep needle')
+            self.assertEqual([r['content'] for r in rows],['needle'])
+
+    async def test_agent_chain_and_refresh_use_finder_backend(self):
+        from unittest.mock import Mock
+        app=Scope(str(self.root),client=Client(),context=self.model,live=False)
+        async with app.run_test() as pilot:
+            await app.apply_agent_result({'query':'Files apppy > Grep retry','entities':None})
+            await pilot.pause(.4)
+            self.assertEqual([r['content'] for r in app.items],['TODO retry'])
+            app.live=True
+            app.bootstrap=Mock();app.poll=Mock();app.search_remote=Mock()
+            app.action_refresh()
+            await pilot.pause(.4)
+            app.search_remote.assert_not_called()
+            self.assertEqual([r['content'] for r in app.items],['TODO retry'])
+            app.live=False
+
+    async def test_tab_waits_for_current_filter_before_capturing_scope(self):
+        app=Scope(str(self.root),client=Client(),context=self.model,live=False)
+        async with app.run_test() as pilot:
+            entry=app.query_one('#search')
+            entry.value='Files apppy'
+            await pilot.pause(.3)
+            self.assertEqual(len(app.items),1)
+            entry.value='Files otherpy'
+            app.finder_forward()
+            await pilot.pause(.4)
+            self.assertTrue(entry.value.endswith(' > '))
+            self.assertEqual([r['name'] for r in app.finder_scopes[1]],['src/other.py'])

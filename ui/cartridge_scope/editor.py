@@ -13,6 +13,8 @@ class Editing:
     def init_editor(self):
         self.editing = False
         self.edit_session = None
+        self.edit_identity = None
+        self.edit_drafts = {}
 
     @work(exclusive=True, group="editor")
     async def action_edit(self):
@@ -31,7 +33,11 @@ class Editing:
                 self.query_one("#status", Static).update("Edit action is not declared by this item's owner"); return
         session = EditSession(self.client)
         try:
-            text = await session.open(row, descriptor)
+            if row["id"] in self.edit_drafts:
+                session, text = self.edit_drafts[row["id"]]
+            else:
+                text = await session.open(row, descriptor)
+            self.edit_identity = row["id"]
             self.edit_session = session
             self.editing = True
             self.query_one("#detail-pane").display = False
@@ -39,7 +45,7 @@ class Editing:
             self.query_one("#conversation").display = False
             area = self.query_one("#editor", TextArea)
             area.display = True; area.load_text(text); area.focus()
-            self.query_one("#chain", Static).update("EDIT · Ctrl-S saves through the owner tool · Ctrl-E focuses · Esc closes · F6 opens $VISUAL/$EDITOR")
+            self.query_one("#chain", Static).update("EDIT · Ctrl-S saves through the owner tool · Ctrl-E focuses · Esc keeps draft · F6 opens $VISUAL/$EDITOR")
         except (OSError, ValueError, KeyError, asyncio.TimeoutError) as error:
             self.query_one("#status", Static).update("Cannot edit: " + str(error))
 
@@ -54,7 +60,7 @@ class Editing:
         text = self.query_one("#editor", TextArea).text
         try:
             outcome = await self.edit_session.save(text)
-            self.close_editor()
+            self.close_editor(saved=True)
             if isinstance(outcome, dict) and "request" in outcome:
                 self.set_mode(True); self.ask_agent(outcome["request"])
             else:
@@ -65,7 +71,13 @@ class Editing:
         except (ValueError, OSError, asyncio.TimeoutError) as error:
             self.query_one("#status", Static).update("Save failed; your draft is retained: " + str(error))
 
-    def close_editor(self):
+    def close_editor(self, saved=False):
+        if self.editing:
+            text = self.query_one("#editor", TextArea).text
+            if not saved and text != self.edit_session.original:
+                self.edit_drafts[self.edit_identity] = (self.edit_session, text)
+            else:
+                self.edit_drafts.pop(self.edit_identity, None)
         self.editing = False
         self.query_one("#editor").display = False
         self.query_one("#detail-pane").display = not self.waterfall_preview and not self.agent_mode

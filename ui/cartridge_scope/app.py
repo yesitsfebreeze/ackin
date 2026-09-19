@@ -30,7 +30,7 @@ class Scope(Editing, Finder, Commands, App):
                 Binding("ctrl+f", "search", "Search", priority=True),
                 Binding("ctrl+e", "edit", "Edit", priority=True),
                 Binding("ctrl+s", "save", "Save", priority=True),
-                Binding("f6", "external_editor", "External editor"),
+                Binding("f6", "external_editor", "External editor", priority=True),
                 Binding("ctrl+p", "pause", "Pause", priority=True),
                 Binding("f2", "used", "Used / all"),
                 Binding("f3", "zoom_pane", "Enlarge pane"),
@@ -413,14 +413,16 @@ class Scope(Editing, Finder, Commands, App):
         self.last_detail = None
         self.engine.disk.scanned = 0
         self.engine.cache.clear(); self.engine.expanded.clear()
-        if self.finder_active(self.filter_query):
+        pipeline = self.finder_active(self.filter_query)
+        if pipeline:
             self.run_finder(self.filter_query, self.search_revision)
         if self.live:
             self.bootstrap()
             self.poll()
-            self.search_remote(self.filter_query, self.search_revision)
+            if not pipeline:
+                self.search_remote(self.filter_query, self.search_revision)
             if self.selected:
-                self.expand_selected(self.selected)
+                self.choose(self.selected, self.field, self.observation)
 
     def action_pan(self, direction):
         self.end = (self.end or time.time() * 1000) + direction * self.span / 4
@@ -446,6 +448,8 @@ class Scope(Editing, Finder, Commands, App):
             self.choose(identity, field, observation)
 
     def action_zoom_pane(self):
+        if self.editing:
+            return
         if self.zoomed:
             self.zoomed = None
         elif self.focused:
@@ -456,6 +460,8 @@ class Scope(Editing, Finder, Commands, App):
         self.query_one("#waterfall-pane").display = self.zoomed == "waterfall-pane" or (not self.zoomed and self.waterfall_preview and not self.agent_mode)
 
     def action_preview_mode(self):
+        if self.editing:
+            self.close_editor()
         self.waterfall_preview = not self.waterfall_preview
         self.query_one("#waterfall-pane").display = self.waterfall_preview and not self.agent_mode
         self.query_one("#detail-pane").display = not self.waterfall_preview and not self.agent_mode

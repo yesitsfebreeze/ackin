@@ -1,4 +1,4 @@
-"""The bottom input coordinates filtering and an independent conversation."""
+"""The centered input coordinates filtering and an independent conversation."""
 import asyncio
 import json
 import re
@@ -10,6 +10,8 @@ from .conversation import scope_result
 
 class Commands:
     def set_mode(self, agent):
+        if self.editing:
+            self.close_editor()
         self.agent_mode = agent
         self.query_one("#detail-pane").display = not agent and not self.waterfall_preview
         self.query_one("#waterfall-pane").display = not agent and self.waterfall_preview
@@ -133,8 +135,14 @@ class Commands:
             entry = self.query_one("#search", Input)
             with entry.prevent(Input.Changed):
                 entry.value = query
-        if identities is None and self.live:
-            self.search_remote(query, self.search_revision)
+        self.finder_scopes.clear()
+        self.finder_prefixes.clear()
+        self.finder_marks.clear()
+        if identities is None:
+            if self.finder_active(query):
+                self.run_finder(query, self.search_revision)
+            elif self.live:
+                self.search_remote(query, self.search_revision)
         self.refresh_projection()
         self.chat("Scope", f"List updated: {query or 'all context'} · {len(self.items)} loaded matches. /list shows them; editing the filter clears the agent selection.")
 
