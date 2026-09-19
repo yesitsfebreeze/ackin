@@ -194,3 +194,5 @@ revision guard. Agent-provided chains run through the same search engine.
 Ctrl-Space opens a discoverable command tree: `ff` finds files, `fa` searches ASP,
 `aa` opens the agent and `ee` edits the selected item. Type a sequence or search
 by command name. Escape cancels; Backspace returns to the preceding group.
+
+Runtime ledger records now retain measured execution duration and explicit usage counts in a strict `metrics` object, together with known task/run/request identities. Structured diagnostics preserve their message, and oversize evidence keeps metrics and failure details. See [trace telemetry](src/trace/README.md) for the field contract, redaction rules and repeatable offline performance comparison. Missing measurements and verification results are never inferred from a successful request.

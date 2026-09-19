@@ -1,55 +1,21 @@
-//! Telemetry summaries stay below the trace writer's 64 KiB append contract.
+// Telemetry summaries stay below the trace writer's 64 KiB append contract.
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 const ACTIVITY_BYTES: usize = 48 * 1024;
-// Count serialized bytes without allocating a temporary copy of every small record.
-pub(super) fn fits(value: &Value, limit: usize) -> bool {
-	fn oversized_string(value: &Value, limit: usize) -> bool {
-		match value {
-			Value::String(s) => s.len() > limit,
-			Value::Array(values) => values.iter().any(|v| oversized_string(v, limit)),
-			Value::Object(values) => values
-				.iter()
-				.any(|(k, v)| k.len() > limit || oversized_string(v, limit)),
-			_ => false,
-		}
-	}
-	if oversized_string(value, limit) {
-		return false;
-	}
-
-	struct Budget(usize);
-	impl std::io::Write for Budget {
-		fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-			if bytes.len() > self.0 {
-				return Err(std::io::ErrorKind::OutOfMemory.into());
-			}
-			self.0 -= bytes.len();
-			Ok(bytes.len())
-		}
-		fn flush(&mut self) -> std::io::Result<()> {
-			Ok(())
-		}
-	}
-	serde_json::to_writer(Budget(limit), value).is_ok()
-}
 fn summary(value: &Value) -> Value {
-	if fits(value, 2048) {
+	let bytes = serde_json::to_vec(value).expect("JSON serializes");
+	if bytes.len() <= 2048 {
 		return value.clone();
 	}
-	let bytes = serde_json::to_vec(value).expect("JSON serializes");
 	json!({"truncated":true,"original_bytes":bytes.len(),"sha256":Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>(),"preview":String::from_utf8_lossy(&bytes).chars().take(256).collect::<String>()})
 }
 pub(super) fn bound(value: Value) -> Value {
-	if fits(&value, ACTIVITY_BYTES) {
+	let bytes = serde_json::to_vec(&value).expect("JSON serializes");
+	if bytes.len() <= ACTIVITY_BYTES {
 		return value;
 	}
-	let bytes = serde_json::to_vec(&value).expect("JSON serializes");
 	let mut bounded = json!({"truncation":{"truncated":true,"original_bytes":bytes.len(),"sha256":Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>(),"scope":"redacted activity; unlisted fields omitted"}});
 	for key in [
-		"metrics",
-		"context",
-		"diagnostic",
 		"kind",
 		"event",
 		"origin",
@@ -64,13 +30,7 @@ pub(super) fn bound(value: Value) -> Value {
 		"dropped_before",
 	] {
 		if let Some(field) = value.get(key) {
-			bounded[key] = if key == "metrics" {
-				let mut metrics = field.clone();
-				super::activity::sanitize_metrics(&mut metrics);
-				metrics
-			} else {
-				summary(field)
-			};
+			bounded[key] = summary(field);
 		}
 	}
 	if let Some(outcome) = value.get("outcome") {

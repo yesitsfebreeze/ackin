@@ -174,7 +174,7 @@ pub(super) async fn start(
 				crate::trace::diagnostic_line(&id, &line);
 				if !line.starts_with("cartridge trace delivery:") {
 					let activity = json!({"kind":"diagnostic", "origin":id, "diagnostic":
-							serde_json::from_str::<serde_json::Value>(&line).unwrap_or_else(|_| json!(line))});
+							crate::trace::activity::diagnostic(&line)});
 					recorder.record(activity);
 				}
 				let mut tail = tail.lock().expect("stderr tail");

@@ -81,3 +81,5 @@ revision guard. Agent-provided chains run through the same search engine.
 Ctrl-Space opens a discoverable command tree: `ff` finds files, `fa` searches ASP,
 `aa` opens the agent and `ee` edits the selected item. Type a sequence or search
 by command name. Escape cancels; Backspace returns to the preceding group.
+
+Ledger telemetry: finished runtime events include monotonic `metrics.duration_ms`; explicit usage contributes input, cached-input and output token counts. Known task/run/request context remains available for correlation. Missing values stay absent, and successful calls do not imply verified correctness. See `src/trace/README.md` for the strict field contract and the offline release benchmark command.

@@ -75,8 +75,11 @@ const OMIT: &[&str] = &[
 ];
 
 fn sensitive(name: &str) -> bool {
-	let name = name.to_lowercase();
-	OMIT.iter().any(|n| name.contains(n))
+	OMIT.iter().any(|n| {
+		name.as_bytes()
+			.windows(n.len())
+			.any(|part| part.eq_ignore_ascii_case(n.as_bytes()))
+	})
 }
 
 fn redact(v: &mut Json, omitted: &mut Vec<String>) {
@@ -91,7 +94,9 @@ fn redact(v: &mut Json, omitted: &mut Vec<String>) {
 		if k == "completion_known" && (value.is_boolean() || value.is_null()) {
 			continue;
 		}
-		if sensitive(k) {
+		if k == "metrics" {
+			activity::sanitize_metrics(value);
+		} else if sensitive(k) {
 			*value = Json::String("<omitted>".into());
 			omitted.push(k.clone());
 		} else {

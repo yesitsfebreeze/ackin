@@ -605,3 +605,48 @@ async fn a_listener_that_blocks_does_not_park_the_only_worker() {
 	);
 	let _ = busy.await;
 }
+
+#[tokio::test]
+async fn finished_activity_records_elapsed_usage_and_request_identity() {
+	let (_dir, a, b, _) = pair().await;
+	a.ctx
+		.state
+		.directory
+		.write()
+		.unwrap()
+		.events
+		.insert("trace".into(), EventEntry::default());
+	let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+	a.ctx
+		.record_into(crate::trace::activity::delivery(move |record| {
+			let tx = tx.clone();
+			async move {
+				tx.send(record).await.unwrap();
+				Ok(())
+			}
+		}));
+	a.ctx.on("a.echo", |_| async {
+		tokio::time::sleep(Duration::from_millis(15)).await;
+		Ok(json!({"usage":{"input_tokens":12,"output_tokens":4}}))
+	});
+	b.ctx
+		.bail("a.echo", json!({"task_id":"task-1"}))
+		.await
+		.unwrap();
+	let started = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+		.await
+		.unwrap()
+		.unwrap();
+	let finished = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+		.await
+		.unwrap()
+		.unwrap();
+	assert_eq!(started["kind"], "started");
+	assert_eq!(finished["kind"], "finished");
+	assert_eq!(started["correlation"], finished["correlation"]);
+	assert_eq!(finished["metrics"]["task_id"], "task-1");
+	assert!(finished["metrics"]["duration_ms"].as_u64().unwrap() >= 15);
+	assert_eq!(finished["metrics"]["input_tokens"], 12);
+	assert_eq!(finished["metrics"]["output_tokens"], 4);
+	assert!(finished["metrics"].get("verification").is_none());
+}

@@ -1020,10 +1020,12 @@ async fn handle(
 			let (trace, data) = (trace_of(&params), params["data"].clone());
 			let observed = name != "memory" || data["op"] != "trace";
 			let correlation = trace.clone();
+			let context = crate::trace::activity::context(&data);
+			let started = std::time::Instant::now();
 			if observed {
 				ctx.record(
 					&name,
-					json!({"kind":"started", "correlation":correlation, "request":data}),
+					json!({"kind":"started", "correlation":correlation, "metrics":context, "request":data}),
 				);
 			}
 			let runtime = tokio::runtime::Handle::current();
@@ -1038,6 +1040,17 @@ async fn handle(
 			.await
 			.unwrap_or_else(|error| Raced::Answered(Err(format!("listener panicked: {error}"))));
 			if observed {
+				let mut metrics = crate::trace::activity::metrics(
+					match &raced {
+						Raced::Answered(Ok(answer)) => Some(answer),
+						_ => None,
+					},
+					started.elapsed(),
+				);
+				metrics
+					.as_object_mut()
+					.expect("metrics object")
+					.extend(context.as_object().expect("context object").clone());
 				let outcome = match &raced {
 					Raced::Answered(Ok(answer)) => json!({"state":"answered", "response":answer}),
 					Raced::Answered(Err(error)) => json!({"state":"failed", "error":error}),
@@ -1045,7 +1058,7 @@ async fn handle(
 				};
 				ctx.record(
 					&name,
-					json!({"kind":"finished", "correlation":correlation, "outcome":outcome}),
+					json!({"kind":"finished", "correlation":correlation, "metrics":metrics, "outcome":outcome}),
 				);
 			}
 			match raced {
